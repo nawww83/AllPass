@@ -35,6 +35,8 @@ private slots:
 
     void set_master_key();
 
+    void copy_clipboard();
+
     void on_spbx_pass_len_valueChanged(int arg1);
 
     void on_spbx_N_values_valueChanged(int arg1);
@@ -47,15 +49,12 @@ signals:
     void master_phrase_ready();
 
 protected:
-#ifndef QT_NO_CONTEXTMENU
-    void contextMenuEvent(QContextMenuEvent *event) override;
-#endif // QT_NO_CONTEXTMENU
 
 private:
     Ui::Widget *ui;
     QFutureWatcher<lfsr_rng::Generators> watcher_seed;
     QFutureWatcher<QVector<lfsr8::u64>> watcher_generate;
-    QAction *newAct;
+    QAction *copyAct;
 };
 
 class MyTextEdit : public QTextEdit

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>698</width>
-    <height>476</height>
+    <width>782</width>
+    <height>450</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -33,6 +33,11 @@
          <string>Password</string>
         </property>
        </column>
+       <column>
+        <property name="text">
+         <string>Comments</string>
+        </property>
+       </column>
       </widget>
      </item>
      <item>
@@ -41,6 +46,9 @@
         <font>
          <pointsize>12</pointsize>
         </font>
+       </property>
+       <property name="contextMenuPolicy">
+        <enum>Qt::ContextMenuPolicy::NoContextMenu</enum>
        </property>
        <property name="text">
         <string>Master phrase input</string>
