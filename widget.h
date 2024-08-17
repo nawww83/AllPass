@@ -37,16 +37,20 @@ private slots:
 
     void copy_clipboard();
 
-    void on_spbx_pass_len_valueChanged(int arg1);
+    void delete_row();
 
-    void on_spbx_N_values_valueChanged(int arg1);
+    void try_to_add_row();
+
+    void tableWidget_customContextMenuRequested(const QPoint &pos);
+
+    void on_spbx_pass_len_valueChanged(int arg1);
 
     void on_spbx_pass_len_editingFinished();
 
-    void on_tableWidget_customContextMenuRequested(const QPoint &pos);
-
 signals:
     void master_phrase_ready();
+
+    void values_ready();
 
 protected:
 
@@ -55,6 +59,7 @@ private:
     QFutureWatcher<lfsr_rng::Generators> watcher_seed;
     QFutureWatcher<QVector<lfsr8::u64>> watcher_generate;
     QAction *copyAct;
+    QAction *removeAct;
 };
 
 class MyTextEdit : public QTextEdit
