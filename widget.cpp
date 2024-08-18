@@ -11,6 +11,7 @@
 #include <QIcon>
 #include <QClipboard>
 #include <qmimedata.h>
+#include <QStyledItemDelegate>
 
 #include "worker.h"
 #include "key.h"
@@ -29,6 +30,7 @@ bool needToGeneratePasswords = true;
 }
 
 namespace {
+const auto gen_pass_txt = QString::fromUtf8("Generate a password");
 MyTextEdit* txt_edit_master_phrase{nullptr};
 constexpr int num_of_passwords = 10; // buffer.
 int password_len;
@@ -72,6 +74,26 @@ static QString get_password(int len) {
     return pswd;
 }
 
+class FilterDelegate : public QStyledItemDelegate
+{
+public:
+    FilterDelegate(QObject *filter, QObject *parent = 0) :
+        QStyledItemDelegate(parent), filter(filter)
+    { }
+
+    virtual QWidget *createEditor(QWidget *parent,
+                                  const QStyleOptionViewItem &option,
+                                  const QModelIndex &index) const
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        editor->installEventFilter(filter);
+        return editor;
+    }
+
+private:
+    QObject *filter;
+};
+
 Widget::Widget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
@@ -92,8 +114,9 @@ Widget::Widget(QWidget *parent)
     //
     password_len = ui->spbx_pass_len->value();
     //
-    ui->btn_generate->setText(QString::fromUtf8("Generate"));
+    ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(false);
+    ui->btn_add_empty_row->setEnabled(false);
     //
     ui->tableWidget->setSortingEnabled(false);
     QStringList table_header {"Login","Password","Comments"};
@@ -102,7 +125,10 @@ Widget::Widget(QWidget *parent)
     ui->tableWidget->setColumnWidth(0, 170);
     ui->tableWidget->setColumnWidth(1, 200);
     ui->tableWidget->setColumnWidth(2, 350);
+    ui->tableWidget->setItemDelegate(new FilterDelegate(ui->tableWidget));
+    ui->tableWidget->installEventFilter(this);
     ui->tableWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+    ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
     copyAct = new QAction(QIcon(),
                          tr("&Copy"), this);
@@ -110,7 +136,7 @@ Widget::Widget(QWidget *parent)
     copyAct->setStatusTip(tr("Copy the item to clipboard"));
     connect(copyAct, &QAction::triggered, this, &Widget::copy_clipboard);
     removeAct = new QAction(QIcon(),
-                          tr("&Delete"), this);
+                          tr("&Delete row"), this);
     removeAct->setShortcuts(QKeySequence::Delete);
     removeAct->setStatusTip(tr("Delete the row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
@@ -125,6 +151,29 @@ Widget::Widget(QWidget *parent)
 Widget::~Widget()
 {
     delete ui;
+}
+
+bool Widget::eventFilter(QObject *object, QEvent *event)
+{
+    if (event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
+        if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus())
+        {
+            QMessageBox mb;
+            mb.setInformativeText(QString::fromUtf8("Do you want to remove the row?"));
+            mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+            mb.setDefaultButton(QMessageBox::No);
+            int ret = mb.exec();
+            if (ret != QMessageBox::Yes) {
+                return false;
+            }
+            const int row = ui->tableWidget->currentRow();
+            ui->tableWidget->removeRow(row);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(object, event);
 }
 
 void Widget::copy_clipboard() {
@@ -144,15 +193,23 @@ void Widget::copy_clipboard() {
 
 void Widget::delete_row() {
     if (tw_item_to_remove) {
+        QMessageBox mb;
+        mb.setInformativeText(QString::fromUtf8("Do you want to remove the row?"));
+        mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        mb.setDefaultButton(QMessageBox::No);
+        int ret = mb.exec();
+        if (ret != QMessageBox::Yes) {
+            return;
+        }
         ui->tableWidget->removeRow(tw_item_to_remove->row());
         tw_item_to_remove = nullptr;
+        // Clear
+        #pragma optimize( "", off )
+                for (auto& el : main::copied_password) {
+                    el = '\0';
+                }
+        #pragma optimize( "", on )
     }
-    // Clear
-    #pragma optimize( "", off )
-        for (auto& el : main::copied_password) {
-            el = '\0';
-        }
-    #pragma optimize( "", on )
 }
 
 void Widget::seed_has_been_set()
@@ -164,7 +221,7 @@ void Widget::seed_has_been_set()
         mb.warning(this, "Failure", "The key was not set: put another phrase.");
     } else {
         mb.information(this, "Success", "The key was set");
-        ui->btn_generate->setText(QString::fromUtf8("Generate"));
+        ui->btn_generate->setText(gen_pass_txt);
         ui->tableWidget->clearContents();
         while (ui->tableWidget->rowCount() > 0) {
             ui->tableWidget->removeRow(0);
@@ -175,6 +232,17 @@ void Widget::seed_has_been_set()
 
 void Widget::on_btn_input_master_phrase_clicked()
 {
+    if (ui->tableWidget->rowCount() != 0) {
+        QMessageBox mb;
+        mb.setText(QString::fromUtf8("After setting the key, unsaved data will be lost."));
+        mb.setInformativeText(QString::fromUtf8("Do you agree?"));
+        mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        mb.setDefaultButton(QMessageBox::No);
+        int ret = mb.exec();
+        if (ret != QMessageBox::Yes) {
+            return;
+        }
+    }
     txt_edit_master_phrase->setVisible(true);
     txt_edit_master_phrase->resize(400, 250);
     txt_edit_master_phrase->setFocus();
@@ -243,6 +311,7 @@ void Widget::set_master_key()
     }
     watcher_seed.setFuture( main::w.seed(st) );
     ui->btn_generate->setEnabled(true);
+    ui->btn_add_empty_row->setEnabled(true);
 }
 
 void Widget::try_to_add_row() {
@@ -257,7 +326,7 @@ void Widget::try_to_add_row() {
     item->setFlags(item->flags() ^ Qt::ItemIsEditable);
     ui->tableWidget->setItem(row++, 1, item);
     ui->tableWidget->resizeColumnToContents(1);
-    ui->btn_generate->setText(QString::fromUtf8("Generate"));
+    ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
 }
@@ -322,5 +391,10 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     menu.addAction(copyAct);
     menu.addAction(removeAct);
     menu.exec(ui->tableWidget->mapToGlobal(pos));
+}
+
+void Widget::on_btn_add_empty_row_clicked()
+{
+    ui->tableWidget->insertRow(ui->tableWidget->rowCount());
 }
 

@@ -5,6 +5,7 @@
 #include <QTextEdit>
 #include <QFutureWatcher>
 #include <QAction>
+#include <qtablewidget.h>
 
 #include "stream_cipher.h"
 
@@ -21,6 +22,8 @@ class Widget : public QWidget
 public:
     Widget(QWidget *parent = nullptr);
     ~Widget();
+
+    bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
     void seed_has_been_set();
@@ -46,6 +49,8 @@ private slots:
     void on_spbx_pass_len_valueChanged(int arg1);
 
     void on_spbx_pass_len_editingFinished();
+
+    void on_btn_add_empty_row_clicked();
 
 signals:
     void master_phrase_ready();
