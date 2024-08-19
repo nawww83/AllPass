@@ -5,7 +5,10 @@
 #include <QTextEdit>
 #include <QFutureWatcher>
 #include <QAction>
-#include <qtablewidget.h>
+#include <QLineEdit>
+#include <QVBoxLayout>
+#include <QDialog>
+#include <QDialogButtonBox>
 
 #include "stream_cipher.h"
 
@@ -20,7 +23,7 @@ class Widget : public QWidget
     Q_OBJECT
 
 public:
-    Widget(QWidget *parent = nullptr);
+    Widget(QWidget *parent = nullptr, QString pin = "");
     ~Widget();
 
     bool eventFilter(QObject *object, QEvent *event) override;
@@ -52,6 +55,8 @@ private slots:
 
     void on_btn_add_empty_row_clicked();
 
+    void on_btn_save_to_store_clicked();
+
 signals:
     void master_phrase_ready();
 
@@ -65,6 +70,7 @@ private:
     QFutureWatcher<QVector<lfsr8::u64>> watcher_generate;
     QAction *copyAct;
     QAction *removeAct;
+    QString mPin;
 };
 
 class MyTextEdit : public QTextEdit
@@ -89,6 +95,37 @@ protected:
         QTextEdit::closeEvent(event);
         mIsClosing = false;
     }
+};
+
+class MyDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    MyDialog(QWidget *parent = nullptr) : QDialog(parent)
+    {
+        setWindowTitle("Enter your 4-digits PIN");
+        QVBoxLayout *layout = new QVBoxLayout;
+
+        le_pin = new QLineEdit(this);
+        le_pin->setInputMask("9999");
+        layout->addWidget(le_pin);
+
+        buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok
+                                         | QDialogButtonBox::Cancel);
+
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+        layout->addWidget(buttonBox);
+        setLayout(layout);
+    }
+    QString get_pin() const {
+        return le_pin ? le_pin->text() : "";
+    }
+
+private:
+    QLineEdit* le_pin;
+    QDialogButtonBox *buttonBox;
 };
 
 #endif // WIDGET_H

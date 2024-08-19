@@ -10,7 +10,6 @@
 #include <QContextMenuEvent>
 #include <QIcon>
 #include <QClipboard>
-#include <qmimedata.h>
 #include <QStyledItemDelegate>
 
 #include "worker.h"
@@ -21,21 +20,21 @@ static constexpr auto VERSION = "v1.0";
 
 namespace main {
 lfsr_rng::Generators cipher;
-Worker w;
+Worker worker;
 key::Key key;
 lfsr_hash::gens generator;
-QString copied_password;
 QVector<lfsr8::u64> pswd_buff;
 bool needToGeneratePasswords = true;
 }
 
 namespace {
 const auto gen_pass_txt = QString::fromUtf8("Generate a password");
-MyTextEdit* txt_edit_master_phrase{nullptr};
+MyTextEdit* txt_edit_master_phrase = nullptr;
+QTableWidgetItem* selected_context_item = nullptr;
 constexpr int num_of_passwords = 10; // buffer.
-int password_len;
 constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
-QTableWidgetItem* tw_item_to_remove = nullptr;
+int password_len;
+int pin_code[4]{};
 }
 
 static QString encode_94(lfsr8::u32 x) {
@@ -94,9 +93,10 @@ private:
     QObject *filter;
 };
 
-Widget::Widget(QWidget *parent)
+Widget::Widget(QWidget *parent, QString pin)
     : QWidget(parent)
     , ui(new Ui::Widget)
+    , mPin(pin)
 {
     ui->setupUi(this);
     //
@@ -117,6 +117,7 @@ Widget::Widget(QWidget *parent)
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
+    ui->btn_save_to_store->setEnabled(false);
     //
     ui->tableWidget->setSortingEnabled(false);
     QStringList table_header {"Login","Password","Comments"};
@@ -131,14 +132,14 @@ Widget::Widget(QWidget *parent)
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
     copyAct = new QAction(QIcon(),
-                         tr("&Copy"), this);
+                         tr("&Copy the item"), this);
     copyAct->setShortcuts(QKeySequence::Copy);
-    copyAct->setStatusTip(tr("Copy the item to clipboard"));
+    copyAct->setStatusTip(tr("Copy the item content to clipboard"));
     connect(copyAct, &QAction::triggered, this, &Widget::copy_clipboard);
     removeAct = new QAction(QIcon(),
-                          tr("&Delete row"), this);
+                          tr("&Delete the row"), this);
     removeAct->setShortcuts(QKeySequence::Delete);
-    removeAct->setStatusTip(tr("Delete the row"));
+    removeAct->setStatusTip(tr("Delete the current row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
     //
     connect(&watcher_seed, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_has_been_set);
@@ -146,6 +147,12 @@ Widget::Widget(QWidget *parent)
     connect(this, &Widget::values_ready, this, &Widget::try_to_add_row);
     //
     ui->btn_input_master_phrase->setFocus();
+    //
+    pin_code[0] = mPin[0].digitValue();
+    pin_code[1] = mPin[1].digitValue();
+    pin_code[2] = mPin[2].digitValue();
+    pin_code[3] = mPin[3].digitValue();
+    qDebug() << pin_code[0] << pin_code[1] << pin_code[2] << pin_code[3];
 }
 
 Widget::~Widget()
@@ -177,39 +184,30 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
 }
 
 void Widget::copy_clipboard() {
-    if (main::copied_password.isEmpty()) {
+    if (!selected_context_item) {
         return;
     }
     QClipboard * clipboard = QApplication::clipboard();
-    clipboard->setText(main::copied_password);
-    // Clear
-    #pragma optimize( "", off )
-        for (auto& el : main::copied_password) {
-            el = '\0';
-        }
-    #pragma optimize( "", on )
-    tw_item_to_remove = nullptr;
+    clipboard->setText(selected_context_item->text());
+    selected_context_item = nullptr;
 }
 
 void Widget::delete_row() {
-    if (tw_item_to_remove) {
-        QMessageBox mb;
-        mb.setInformativeText(QString::fromUtf8("Do you want to remove the row?"));
-        mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-        mb.setDefaultButton(QMessageBox::No);
-        int ret = mb.exec();
-        if (ret != QMessageBox::Yes) {
-            return;
-        }
-        ui->tableWidget->removeRow(tw_item_to_remove->row());
-        tw_item_to_remove = nullptr;
-        // Clear
-        #pragma optimize( "", off )
-                for (auto& el : main::copied_password) {
-                    el = '\0';
-                }
-        #pragma optimize( "", on )
+    QMessageBox mb;
+    mb.setInformativeText(QString::fromUtf8("Do you want to remove the row?"));
+    mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    mb.setDefaultButton(QMessageBox::No);
+    int ret = mb.exec();
+    if (ret != QMessageBox::Yes) {
+        return;
     }
+    if (!selected_context_item) {
+        const int row = ui->tableWidget->currentRow();
+        ui->tableWidget->removeRow(row);
+        return;
+    }
+    ui->tableWidget->removeRow(selected_context_item->row());
+    selected_context_item = nullptr;
 }
 
 void Widget::seed_has_been_set()
@@ -309,7 +307,7 @@ void Widget::set_master_key()
     for (int i=0; i<main::key.N(); ++i) {
         st[i] = main::key.get_key(i);
     }
-    watcher_seed.setFuture( main::w.seed(st) );
+    watcher_seed.setFuture( main::worker.seed(st) );
     ui->btn_generate->setEnabled(true);
     ui->btn_add_empty_row->setEnabled(true);
 }
@@ -326,6 +324,7 @@ void Widget::try_to_add_row() {
     item->setFlags(item->flags() ^ Qt::ItemIsEditable);
     ui->tableWidget->setItem(row++, 1, item);
     ui->tableWidget->resizeColumnToContents(1);
+    ui->btn_save_to_store->setEnabled(true);
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
@@ -353,8 +352,8 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(QString::fromUtf8("Wait..."));
     ui->btn_generate->setEnabled(false);
-    int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
-    watcher_generate.setFuture( main::w.gen_n(std::ref(main::cipher), Nw) );
+    const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
+    watcher_generate.setFuture( main::worker.gen_n(std::ref(main::cipher), Nw) );
 }
 
 void Widget::values_have_been_generated()
@@ -376,17 +375,13 @@ void Widget::on_spbx_pass_len_editingFinished()
 
 void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 {
-    if (!ui->tableWidget->itemAt(pos)) {
+    selected_context_item = ui->tableWidget->itemAt(pos);
+    if (!selected_context_item) {
+        QMenu menu;
+        menu.addAction(removeAct);
+        menu.exec(ui->tableWidget->mapToGlobal(pos));
         return;
     }
-    // Clear
-    #pragma optimize( "", off )
-        for (auto& el : main::copied_password) {
-            el = '\0';
-        }
-    #pragma optimize( "", on )
-    main::copied_password = ui->tableWidget->itemAt(pos)->text();
-    tw_item_to_remove = ui->tableWidget->itemAt(pos);
     QMenu menu;
     menu.addAction(copyAct);
     menu.addAction(removeAct);
@@ -396,5 +391,10 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 void Widget::on_btn_add_empty_row_clicked()
 {
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
+}
+
+void Widget::on_btn_save_to_store_clicked()
+{
+    ;
 }
 
