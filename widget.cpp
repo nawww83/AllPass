@@ -324,9 +324,6 @@ void Widget::update_master_phrase()
         }
     }
     //
-    QString storage = get_file_name(hash);
-    qDebug() << "Storage: " << storage;
-    //
     auto x = hash.first;
     auto y = hash.second;
     {
@@ -348,6 +345,42 @@ void Widget::update_master_phrase()
             el = '\0';
         }
     #pragma optimize( "", on )
+    //
+    {
+        uint8_t b_[64]{static_cast<uint8_t>(pin_code[1] + 31),
+                       static_cast<uint8_t>(pin_code[0] + 51),
+                       static_cast<uint8_t>(pin_code[2] + 22),
+                       static_cast<uint8_t>(pin_code[3] + 7)};
+        using namespace lfsr_hash;
+        const lfsr_hash::salt pin_salt {(((pin_code[2] + pin_code[1]) << 4) | (pin_code[0] + pin_code[3])) % 64,
+                                       static_cast<u16>(23*pin_code[0] + 5*pin_code[1] + 3*pin_code[2] + 8*pin_code[3] + 35),
+                                       static_cast<u16>(3*pin_code[0] + pin_code[1] + 3*pin_code[2] + 7*pin_code[3] + 17)};
+        lfsr_hash::u128 hash_fs = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
+        constexpr size_t blockSize = 64;
+        {
+            auto bytes = text.toUtf8();
+            {
+                const auto bytesRead = bytes.size();
+                const size_t r = bytesRead % blockSize;
+                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+            }
+            const auto bytesRead = bytes.size();
+            {
+                const salt& original_size_salt {static_cast<int>((bytesRead + 8 + pin_code[0] + pin_code[1] + pin_code[2] + 7*pin_code[3]) % blockSize),
+                                               static_cast<u16>(bytesRead*2 + 4 + 7*pin_code[0] + pin_code[1] + 3*pin_code[2] + 2*pin_code[3]),
+                                               static_cast<u16>(bytesRead*5 + 7 + pin_code[0] + 5*pin_code[1] + 12*pin_code[2] + pin_code[3])};
+                const size_t n = bytesRead / blockSize;
+                for (size_t i=0; i<n; ++i) {
+                    u128 inner_hash = hash128<blockSize>(main::generator,
+                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                    hash_fs.first ^= inner_hash.first;
+                    hash_fs.second ^= inner_hash.second;
+                }
+            }
+        }
+        QString storage = get_file_name(hash_fs);
+        qDebug() << "Storage: " << storage;
+    }
     emit master_phrase_ready();
 }
 
