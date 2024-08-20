@@ -73,6 +73,39 @@ static QString get_password(int len) {
     return pswd;
 }
 
+static QString get_file_name(lfsr_hash::u128 hash) {
+    static const auto allowed {"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"};
+    assert(std::strlen(allowed) == 62);
+    uint8_t b_[64]{};
+    for (int i=0; i<8; ++i) {
+        b_[2*i] = hash.first >> 8*i;
+        b_[2*i + 1] = hash.second >> 8*i;
+    }
+    using namespace lfsr_hash;
+    const lfsr_hash::salt pin_salt {static_cast<int>(hash.first % 31) + static_cast<int>(hash.first % 17) + 11,
+                                   static_cast<u16>(hash.first),
+                                   static_cast<u16>(hash.second)};
+    lfsr_hash::u128 hash2 = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
+    QString name {};
+    for (int i=0; i<8; ++i) {
+        name.push_back( allowed[(hash2.first >> 8*i) % 62] );
+        name.push_back( allowed[(hash2.second >> 8*i) % 62] );
+    }
+    for (int i=0; i<8; ++i) {
+        b_[16 + 2*i] = hash2.first >> 8*i;
+        b_[16 + 2*i + 1] = hash2.second >> 8*i;
+    }
+    const lfsr_hash::salt pin_salt2 {static_cast<int>(hash2.first % 17) + static_cast<int>(hash2.first % 31) + 13,
+                                   static_cast<u16>(hash2.first),
+                                   static_cast<u16>(hash2.second)};
+    lfsr_hash::u128 hash3 = lfsr_hash::hash128<64>(main::generator, b_, pin_salt2);
+    for (int i=0; i<8; ++i) {
+        name.push_back( allowed[(hash3.first >> 8*i) % 62] );
+        name.push_back( allowed[(hash3.second >> 8*i) % 62] );
+    }
+    return name;
+}
+
 class FilterDelegate : public QStyledItemDelegate
 {
 public:
@@ -93,11 +126,23 @@ private:
     QObject *filter;
 };
 
-Widget::Widget(QWidget *parent, QString pin)
+Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
-    , mPin(pin)
 {
+    {
+        QString mPin {pin};
+        pin_code[0] = mPin[0].digitValue();
+        pin_code[1] = mPin[1].digitValue();
+        pin_code[2] = mPin[2].digitValue();
+        pin_code[3] = mPin[3].digitValue();
+        #pragma optimize( "", off )
+        for (auto& el : mPin) {
+            el = '\0';
+        }
+        #pragma optimize( "", on )
+    }
+    //
     ui->setupUi(this);
     //
     QString title = "AllPass 128-bit ";
@@ -147,12 +192,6 @@ Widget::Widget(QWidget *parent, QString pin)
     connect(this, &Widget::values_ready, this, &Widget::try_to_add_row);
     //
     ui->btn_input_master_phrase->setFocus();
-    //
-    pin_code[0] = mPin[0].digitValue();
-    pin_code[1] = mPin[1].digitValue();
-    pin_code[2] = mPin[2].digitValue();
-    pin_code[3] = mPin[3].digitValue();
-    qDebug() << pin_code[0] << pin_code[1] << pin_code[2] << pin_code[3];
 }
 
 Widget::~Widget()
@@ -248,15 +287,22 @@ void Widget::on_btn_input_master_phrase_clicked()
 
 void Widget::update_master_phrase()
 {
-    auto text = txt_edit_master_phrase->toPlainText();
+    QString text {txt_edit_master_phrase->toPlainText()};
     txt_edit_master_phrase->clear();
     if (text.isEmpty()) {
         return;
     }
-    lfsr_hash::u128 hash = {0, 0};
+    uint8_t b_[64]{static_cast<uint8_t>(pin_code[0] + 12),
+                    static_cast<uint8_t>(pin_code[1] + 5),
+                    static_cast<uint8_t>(pin_code[2] + 1),
+                    static_cast<uint8_t>(pin_code[3] + 13)};
+    using namespace lfsr_hash;
+    const lfsr_hash::salt pin_salt {(((pin_code[0] + pin_code[1]) << 4) | (pin_code[2] + pin_code[3])) % 64,
+                                    static_cast<u16>(13*pin_code[0] + pin_code[1] + 7*pin_code[2] + pin_code[3] + 63),
+                                    static_cast<u16>(pin_code[0] + 41*pin_code[1] + pin_code[2] + 11*pin_code[3] + 61)};
+    lfsr_hash::u128 hash = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
     constexpr size_t blockSize = 64;
     {
-        using namespace lfsr_hash;
         auto bytes = text.toUtf8();
         {
             const auto bytesRead = bytes.size();
@@ -265,9 +311,9 @@ void Widget::update_master_phrase()
         }
         const auto bytesRead = bytes.size();
         {
-            const salt& original_size_salt {static_cast<int>(bytesRead % blockSize),
-                                           static_cast<u16>(bytesRead),
-                                           static_cast<u16>(bytesRead)};
+            const salt& original_size_salt {static_cast<int>((bytesRead + 7 + pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3]) % blockSize),
+                                           static_cast<u16>(bytesRead*5 + 1 + 3*pin_code[0] + pin_code[1] + 5*pin_code[2] + pin_code[3]),
+                                           static_cast<u16>(bytesRead*2 + 5 + pin_code[0] + 2*pin_code[1] + 17*pin_code[2] + pin_code[3])};
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(main::generator,
@@ -277,6 +323,10 @@ void Widget::update_master_phrase()
             }
         }
     }
+    //
+    QString storage = get_file_name(hash);
+    qDebug() << "Storage: " << storage;
+    //
     auto x = hash.first;
     auto y = hash.second;
     {
@@ -319,10 +369,10 @@ void Widget::try_to_add_row() {
         return;
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
-    int row = ui->tableWidget->rowCount() - 1;
+    const int row = ui->tableWidget->rowCount() - 1;
     QTableWidgetItem* item = new QTableWidgetItem(tr(pswd.toStdString().c_str()));
     item->setFlags(item->flags() ^ Qt::ItemIsEditable);
-    ui->tableWidget->setItem(row++, 1, item);
+    ui->tableWidget->setItem(row, 1, item);
     ui->tableWidget->resizeColumnToContents(1);
     ui->btn_save_to_store->setEnabled(true);
     ui->btn_generate->setText(gen_pass_txt);
@@ -338,7 +388,7 @@ void Widget::on_btn_generate_clicked()
             return;
         }
     }
-    if (! watcher_seed.isFinished()) {
+    if (!watcher_seed.isFinished()) {
         qDebug() << "Rejected: the cipher is not initialized yet!";
         return;
     }
@@ -346,7 +396,7 @@ void Widget::on_btn_generate_clicked()
         qDebug() << "Rejected: set the correct N value!";
         return;
     }
-    if (! main::cipher.is_succes()) {
+    if (!main::cipher.is_succes()) {
         qDebug() << "Rejected: set the master key first!";
         return;
     }

@@ -23,7 +23,7 @@ class Widget : public QWidget
     Q_OBJECT
 
 public:
-    Widget(QWidget *parent = nullptr, QString pin = "");
+    Widget(QString &&pin, QWidget *parent = nullptr);
     ~Widget();
 
     bool eventFilter(QObject *object, QEvent *event) override;
@@ -70,7 +70,6 @@ private:
     QFutureWatcher<QVector<lfsr8::u64>> watcher_generate;
     QAction *copyAct;
     QAction *removeAct;
-    QString mPin;
 };
 
 class MyTextEdit : public QTextEdit
@@ -121,6 +120,9 @@ public:
     }
     QString get_pin() const {
         return le_pin ? le_pin->text() : "";
+    }
+    void clear_pin() {
+        le_pin->clear();
     }
 
 private:
