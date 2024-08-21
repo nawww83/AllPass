@@ -19,25 +19,26 @@
 static constexpr auto VERSION = "v1.0";
 
 namespace main {
-lfsr_rng::Generators cipher;
-Worker worker;
-key::Key key;
-lfsr_hash::gens generator;
-QVector<lfsr8::u64> pswd_buff;
-bool needToGeneratePasswords = true;
+    lfsr_rng::Generators cipher;
+    Worker worker;
+    key::Key key;
+    lfsr_hash::gens generator;
+    QVector<lfsr8::u64> pswd_buff;
+    bool needToGeneratePasswords = true;
 }
 
 namespace {
-const auto gen_pass_txt = QString::fromUtf8("Generate a password");
-MyTextEdit* txt_edit_master_phrase = nullptr;
-QTableWidgetItem* selected_context_item = nullptr;
-constexpr int num_of_passwords = 10; // buffer.
-constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
-int password_len;
-int pin_code[4]{};
+    const auto gen_pass_txt = QString::fromUtf8("Generate a password");
+    MyTextEdit* txt_edit_master_phrase = nullptr;
+    QTableWidgetItem* selected_context_item = nullptr;
+    constexpr int num_of_passwords = 10; // buffer.
+    constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
+    int password_len;
+    int pin_code[4]{};
 }
 
-static QString encode_94(lfsr8::u32 x) {
+static QString encode_94(lfsr8::u32 x)
+{
     constexpr int m = 5; // See the password_len_per_request.
     QString res;
     res.resize(m);
@@ -50,7 +51,8 @@ static QString encode_94(lfsr8::u32 x) {
     return res;
 }
 
-static QString get_password(int len) {
+static QString get_password(int len)
+{
     QString pswd{};
     int capacity = 2;
     lfsr8::u64 raw64;
@@ -73,35 +75,97 @@ static QString get_password(int len) {
     return pswd;
 }
 
-static QString get_file_name(lfsr_hash::u128 hash) {
-    static const auto allowed {"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"};
-    assert(std::strlen(allowed) == 62);
+static lfsr_hash::salt pin_to_salt_1()
+{
+    using namespace lfsr_hash;
+    return {(((pin_code[0] + pin_code[1]) << 4) | (pin_code[2] + pin_code[3])) % 64,
+        static_cast<u16>(13*pin_code[0] + pin_code[1] + 7*pin_code[2] + pin_code[3] + 63),
+    static_cast<u16>(pin_code[0] + 41*pin_code[1] + pin_code[2] + 11*pin_code[3] + 61) };
+}
+
+static lfsr_hash::salt pin_to_salt_2()
+{
+    using namespace lfsr_hash;
+    return {(((pin_code[2] + pin_code[1]) << 4) | (pin_code[0] + pin_code[3])) % 64,
+            static_cast<u16>(23*pin_code[0] + 5*pin_code[1] + 3*pin_code[2] + 8*pin_code[3] + 35),
+            static_cast<u16>(3*pin_code[0] + pin_code[1] + 3*pin_code[2] + 7*pin_code[3] + 17)};
+}
+
+static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
+{
+    using namespace lfsr_hash;
+    return {static_cast<int>(hash.first % 31) + static_cast<int>(hash.first % 17) + 11,
+            static_cast<u16>(hash.first),
+     static_cast<u16>(hash.second)};
+}
+
+static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
+{
+    using namespace lfsr_hash;
+    return  {static_cast<int>(hash.first % 17) + static_cast<int>(hash.first % 31) + 13,
+            static_cast<u16>(hash.first),
+            static_cast<u16>(hash.second)};
+}
+
+static lfsr_hash::u128 pin_to_hash_1()
+{
+    using namespace lfsr_hash;
+    uint8_t b_[64]{static_cast<uint8_t>(pin_code[0] + 12),
+                   static_cast<uint8_t>(pin_code[1] + 5),
+                   static_cast<uint8_t>(pin_code[2] + 1),
+                   static_cast<uint8_t>(pin_code[3] + 13)};
+    return hash128<64>(main::generator, b_, pin_to_salt_1());
+}
+
+static lfsr_hash::u128 pin_to_hash_2() {
+    using namespace lfsr_hash;
+    uint8_t b_[64]{static_cast<uint8_t>(pin_code[1] + 31),
+                   static_cast<uint8_t>(pin_code[0] + 51),
+                   static_cast<uint8_t>(pin_code[2] + 22),
+                   static_cast<uint8_t>(pin_code[3] + 7)};
+    return hash128<64>(main::generator, b_, pin_to_salt_2());
+}
+
+static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
+{
+    using namespace lfsr_hash;
+    return {static_cast<int>((bytesRead + 7 + pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3]) % blockSize),
+            static_cast<u16>(bytesRead*5 + 1 + 3*pin_code[0] + pin_code[1] + 5*pin_code[2] + pin_code[3]),
+            static_cast<u16>(bytesRead*2 + 5 + pin_code[0] + 2*pin_code[1] + 17*pin_code[2] + pin_code[3])};
+}
+
+static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
+{
+    using namespace lfsr_hash;
+    return {static_cast<int>((bytesRead + 8 + pin_code[0] + pin_code[1] + pin_code[2] + 7*pin_code[3]) % blockSize),
+            static_cast<u16>(bytesRead*2 + 4 + 7*pin_code[0] + pin_code[1] + 3*pin_code[2] + 2*pin_code[3]),
+            static_cast<u16>(bytesRead*5 + 7 + pin_code[0] + 5*pin_code[1] + 12*pin_code[2] + pin_code[3])};
+}
+
+static QString get_file_name(lfsr_hash::u128 hash)
+{
+    using namespace lfsr_hash;
+    static const auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
+    assert(std::strlen(allowed) == 36);
     uint8_t b_[64]{};
     for (int i=0; i<8; ++i) {
         b_[2*i] = hash.first >> 8*i;
         b_[2*i + 1] = hash.second >> 8*i;
     }
-    using namespace lfsr_hash;
-    const lfsr_hash::salt pin_salt {static_cast<int>(hash.first % 31) + static_cast<int>(hash.first % 17) + 11,
-                                   static_cast<u16>(hash.first),
-                                   static_cast<u16>(hash.second)};
-    lfsr_hash::u128 hash2 = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
+    u128 hash2 = hash128<64>(main::generator, b_, hash_to_salt_1(hash));
     QString name {};
     for (int i=0; i<8; ++i) {
-        name.push_back( allowed[(hash2.first >> 8*i) % 62] );
-        name.push_back( allowed[(hash2.second >> 8*i) % 62] );
+        name.push_back( allowed[(hash2.first >> 8*i) % 36] );
+        name.push_back( allowed[(hash2.second >> 8*i) % 36] );
     }
     for (int i=0; i<8; ++i) {
         b_[16 + 2*i] = hash2.first >> 8*i;
         b_[16 + 2*i + 1] = hash2.second >> 8*i;
     }
-    const lfsr_hash::salt pin_salt2 {static_cast<int>(hash2.first % 17) + static_cast<int>(hash2.first % 31) + 13,
-                                   static_cast<u16>(hash2.first),
-                                   static_cast<u16>(hash2.second)};
-    lfsr_hash::u128 hash3 = lfsr_hash::hash128<64>(main::generator, b_, pin_salt2);
+    u128 hash3 = hash128<64>(main::generator, b_, hash_to_salt_2(hash2));
     for (int i=0; i<8; ++i) {
-        name.push_back( allowed[(hash3.first >> 8*i) % 62] );
-        name.push_back( allowed[(hash3.second >> 8*i) % 62] );
+        name.push_back( allowed[(hash3.first >> 8*i) % 36] );
+        name.push_back( allowed[(hash3.second >> 8*i) % 36] );
     }
     return name;
 }
@@ -292,15 +356,7 @@ void Widget::update_master_phrase()
     if (text.isEmpty()) {
         return;
     }
-    uint8_t b_[64]{static_cast<uint8_t>(pin_code[0] + 12),
-                    static_cast<uint8_t>(pin_code[1] + 5),
-                    static_cast<uint8_t>(pin_code[2] + 1),
-                    static_cast<uint8_t>(pin_code[3] + 13)};
-    using namespace lfsr_hash;
-    const lfsr_hash::salt pin_salt {(((pin_code[0] + pin_code[1]) << 4) | (pin_code[2] + pin_code[3])) % 64,
-                                    static_cast<u16>(13*pin_code[0] + pin_code[1] + 7*pin_code[2] + pin_code[3] + 63),
-                                    static_cast<u16>(pin_code[0] + 41*pin_code[1] + pin_code[2] + 11*pin_code[3] + 61)};
-    lfsr_hash::u128 hash = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
+    lfsr_hash::u128 hash = pin_to_hash_1();
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
@@ -311,9 +367,8 @@ void Widget::update_master_phrase()
         }
         const auto bytesRead = bytes.size();
         {
-            const salt& original_size_salt {static_cast<int>((bytesRead + 7 + pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3]) % blockSize),
-                                           static_cast<u16>(bytesRead*5 + 1 + 3*pin_code[0] + pin_code[1] + 5*pin_code[2] + pin_code[3]),
-                                           static_cast<u16>(bytesRead*2 + 5 + pin_code[0] + 2*pin_code[1] + 17*pin_code[2] + pin_code[3])};
+            using namespace lfsr_hash;
+            const salt& original_size_salt = pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(main::generator,
@@ -347,15 +402,7 @@ void Widget::update_master_phrase()
     #pragma optimize( "", on )
     //
     {
-        uint8_t b_[64]{static_cast<uint8_t>(pin_code[1] + 31),
-                       static_cast<uint8_t>(pin_code[0] + 51),
-                       static_cast<uint8_t>(pin_code[2] + 22),
-                       static_cast<uint8_t>(pin_code[3] + 7)};
-        using namespace lfsr_hash;
-        const lfsr_hash::salt pin_salt {(((pin_code[2] + pin_code[1]) << 4) | (pin_code[0] + pin_code[3])) % 64,
-                                       static_cast<u16>(23*pin_code[0] + 5*pin_code[1] + 3*pin_code[2] + 8*pin_code[3] + 35),
-                                       static_cast<u16>(3*pin_code[0] + pin_code[1] + 3*pin_code[2] + 7*pin_code[3] + 17)};
-        lfsr_hash::u128 hash_fs = lfsr_hash::hash128<64>(main::generator, b_, pin_salt);
+        lfsr_hash::u128 hash_fs = pin_to_hash_2();
         constexpr size_t blockSize = 64;
         {
             auto bytes = text.toUtf8();
@@ -366,9 +413,8 @@ void Widget::update_master_phrase()
             }
             const auto bytesRead = bytes.size();
             {
-                const salt& original_size_salt {static_cast<int>((bytesRead + 8 + pin_code[0] + pin_code[1] + pin_code[2] + 7*pin_code[3]) % blockSize),
-                                               static_cast<u16>(bytesRead*2 + 4 + 7*pin_code[0] + pin_code[1] + 3*pin_code[2] + 2*pin_code[3]),
-                                               static_cast<u16>(bytesRead*5 + 7 + pin_code[0] + 5*pin_code[1] + 12*pin_code[2] + pin_code[3])};
+                using namespace lfsr_hash;
+                const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
                 const size_t n = bytesRead / blockSize;
                 for (size_t i=0; i<n; ++i) {
                     u128 inner_hash = hash128<blockSize>(main::generator,
