@@ -57,6 +57,8 @@ private slots:
 
     void on_btn_save_to_store_clicked();
 
+    void load_storage();
+
 signals:
     void master_phrase_ready();
 

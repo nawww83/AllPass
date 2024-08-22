@@ -11,6 +11,7 @@
 #include <QIcon>
 #include <QClipboard>
 #include <QStyledItemDelegate>
+#include <QFile>
 
 #include "worker.h"
 #include "key.h"
@@ -35,6 +36,7 @@ namespace {
     constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
     int password_len;
     int pin_code[4]{};
+    QString storage;
 }
 
 static QString encode_94(lfsr8::u32 x)
@@ -327,6 +329,9 @@ void Widget::seed_has_been_set()
         while (ui->tableWidget->rowCount() > 0) {
             ui->tableWidget->removeRow(0);
         }
+        load_storage();
+        ui->btn_generate->setEnabled(true);
+        ui->btn_add_empty_row->setEnabled(true);
         ui->btn_generate->setFocus();
     }
 }
@@ -396,9 +401,6 @@ void Widget::update_master_phrase()
     #pragma optimize( "", off )
         x ^= x; y ^= y;
         hash.first = 0; hash.second = 0;
-        for (auto& el : text) {
-            el = '\0';
-        }
     #pragma optimize( "", on )
     //
     {
@@ -424,9 +426,14 @@ void Widget::update_master_phrase()
                 }
             }
         }
-        QString storage = get_file_name(hash_fs);
-        qDebug() << "Storage: " << storage;
+        storage = get_file_name(hash_fs);
     }
+    // Clear
+    #pragma optimize( "", off )
+        for (auto& el : text) {
+            el = '\0';
+        }
+    #pragma optimize( "", on )
     emit master_phrase_ready();
 }
 
@@ -437,8 +444,6 @@ void Widget::set_master_key()
         st[i] = main::key.get_key(i);
     }
     watcher_seed.setFuture( main::worker.seed(st) );
-    ui->btn_generate->setEnabled(true);
-    ui->btn_add_empty_row->setEnabled(true);
 }
 
 void Widget::try_to_add_row() {
@@ -520,10 +525,73 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 void Widget::on_btn_add_empty_row_clicked()
 {
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
+    ui->btn_save_to_store->setEnabled(true);
 }
 
 void Widget::on_btn_save_to_store_clicked()
 {
-    ;
+    if (storage.isEmpty()) {
+        qDebug() << "Empty storage.";
+        return;
+    }
+    QFile file(storage);
+    if (file.open(QFile::WriteOnly | QFile::Text))
+    {
+        QTextStream data( &file );
+        QStringList strList;
+        for( int r = 0; r < ui->tableWidget->rowCount(); ++r )
+        {
+            strList.clear();
+            for( int c = 0; c < ui->tableWidget->columnCount(); ++c )
+            {
+                strList << ui->tableWidget->item(r, c)->text();
+            }
+            data << strList.join( "\31" ) + "\30";
+        }
+        file.close();
+        qDebug() << "Table has been saved!";
+    } else {
+        qDebug() << "Storage cannot be opened for writing.";
+    }
+}
+
+void Widget::load_storage()
+{
+    if (storage.isEmpty()) {
+        return;
+    }
+    if (ui->tableWidget->rowCount() > 0) {
+        return;
+    }
+    QFile file(storage);
+    QStringList rowOfData;
+    QStringList rowData;
+    QString data;
+    if (file.open(QFile::ReadOnly | QFile::Text))
+    {
+        data = file.readAll();
+        rowOfData = data.split("\30");
+        file.close();
+    } else {
+        return;
+    }
+    if (rowOfData.isEmpty()) {
+        return;
+    }
+    for (int x = 0; x < rowOfData.size(); x++)
+    {
+        rowData = rowOfData.at(x).split("\31");
+        if (rowData.size() == ui->tableWidget->columnCount()) {
+            ui->tableWidget->insertRow(x);
+        } else {
+            break;
+        }
+        for (int y = 0; y < rowData.size(); y++)
+        {
+            QTableWidgetItem *item = new QTableWidgetItem(rowData.at(y));
+            ui->tableWidget->setItem(x, y, item);
+        }
+    }
+    qDebug() << "Table has been loaded!";
 }
 
