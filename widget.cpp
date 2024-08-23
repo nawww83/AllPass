@@ -24,7 +24,8 @@ namespace main {
     Worker worker;
     key::Key key;
     lfsr_hash::gens generator;
-    QVector<lfsr8::u64> pswd_buff;
+    QVector<lfsr8::u64> pswd_buff{};
+    QString storage{};
     bool needToGeneratePasswords = true;
 }
 
@@ -36,7 +37,6 @@ namespace {
     constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
     int password_len;
     int pin_code[4]{};
-    QString storage;
 }
 
 static QString encode_94(lfsr8::u32 x)
@@ -80,17 +80,21 @@ static QString get_password(int len)
 static lfsr_hash::salt pin_to_salt_1()
 {
     using namespace lfsr_hash;
-    return {(((pin_code[0] + pin_code[1]) << 4) | (pin_code[2] + pin_code[3])) % 64,
-        static_cast<u16>(13*pin_code[0] + pin_code[1] + 7*pin_code[2] + pin_code[3] + 63),
-    static_cast<u16>(pin_code[0] + 41*pin_code[1] + pin_code[2] + 11*pin_code[3] + 61) };
+    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
+    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
+            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + 32768),
+            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + 32768) };
 }
 
 static lfsr_hash::salt pin_to_salt_2()
 {
     using namespace lfsr_hash;
-    return {(((pin_code[2] + pin_code[1]) << 4) | (pin_code[0] + pin_code[3])) % 64,
-            static_cast<u16>(23*pin_code[0] + 5*pin_code[1] + 3*pin_code[2] + 8*pin_code[3] + 35),
-            static_cast<u16>(3*pin_code[0] + pin_code[1] + 3*pin_code[2] + 7*pin_code[3] + 17)};
+    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
+    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
+            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + 32768),
+            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + 32768) };
 }
 
 static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
@@ -98,13 +102,13 @@ static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
     using namespace lfsr_hash;
     return {static_cast<int>(hash.first % 31) + static_cast<int>(hash.first % 17) + 11,
             static_cast<u16>(hash.first),
-     static_cast<u16>(hash.second)};
+            static_cast<u16>(hash.second)};
 }
 
 static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
-    return  {static_cast<int>(hash.first % 17) + static_cast<int>(hash.first % 31) + 13,
+    return  {static_cast<int>(hash.first % 19) + static_cast<int>(hash.first % 31) + 13,
             static_cast<u16>(hash.first),
             static_cast<u16>(hash.second)};
 }
@@ -112,43 +116,54 @@ static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
 static lfsr_hash::u128 pin_to_hash_1()
 {
     using namespace lfsr_hash;
-    uint8_t b_[64]{static_cast<uint8_t>(pin_code[0] + 12),
-                   static_cast<uint8_t>(pin_code[1] + 5),
-                   static_cast<uint8_t>(pin_code[2] + 1),
-                   static_cast<uint8_t>(pin_code[3] + 13)};
+    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
+    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
+                   static_cast<uint8_t>(x2_4bit),
+                   static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
+                   static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
     return hash128<64>(main::generator, b_, pin_to_salt_1());
 }
 
 static lfsr_hash::u128 pin_to_hash_2() {
     using namespace lfsr_hash;
-    uint8_t b_[64]{static_cast<uint8_t>(pin_code[1] + 31),
-                   static_cast<uint8_t>(pin_code[0] + 51),
-                   static_cast<uint8_t>(pin_code[2] + 22),
-                   static_cast<uint8_t>(pin_code[3] + 7)};
+    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
+    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    uint8_t b_[64]{static_cast<uint8_t>(x2_4bit),
+                   static_cast<uint8_t>(x1_4bit),
+                   static_cast<uint8_t>((x2_4bit << 4) | x1_4bit),
+                   static_cast<uint8_t>((x1_4bit << 4) | x2_4bit)};
     return hash128<64>(main::generator, b_, pin_to_salt_2());
 }
 
 static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    return {static_cast<int>((bytesRead + 7 + pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3]) % blockSize),
-            static_cast<u16>(bytesRead*5 + 1 + 3*pin_code[0] + pin_code[1] + 5*pin_code[2] + pin_code[3]),
-            static_cast<u16>(bytesRead*2 + 5 + pin_code[0] + 2*pin_code[1] + 17*pin_code[2] + pin_code[3])};
+    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
+    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
+            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + blockSize),
+            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + bytesRead) };
 }
 
 static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    return {static_cast<int>((bytesRead + 8 + pin_code[0] + pin_code[1] + pin_code[2] + 7*pin_code[3]) % blockSize),
-            static_cast<u16>(bytesRead*2 + 4 + 7*pin_code[0] + pin_code[1] + 3*pin_code[2] + 2*pin_code[3]),
-            static_cast<u16>(bytesRead*5 + 7 + pin_code[0] + 5*pin_code[1] + 12*pin_code[2] + pin_code[3])};
+    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
+    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
+            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + bytesRead),
+            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + blockSize) };
 }
 
 static QString get_file_name(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
     static const auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
-    assert(std::strlen(allowed) == 36);
+    if (std::strlen(allowed) < 36) {
+        qDebug() << "Allowed alphabet is small.";
+        return "";
+    }
     uint8_t b_[64]{};
     for (int i=0; i<8; ++i) {
         b_[2*i] = hash.first >> 8*i;
@@ -426,7 +441,7 @@ void Widget::update_master_phrase()
                 }
             }
         }
-        storage = get_file_name(hash_fs);
+        main::storage = get_file_name(hash_fs);
     }
     // Clear
     #pragma optimize( "", off )
@@ -530,11 +545,11 @@ void Widget::on_btn_add_empty_row_clicked()
 
 void Widget::on_btn_save_to_store_clicked()
 {
-    if (storage.isEmpty()) {
+    if (main::storage.isEmpty()) {
         qDebug() << "Empty storage.";
         return;
     }
-    QFile file(storage);
+    QFile file(main::storage);
     if (file.open(QFile::WriteOnly | QFile::Text))
     {
         QTextStream data( &file );
@@ -544,7 +559,10 @@ void Widget::on_btn_save_to_store_clicked()
             strList.clear();
             for( int c = 0; c < ui->tableWidget->columnCount(); ++c )
             {
-                strList << ui->tableWidget->item(r, c)->text();
+                if (ui->tableWidget->item(r, c))
+                    strList << ui->tableWidget->item(r, c)->text();
+                else
+                    strList << "";
             }
             data << strList.join( "\31" ) + "\30";
         }
@@ -557,13 +575,13 @@ void Widget::on_btn_save_to_store_clicked()
 
 void Widget::load_storage()
 {
-    if (storage.isEmpty()) {
+    if (main::storage.isEmpty()) {
         return;
     }
     if (ui->tableWidget->rowCount() > 0) {
         return;
     }
-    QFile file(storage);
+    QFile file(main::storage);
     QStringList rowOfData;
     QStringList rowData;
     QString data;
