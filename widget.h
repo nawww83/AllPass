@@ -29,9 +29,13 @@ public:
     bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
-    void seed_has_been_set();
+    void seed_pass_has_been_set();
 
     void values_have_been_generated();
+
+    void seed_enc_has_been_set();
+
+    void seed_dec_has_been_set();
 
     void on_btn_input_master_phrase_clicked();
 
@@ -55,7 +59,7 @@ private slots:
 
     void on_btn_add_empty_row_clicked();
 
-    void on_btn_save_to_store_clicked();
+    void save_to_store();
 
     void load_storage();
 
@@ -68,8 +72,10 @@ protected:
 
 private:
     Ui::Widget *ui;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed;
-    QFutureWatcher<QVector<lfsr8::u64>> watcher_generate;
+    QFutureWatcher<lfsr_rng::Generators> watcher_seed_pass_gen;
+    QFutureWatcher<lfsr_rng::Generators> watcher_seed_enc_gen;
+    QFutureWatcher<lfsr_rng::Generators> watcher_seed_dec_gen;
+    QFutureWatcher<QVector<lfsr8::u64>> watcher_passwords;
     QAction *copyAct;
     QAction *removeAct;
 };

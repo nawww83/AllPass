@@ -12,6 +12,7 @@
 #include <QClipboard>
 #include <QStyledItemDelegate>
 #include <QFile>
+#include <QStringEncoder>
 
 #include "worker.h"
 #include "key.h"
@@ -20,23 +21,33 @@
 static constexpr auto VERSION = "v1.0";
 
 namespace main {
-    lfsr_rng::Generators cipher;
+    lfsr_rng::Generators pass_gen;
     Worker worker;
     key::Key key;
-    lfsr_hash::gens generator;
+    lfsr_hash::gens hash_gen;
     QVector<lfsr8::u64> pswd_buff{};
     QString storage{};
+    int pin_code[4]{};
     bool needToGeneratePasswords = true;
+}
+
+namespace enc {
+    lfsr_rng::Generators gamma_gen;
+    Worker worker;
+}
+
+namespace dec {
+    lfsr_rng::Generators gamma_gen;
+    Worker worker;
 }
 
 namespace {
     const auto gen_pass_txt = QString::fromUtf8("Generate a password");
     MyTextEdit* txt_edit_master_phrase = nullptr;
     QTableWidgetItem* selected_context_item = nullptr;
-    constexpr int num_of_passwords = 10; // buffer.
+    constexpr int num_of_passwords = 10; // in pswd_buff.
     constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
     int password_len;
-    int pin_code[4]{};
 }
 
 static QString encode_94(lfsr8::u32 x)
@@ -80,21 +91,21 @@ static QString get_password(int len)
 static lfsr_hash::salt pin_to_salt_1()
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
+    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
     return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + 32768),
-            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + 32768) };
+            static_cast<u16>(1800*(main::pin_code[0] + main::pin_code[1] - main::pin_code[2] - main::pin_code[3]) + 32768),
+            static_cast<u16>(1800*(main::pin_code[0] - main::pin_code[1] + main::pin_code[2] - main::pin_code[3]) + 32768) };
 }
 
 static lfsr_hash::salt pin_to_salt_2()
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
-    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + 32768),
-            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + 32768) };
+            static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + 32768),
+            static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + 32768) };
 }
 
 static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
@@ -116,44 +127,44 @@ static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
 static lfsr_hash::u128 pin_to_hash_1()
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
+    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
     uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(main::generator, b_, pin_to_salt_1());
+    return hash128<64>(main::hash_gen, b_, pin_to_salt_1());
 }
 
 static lfsr_hash::u128 pin_to_hash_2() {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
-    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     uint8_t b_[64]{static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>(x1_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit)};
-    return hash128<64>(main::generator, b_, pin_to_salt_2());
+    return hash128<64>(main::hash_gen, b_, pin_to_salt_2());
 }
 
 static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 6) ^ (pin_code[2] + 3) ^ (pin_code[3] + 0);
+    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
+    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
     return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + blockSize),
-            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + bytesRead) };
+            static_cast<u16>(1800*(main::pin_code[0] + main::pin_code[1] - main::pin_code[2] - main::pin_code[3]) + blockSize),
+            static_cast<u16>(1800*(main::pin_code[0] - main::pin_code[1] + main::pin_code[2] - main::pin_code[3]) + bytesRead) };
 }
 
 static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 0) ^ (pin_code[2] + 6) ^ (pin_code[3] + 0);
-    const int x2_4bit = (pin_code[0] + 6) ^ (pin_code[1] + 0) ^ (pin_code[2] + 0) ^ (pin_code[3] + 3);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + bytesRead),
-            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + blockSize) };
+            static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + bytesRead),
+            static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + blockSize) };
 }
 
 static QString get_file_name(lfsr_hash::u128 hash)
@@ -169,7 +180,7 @@ static QString get_file_name(lfsr_hash::u128 hash)
         b_[2*i] = hash.first >> 8*i;
         b_[2*i + 1] = hash.second >> 8*i;
     }
-    u128 hash2 = hash128<64>(main::generator, b_, hash_to_salt_1(hash));
+    u128 hash2 = hash128<64>(main::hash_gen, b_, hash_to_salt_1(hash));
     QString name {};
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash2.first >> 8*i) % 36] );
@@ -179,7 +190,7 @@ static QString get_file_name(lfsr_hash::u128 hash)
         b_[16 + 2*i] = hash2.first >> 8*i;
         b_[16 + 2*i + 1] = hash2.second >> 8*i;
     }
-    u128 hash3 = hash128<64>(main::generator, b_, hash_to_salt_2(hash2));
+    u128 hash3 = hash128<64>(main::hash_gen, b_, hash_to_salt_2(hash2));
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash3.first >> 8*i) % 36] );
         name.push_back( allowed[(hash3.second >> 8*i) % 36] );
@@ -213,10 +224,10 @@ Widget::Widget(QString&& pin, QWidget *parent)
 {
     {
         QString mPin {pin};
-        pin_code[0] = mPin[0].digitValue();
-        pin_code[1] = mPin[1].digitValue();
-        pin_code[2] = mPin[2].digitValue();
-        pin_code[3] = mPin[3].digitValue();
+        main::pin_code[0] = mPin[0].digitValue();
+        main::pin_code[1] = mPin[1].digitValue();
+        main::pin_code[2] = mPin[2].digitValue();
+        main::pin_code[3] = mPin[3].digitValue();
         #pragma optimize( "", off )
         for (auto& el : mPin) {
             el = '\0';
@@ -243,7 +254,6 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
-    ui->btn_save_to_store->setEnabled(false);
     //
     ui->tableWidget->setSortingEnabled(false);
     QStringList table_header {"Login","Password","Comments"};
@@ -268,8 +278,10 @@ Widget::Widget(QString&& pin, QWidget *parent)
     removeAct->setStatusTip(tr("Delete the current row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
     //
-    connect(&watcher_seed, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_has_been_set);
-    connect(&watcher_generate, &QFutureWatcher<QVector<lfsr8::u64> >::finished, this, &Widget::values_have_been_generated);
+    connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
+    connect(&watcher_passwords, &QFutureWatcher<QVector<lfsr8::u64> >::finished, this, &Widget::values_have_been_generated);
+    connect(&watcher_seed_enc_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_enc_has_been_set);
+    connect(&watcher_seed_dec_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_dec_has_been_set);
     connect(this, &Widget::values_ready, this, &Widget::try_to_add_row);
     //
     ui->btn_input_master_phrase->setFocus();
@@ -277,6 +289,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
 Widget::~Widget()
 {
+    save_to_store();
     delete ui;
 }
 
@@ -330,16 +343,41 @@ void Widget::delete_row() {
     selected_context_item = nullptr;
 }
 
-void Widget::seed_has_been_set()
+void Widget::seed_pass_has_been_set()
 {
-    main::cipher = watcher_seed.result();
+    main::pass_gen = watcher_seed_pass_gen.result();
     QMessageBox mb;
-    if (!main::cipher.is_succes())
+    if (!main::pass_gen.is_succes())
     {
         mb.warning(this, "Failure", "The key was not set: put another phrase.");
     } else {
         mb.information(this, "Success", "The key was set");
-        ui->btn_generate->setText(gen_pass_txt);
+    }
+}
+
+void Widget::seed_enc_has_been_set()
+{
+    enc::gamma_gen = watcher_seed_enc_gen.result();
+    QMessageBox mb;
+    if (!enc::gamma_gen.is_succes())
+    {
+        mb.warning(this, "Failure", "The encryption was not set: put another phrase or pin.");
+    } else {
+        // qDebug() << enc::gamma_gen.next_u64();
+        // mb.information(this, "Success", "The encryption was set");
+    }
+}
+
+void Widget::seed_dec_has_been_set()
+{
+    dec::gamma_gen = watcher_seed_dec_gen.result();
+    QMessageBox mb;
+    if (!dec::gamma_gen.is_succes())
+    {
+        mb.warning(this, "Failure", "The decryption was not set: put another phrase or pin.");
+    } else {
+        // qDebug() << dec::gamma_gen.next_u64();
+        // mb.information(this, "Success", "The encryption was set");
         ui->tableWidget->clearContents();
         while (ui->tableWidget->rowCount() > 0) {
             ui->tableWidget->removeRow(0);
@@ -349,6 +387,7 @@ void Widget::seed_has_been_set()
         ui->btn_add_empty_row->setEnabled(true);
         ui->btn_generate->setFocus();
     }
+    ui->btn_generate->setText(gen_pass_txt);
 }
 
 void Widget::on_btn_input_master_phrase_clicked()
@@ -391,7 +430,7 @@ void Widget::update_master_phrase()
             const salt& original_size_salt = pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(main::generator,
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
                                                      reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                 hash.first ^= inner_hash.first;
                 hash.second ^= inner_hash.second;
@@ -434,7 +473,7 @@ void Widget::update_master_phrase()
                 const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
                 const size_t n = bytesRead / blockSize;
                 for (size_t i=0; i<n; ++i) {
-                    u128 inner_hash = hash128<blockSize>(main::generator,
+                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
                                                          reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                     hash_fs.first ^= inner_hash.first;
                     hash_fs.second ^= inner_hash.second;
@@ -442,6 +481,18 @@ void Widget::update_master_phrase()
             }
         }
         main::storage = get_file_name(hash_fs);
+        lfsr_rng::STATE st;
+        for (int i=0; i<8; ++i) {
+            lfsr_hash::u16 byte_1 = 255 & (hash_fs.first >> 8*i);
+            lfsr_hash::u16 byte_2 = 255 & (hash_fs.second >> 8*i);
+            st[i] = (byte_1 << 8) | byte_2;
+        }
+        watcher_seed_enc_gen.setFuture(enc::worker.seed(st));
+        watcher_seed_dec_gen.setFuture(dec::worker.seed(st));
+        // Clear
+        #pragma optimize( "", off )
+            hash_fs = {0, 0};
+        #pragma optimize( "", on )
     }
     // Clear
     #pragma optimize( "", off )
@@ -458,7 +509,7 @@ void Widget::set_master_key()
     for (int i=0; i<main::key.N(); ++i) {
         st[i] = main::key.get_key(i);
     }
-    watcher_seed.setFuture( main::worker.seed(st) );
+    watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
 }
 
 void Widget::try_to_add_row() {
@@ -473,7 +524,6 @@ void Widget::try_to_add_row() {
     item->setFlags(item->flags() ^ Qt::ItemIsEditable);
     ui->tableWidget->setItem(row, 1, item);
     ui->tableWidget->resizeColumnToContents(1);
-    ui->btn_save_to_store->setEnabled(true);
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
@@ -487,7 +537,7 @@ void Widget::on_btn_generate_clicked()
             return;
         }
     }
-    if (!watcher_seed.isFinished()) {
+    if (!watcher_seed_pass_gen.isFinished()) {
         qDebug() << "Rejected: the cipher is not initialized yet!";
         return;
     }
@@ -495,19 +545,19 @@ void Widget::on_btn_generate_clicked()
         qDebug() << "Rejected: set the correct N value!";
         return;
     }
-    if (!main::cipher.is_succes()) {
+    if (!main::pass_gen.is_succes()) {
         qDebug() << "Rejected: set the master key first!";
         return;
     }
     ui->btn_generate->setText(QString::fromUtf8("Wait..."));
     ui->btn_generate->setEnabled(false);
     const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
-    watcher_generate.setFuture( main::worker.gen_n(std::ref(main::cipher), Nw) );
+    watcher_passwords.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
 }
 
 void Widget::values_have_been_generated()
 {
-    main::pswd_buff = watcher_generate.result();
+    main::pswd_buff = watcher_passwords.result();
     emit values_ready();
 }
 
@@ -540,73 +590,141 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 void Widget::on_btn_add_empty_row_clicked()
 {
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
-    ui->btn_save_to_store->setEnabled(true);
 }
 
-void Widget::on_btn_save_to_store_clicked()
+void Widget::save_to_store()
 {
     if (main::storage.isEmpty()) {
         qDebug() << "Empty storage.";
         return;
     }
+    if (!enc::gamma_gen.is_succes()) {
+        qDebug() << "Empty encryption.";
+        return;
+    }
     QFile file(main::storage);
-    if (file.open(QFile::WriteOnly | QFile::Text))
+    if (file.open(QFile::WriteOnly))
     {
-        QTextStream data( &file );
         QStringList strList;
+        int aligner64 = 0;
+        const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
+        #pragma optimize( "", off )
+        for (int i = 0; i < sum_of_pin; ++i) {
+            enc::gamma_gen.next_u64();
+        }
+        #pragma optimize( "", on )
+        lfsr_rng::u64 gamma = 0;
+        QByteArray out;
         for( int r = 0; r < ui->tableWidget->rowCount(); ++r )
         {
             strList.clear();
             for( int c = 0; c < ui->tableWidget->columnCount(); ++c )
             {
-                if (ui->tableWidget->item(r, c))
+                if (ui->tableWidget->item(r, c)) {
                     strList << ui->tableWidget->item(r, c)->text();
-                else
-                    strList << "";
+                }
+                else {
+                    strList << "\08";
+                }
             }
-            data << strList.join( "\31" ) + "\30";
+            auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+            QByteArray encodedString = fromUtf16(strList.join( "\30" ) + "\31");
+            QByteArray in = encodedString.toHex();
+            for (auto it = in.begin(); it != in.end(); it++) {
+                if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
+                    gamma = enc::gamma_gen.next_u64();
+                    // qDebug() << "save: gamma: " << gamma;
+                }
+                // qDebug() << "save: raw byte: " << int(*it) << ", gamma: " << int(char(gamma)) << ", encrypted: " << int(*it ^ char(gamma));
+                out.push_back(*it ^ char(gamma));
+                gamma >>= 8;
+                ++aligner64;
+            }
         }
+        #pragma optimize( "", off )
+        if (aligner64 % sizeof(lfsr_rng::u64) != 0) {
+            enc::gamma_gen.next_u64();
+        }
+        #pragma optimize( "", on )
+        file.write(out);
         file.close();
         qDebug() << "Table has been saved!";
     } else {
-        qDebug() << "Storage cannot be opened for writing.";
+        ;
+        // qDebug() << "Storage cannot be opened for writing.";
     }
 }
 
 void Widget::load_storage()
 {
     if (main::storage.isEmpty()) {
+        qDebug() << "Empty storage.";
+        return;
+    }
+    if (!dec::gamma_gen.is_succes()) {
+        qDebug() << "Empty decryption.";
         return;
     }
     if (ui->tableWidget->rowCount() > 0) {
+        qDebug() << "Table not empty.";
         return;
     }
     QFile file(main::storage);
     QStringList rowOfData;
     QStringList rowData;
-    QString data;
-    if (file.open(QFile::ReadOnly | QFile::Text))
+    QByteArray data;
+    if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
-        rowOfData = data.split("\30");
+        const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
+        #pragma optimize( "", off )
+        for (int i = 0; i < sum_of_pin; ++i) {
+            dec::gamma_gen.next_u64();
+        }
+        #pragma optimize( "", on )
+        int aligner64 = 0;
+        lfsr_rng::u64 gamma = 0;
+        QByteArray in;
+        for (auto it = data.begin(); it != data.end(); it++) {
+            if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
+                gamma = dec::gamma_gen.next_u64();
+                // qDebug() << "load: gamma: " << gamma;
+            }
+            // qDebug() << "Load: encrypted byte: " << int(*it) << ", decrypted: " << int(*it ^ char(gamma)) << ", gamma: " << int(char(gamma));
+            in.push_back(*it ^ char(gamma));
+            gamma >>= 8;
+            ++aligner64;
+        }
+        auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
+        QString decoded_string = toUtf16(QByteArray::fromHex(in));
+        rowOfData = decoded_string.split("\31");
+        #pragma optimize( "", off )
+        if (aligner64 % sizeof(lfsr_rng::u64) != 0) {
+            dec::gamma_gen.next_u64();
+        }
+        #pragma optimize( "", on )
         file.close();
     } else {
+        // qDebug() << "Storage cannot be opened.";
         return;
     }
     if (rowOfData.isEmpty()) {
+        qDebug() << "Empty row data.";
         return;
     }
     for (int x = 0; x < rowOfData.size(); x++)
     {
-        rowData = rowOfData.at(x).split("\31");
+        rowData = rowOfData.at(x).split("\30");
         if (rowData.size() == ui->tableWidget->columnCount()) {
             ui->tableWidget->insertRow(x);
         } else {
+            qDebug() << "Unrecognized column size.";
             break;
         }
         for (int y = 0; y < rowData.size(); y++)
         {
-            QTableWidgetItem *item = new QTableWidgetItem(rowData.at(y));
+            const QString& row_str = rowData.at(y);
+            QTableWidgetItem *item = new QTableWidgetItem( row_str == "\08" ? "" : row_str);
             ui->tableWidget->setItem(x, y, item);
         }
     }
