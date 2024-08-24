@@ -50,6 +50,20 @@ namespace {
     int password_len;
 }
 
+static inline uint8_t rotl8(uint8_t n, unsigned int c)
+{
+    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
+    c &= mask;
+    return (n << c) | (n >> ( (-c) & mask ));
+}
+
+static inline uint8_t rotr8(uint8_t n, unsigned int c)
+{
+    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
+    c &= mask;
+    return (n >> c) | (n << ( (-c) & mask ));
+}
+
 static QString encode_94(lfsr8::u32 x)
 {
     constexpr int m = 5; // See the password_len_per_request.
@@ -481,10 +495,31 @@ void Widget::update_master_phrase()
             }
         }
         main::storage = get_file_name(hash_fs);
+        lfsr_hash::u128 hash_enc = pin_to_hash_1();
+        {
+            auto bytes = text.toUtf8();
+            {
+                const auto bytesRead = bytes.size();
+                const size_t r = bytesRead % blockSize;
+                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+            }
+            const auto bytesRead = bytes.size();
+            {
+                using namespace lfsr_hash;
+                const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
+                const size_t n = bytesRead / blockSize;
+                for (size_t i=0; i<n; ++i) {
+                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                    hash_enc.first ^= inner_hash.first;
+                    hash_enc.second ^= inner_hash.second;
+                }
+            }
+        }
         lfsr_rng::STATE st;
         for (int i=0; i<8; ++i) {
-            lfsr_hash::u16 byte_1 = 255 & (hash_fs.first >> 8*i);
-            lfsr_hash::u16 byte_2 = 255 & (hash_fs.second >> 8*i);
+            lfsr_hash::u16 byte_1 = 255 & (hash_enc.first >> 8*i);
+            lfsr_hash::u16 byte_2 = 255 & (hash_enc.second >> 8*i);
             st[i] = (byte_1 << 8) | byte_2;
         }
         watcher_seed_enc_gen.setFuture(enc::worker.seed(st));
@@ -492,14 +527,17 @@ void Widget::update_master_phrase()
         // Clear
         #pragma optimize( "", off )
             hash_fs = {0, 0};
+            hash_enc = {0, 0};
+            st[0] = 0;
+            st[1] = 0;
+            st[2] = 0;
+            st[3] = 0;
+            st[4] = 0;
+            st[5] = 0;
+            st[6] = 0;
+            st[7] = 0;
         #pragma optimize( "", on )
     }
-    // Clear
-    #pragma optimize( "", off )
-        for (auto& el : text) {
-            el = '\0';
-        }
-    #pragma optimize( "", on )
     emit master_phrase_ready();
 }
 
@@ -509,6 +547,29 @@ void Widget::set_master_key()
     for (int i=0; i<main::key.N(); ++i) {
         st[i] = main::key.get_key(i);
     }
+    // Clear
+    #pragma optimize( "", off )
+        using main::key;
+        key.set_key(0, 3);
+        key.set_key(0, 2);
+        key.set_key(0, 1);
+        key.set_key(0, 0);
+        key.set_key(0, 7);
+        key.set_key(0, 6);
+        key.set_key(0, 5);
+        key.set_key(0, 4);
+    #pragma optimize( "", on )
+    // Clear
+    #pragma optimize( "", off )
+        st[0] = 0;
+        st[1] = 0;
+        st[2] = 0;
+        st[3] = 0;
+        st[4] = 0;
+        st[5] = 0;
+        st[6] = 0;
+        st[7] = 0;
+    #pragma optimize( "", on )
     watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
 }
 
@@ -538,15 +599,15 @@ void Widget::on_btn_generate_clicked()
         }
     }
     if (!watcher_seed_pass_gen.isFinished()) {
-        qDebug() << "Rejected: the cipher is not initialized yet!";
+        qDebug() << "Rejected: PRNG is not initialized yet!";
         return;
     }
     if (num_of_passwords < 1) {
-        qDebug() << "Rejected: set the correct N value!";
+        qDebug() << "Rejected: not correct password length!";
         return;
     }
     if (!main::pass_gen.is_succes()) {
-        qDebug() << "Rejected: set the master key first!";
+        qDebug() << "Rejected: set the master phrase first!";
         return;
     }
     ui->btn_generate->setText(QString::fromUtf8("Wait..."));
@@ -602,6 +663,10 @@ void Widget::save_to_store()
         qDebug() << "Empty encryption.";
         return;
     }
+    if (ui->tableWidget->rowCount() < 1) {
+        qDebug() << "Table is empty.";
+        return;
+    }
     QFile file(main::storage);
     if (file.open(QFile::WriteOnly))
     {
@@ -628,15 +693,19 @@ void Widget::save_to_store()
                 }
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QByteArray encodedString = fromUtf16(strList.join( "\30" ) + "\31");
+            QByteArray encodedString = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\0"));
             QByteArray in = encodedString.toHex();
             for (auto it = in.begin(); it != in.end(); it++) {
                 if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                     gamma = enc::gamma_gen.next_u64();
                     // qDebug() << "save: gamma: " << gamma;
                 }
-                // qDebug() << "save: raw byte: " << int(*it) << ", gamma: " << int(char(gamma)) << ", encrypted: " << int(*it ^ char(gamma));
-                out.push_back(*it ^ char(gamma));
+                uint8_t b = *it;
+                const int rot = gamma % 8;
+                b = rotr8(b, rot);
+                // qDebug() << "save: raw byte: " << int(*it) << ", gamma: " << int(char(gamma)) << ", rotated: " <<
+                    // b << " by " << rot << ", encrypted: " << int(char(b) ^ char(gamma));
+                out.push_back(char(b) ^ char(gamma));
                 gamma >>= 8;
                 ++aligner64;
             }
@@ -666,7 +735,7 @@ void Widget::load_storage()
         return;
     }
     if (ui->tableWidget->rowCount() > 0) {
-        qDebug() << "Table not empty.";
+        qDebug() << "Table is not empty.";
         return;
     }
     QFile file(main::storage);
@@ -690,8 +759,12 @@ void Widget::load_storage()
                 gamma = dec::gamma_gen.next_u64();
                 // qDebug() << "load: gamma: " << gamma;
             }
-            // qDebug() << "Load: encrypted byte: " << int(*it) << ", decrypted: " << int(*it ^ char(gamma)) << ", gamma: " << int(char(gamma));
-            in.push_back(*it ^ char(gamma));
+            const int rot = gamma % 8;
+            uint8_t b = *it ^ char(gamma);
+            b = rotl8(b, rot);
+            // qDebug() << "Load: encrypted byte: " << int(*it) << ", decrypted: " <<
+                // int(*it ^ char(gamma)) << ", derotated: " << b << " by " << rot << ", gamma: " << int(char(gamma));
+            in.push_back(char(b));
             gamma >>= 8;
             ++aligner64;
         }
@@ -718,7 +791,7 @@ void Widget::load_storage()
         if (rowData.size() == ui->tableWidget->columnCount()) {
             ui->tableWidget->insertRow(x);
         } else {
-            qDebug() << "Unrecognized column size.";
+            qDebug() << "Unrecognized column size: " << ui->tableWidget->columnCount() << " vs " << rowData.size();
             break;
         }
         for (int y = 0; y < rowData.size(); y++)
