@@ -325,6 +325,15 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
+        if (pKeyEvent->matches(QKeySequence::Copy))
+        {
+            foundCopy = true;
+            return true;
+        }
+        else
+        {
+            foundCopy = false;
+        }
         if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus())
         {
             QMessageBox mb;
@@ -338,15 +347,6 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
             const int row = ui->tableWidget->currentRow();
             ui->tableWidget->removeRow(row);
             return true;
-        }
-        if (pKeyEvent->matches(QKeySequence::Copy))
-        {
-            foundCopy = true;
-            return true;
-        }
-        else
-        {
-            foundCopy = false;
         }
     }
     if (event->type() == QEvent::KeyRelease)
@@ -372,7 +372,11 @@ void Widget::copy_clipboard() {
         return;
     }
     QClipboard * clipboard = QApplication::clipboard();
-    clipboard->setText(selected_context_item->data(Qt::UserRole).toString());
+    if (selected_context_item->column() == pswd_column_idx) {
+        clipboard->setText(selected_context_item->data(Qt::UserRole).toString());
+    } else {
+        clipboard->setText(selected_context_item->text());
+    }
     selected_context_item = nullptr;
 }
 
