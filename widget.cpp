@@ -10,7 +10,7 @@
 #include <QContextMenuEvent>
 #include <QIcon>
 #include <QClipboard>
-#include <QStyledItemDelegate>
+#include <QItemDelegate>
 #include <QFile>
 #include <QStringEncoder>
 
@@ -48,6 +48,8 @@ namespace {
     constexpr int num_of_passwords = 10; // in pswd_buff.
     constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
     int password_len;
+    constexpr int pswd_column_idx = 1;
+    const char* asterics {"*********"};
 }
 
 static inline uint8_t rotl8(uint8_t n, unsigned int c)
@@ -212,25 +214,33 @@ static QString get_file_name(lfsr_hash::u128 hash)
     return name;
 }
 
-class FilterDelegate : public QStyledItemDelegate
+class PassEditDelegate : public QItemDelegate
 {
 public:
-    FilterDelegate(QObject *filter, QObject *parent = 0) :
-        QStyledItemDelegate(parent), filter(filter)
-    { }
-
-    virtual QWidget *createEditor(QWidget *parent,
-                                  const QStyleOptionViewItem &option,
-                                  const QModelIndex &index) const
-    {
-        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
-        editor->installEventFilter(filter);
-        return editor;
+    explicit PassEditDelegate(QObject* parent = nullptr)
+        : QItemDelegate(parent)
+    {}
+    void setEditorData(QWidget *editor, const QModelIndex &index) const {
+        QVariant value = index.model()->data(index, Qt::UserRole);
+        QLineEdit * edit = qobject_cast<QLineEdit *>(editor);
+        if (edit) {
+            edit->setText(value.toString());
+        } else {
+            QItemDelegate::setEditorData(editor, index);
+        }
     }
-
-private:
-    QObject *filter;
+    void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const {
+        QLineEdit * edit = qobject_cast<QLineEdit *>(editor);
+        if (edit) {
+            const QString value = edit->text();
+            model->setData(index, asterics, Qt::DisplayRole);
+            model->setData(index, value, Qt::UserRole);
+        } else {
+            QItemDelegate::setModelData(editor, model, index);
+        }
+    }
 };
+
 
 Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
@@ -276,8 +286,10 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->tableWidget->setColumnWidth(0, 170);
     ui->tableWidget->setColumnWidth(1, 200);
     ui->tableWidget->setColumnWidth(2, 350);
-    ui->tableWidget->setItemDelegate(new FilterDelegate(ui->tableWidget));
+    PassEditDelegate* pass_delegate = new PassEditDelegate(this);
+    ui->tableWidget->setItemDelegateForColumn(pswd_column_idx, pass_delegate);
     ui->tableWidget->installEventFilter(this);
+    ui->tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked);
     ui->tableWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
@@ -309,6 +321,7 @@ Widget::~Widget()
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
 {
+    static bool foundCopy = false;
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
@@ -326,6 +339,30 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
             ui->tableWidget->removeRow(row);
             return true;
         }
+        if (pKeyEvent->matches(QKeySequence::Copy))
+        {
+            foundCopy = true;
+            return true;
+        }
+        else
+        {
+            foundCopy = false;
+        }
+    }
+    if (event->type() == QEvent::KeyRelease)
+    {
+        QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
+        if (foundCopy)
+        {
+            selected_context_item = ui->tableWidget->currentItem();
+            copy_clipboard();
+            foundCopy = false;
+            return true;
+        }
+        if (pKeyEvent->matches(QKeySequence::Copy))
+        {
+            return true;
+        }
     }
     return QWidget::eventFilter(object, event);
 }
@@ -335,7 +372,7 @@ void Widget::copy_clipboard() {
         return;
     }
     QClipboard * clipboard = QApplication::clipboard();
-    clipboard->setText(selected_context_item->text());
+    clipboard->setText(selected_context_item->data(Qt::UserRole).toString());
     selected_context_item = nullptr;
 }
 
@@ -581,10 +618,11 @@ void Widget::try_to_add_row() {
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
-    QTableWidgetItem* item = new QTableWidgetItem(tr(pswd.toStdString().c_str()));
-    item->setFlags(item->flags() ^ Qt::ItemIsEditable);
-    ui->tableWidget->setItem(row, 1, item);
-    ui->tableWidget->resizeColumnToContents(1);
+    QTableWidgetItem* item = new QTableWidgetItem();
+    item->setData(Qt::DisplayRole, asterics);
+    item->setData(Qt::UserRole, pswd);
+    ui->tableWidget->setItem(row, pswd_column_idx, item);
+    ui->tableWidget->resizeColumnToContents(pswd_column_idx);
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
@@ -686,7 +724,11 @@ void Widget::save_to_store()
             for( int c = 0; c < ui->tableWidget->columnCount(); ++c )
             {
                 if (ui->tableWidget->item(r, c)) {
-                    strList << ui->tableWidget->item(r, c)->text();
+                    if (c != pswd_column_idx) {
+                        strList << ui->tableWidget->item(r, c)->text();
+                    } else {
+                        strList << ui->tableWidget->item(r, c)->data(Qt::UserRole).toString();
+                    }
                 }
                 else {
                     strList << "\08";
@@ -698,13 +740,11 @@ void Widget::save_to_store()
             for (auto it = in.begin(); it != in.end(); it++) {
                 if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                     gamma = enc::gamma_gen.next_u64();
-                    // qDebug() << "save: gamma: " << gamma;
+
                 }
                 uint8_t b = *it;
                 const int rot = gamma % 8;
                 b = rotr8(b, rot);
-                // qDebug() << "save: raw byte: " << int(*it) << ", gamma: " << int(char(gamma)) << ", rotated: " <<
-                    // b << " by " << rot << ", encrypted: " << int(char(b) ^ char(gamma));
                 out.push_back(char(b) ^ char(gamma));
                 gamma >>= 8;
                 ++aligner64;
@@ -720,7 +760,6 @@ void Widget::save_to_store()
         qDebug() << "Table has been saved!";
     } else {
         ;
-        // qDebug() << "Storage cannot be opened for writing.";
     }
 }
 
@@ -757,13 +796,10 @@ void Widget::load_storage()
         for (auto it = data.begin(); it != data.end(); it++) {
             if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                 gamma = dec::gamma_gen.next_u64();
-                // qDebug() << "load: gamma: " << gamma;
             }
             const int rot = gamma % 8;
             uint8_t b = *it ^ char(gamma);
             b = rotl8(b, rot);
-            // qDebug() << "Load: encrypted byte: " << int(*it) << ", decrypted: " <<
-                // int(*it ^ char(gamma)) << ", derotated: " << b << " by " << rot << ", gamma: " << int(char(gamma));
             in.push_back(char(b));
             gamma >>= 8;
             ++aligner64;
@@ -797,10 +833,16 @@ void Widget::load_storage()
         for (int y = 0; y < rowData.size(); y++)
         {
             const QString& row_str = rowData.at(y);
-            QTableWidgetItem *item = new QTableWidgetItem( row_str == "\08" ? "" : row_str);
+            QTableWidgetItem *item = new QTableWidgetItem();
+            if (y == pswd_column_idx) {
+                item->setData(Qt::DisplayRole, asterics);
+                item->setData(Qt::UserRole, row_str == "\08" ? "" : row_str);
+            } else {
+                item->setText(row_str == "\08" ? "" : row_str);
+            }
             ui->tableWidget->setItem(x, y, item);
         }
     }
+    ui->tableWidget->resizeColumnToContents(pswd_column_idx);
     qDebug() << "Table has been loaded!";
 }
-
