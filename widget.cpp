@@ -52,14 +52,91 @@ namespace {
     const char* asterics {"*********"};
 }
 
-static inline uint8_t rotl8(uint8_t n, unsigned int c)
+static void encode_dlog256(const QByteArray& in, QByteArray& out) {
+    // goods = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
+    // 40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
+    // 74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
+    // 97, 101, 102, 103, 105, 106, 107, 108, 109, 110, 112, 115, 119, 125, 126, 127,
+    // 130, 131, 132, 138, 142, 145, 147, 148, 149, 150, 151, 152, 154, 155, 156, 160,
+    // 161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
+    // 186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
+    // 218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254}
+    constexpr int p = 257;  // prime, modulo.
+    const int n = in.size();
+    const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
+    const int N = n + r;
+    out.resize(N);
+    const int ch = N / (p - 1);
+    const int a = 3;  // any from goods.
+    int x;
+    for (int i=0; i<ch-1; ++i) {
+        int counter = 0;
+        x = 1;
+        while (counter++ < p-1) {
+            out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
+            x *= a;
+            x %= p;
+        }
+    }
+    x = 1;
+    {
+        int counter = 0;
+        while (counter++ < (p - 1 - r)) {
+            out[(ch-1)*(p-1) + x - 1] = in[(ch-1)*(p-1) + counter - 1];
+            x *= a;
+            x %= p;
+        }
+    }
+    {
+        int counter = 0;
+        while (counter++ < r) {
+            out[(ch-1)*(p-1) + x - 1] = '\0';
+            x *= a;
+            x %= p;
+        }
+    }
+}
+
+static void decode_dlog256(const QByteArray& in, QByteArray& out) {
+    constexpr int p = 257;  // prime, modulo.
+    const int N = in.size();
+    if (N % (p - 1) != 0) {
+        qDebug() << "Decode dlog256 error\n";
+        return;
+    }
+    out.resize(N);
+    const int ch = N / (p - 1);
+    const int a = 3;  // any from goods.
+    int x;
+    int r = 0;
+    for (int i=0; i<ch; ++i) {
+        x = 1;
+        {
+            int counter = 0;
+            while (counter++ < (p - 1)) {
+                out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
+                r += (i == (ch - 1)) && (out[i*(p-1) + counter - 1] == '\0') ? 1 : 0;
+                x *= a;
+                x %= p;
+            }
+        }
+    }
+    {
+        int counter = 0;
+        while (counter++ < r) {
+            out.removeLast();
+        }
+    }
+}
+
+static uint8_t rotl8(uint8_t n, unsigned int c)
 {
     const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
     c &= mask;
     return (n << c) | (n >> ( (-c) & mask ));
 }
 
-static inline uint8_t rotr8(uint8_t n, unsigned int c)
+static uint8_t rotr8(uint8_t n, unsigned int c)
 {
     const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
     c &= mask;
@@ -283,9 +360,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
     QStringList table_header {"Login","Password","Comments"};
     ui->tableWidget->setHorizontalHeaderLabels(table_header);
     ui->tableWidget->verticalHeader()->setVisible(false);
-    ui->tableWidget->setColumnWidth(0, 170);
+    ui->tableWidget->setColumnWidth(0, 190);
     ui->tableWidget->setColumnWidth(1, 200);
-    ui->tableWidget->setColumnWidth(2, 350);
+    ui->tableWidget->setColumnWidth(2, 360);
     PassEditDelegate* pass_delegate = new PassEditDelegate(this);
     ui->tableWidget->setItemDelegateForColumn(pswd_column_idx, pass_delegate);
     ui->tableWidget->installEventFilter(this);
@@ -740,8 +817,9 @@ void Widget::save_to_store()
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
             QByteArray encodedString = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\0"));
-            QByteArray in = encodedString.toHex();
-            for (auto it = in.begin(); it != in.end(); it++) {
+            QByteArray permuted;
+            encode_dlog256(encodedString.toHex(), permuted);
+            for (auto it = permuted.begin(); it != permuted.end(); it++) {
                 if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                     gamma = enc::gamma_gen.next_u64();
 
@@ -808,8 +886,10 @@ void Widget::load_storage()
             gamma >>= 8;
             ++aligner64;
         }
+        QByteArray depermuted;
+        decode_dlog256(in, depermuted);
         auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-        QString decoded_string = toUtf16(QByteArray::fromHex(in));
+        QString decoded_string = toUtf16(QByteArray::fromHex(depermuted));
         rowOfData = decoded_string.split("\31");
         #pragma optimize( "", off )
         if (aligner64 % sizeof(lfsr_rng::u64) != 0) {
