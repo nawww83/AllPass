@@ -204,7 +204,7 @@ static lfsr_hash::salt pin_to_salt_1()
 static lfsr_hash::salt pin_to_salt_2()
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 6);
     const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
             static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + 32768),
@@ -231,7 +231,7 @@ static lfsr_hash::u128 pin_to_hash_1()
 {
     using namespace lfsr_hash;
     const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 1);
     uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
@@ -241,7 +241,7 @@ static lfsr_hash::u128 pin_to_hash_1()
 
 static lfsr_hash::u128 pin_to_hash_2() {
     using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 6);
     const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     uint8_t b_[64]{static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>(x1_4bit),
@@ -254,7 +254,7 @@ static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
     const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 0);
     return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
             static_cast<u16>(1800*(main::pin_code[0] + main::pin_code[1] - main::pin_code[2] - main::pin_code[3]) + blockSize),
             static_cast<u16>(1800*(main::pin_code[0] - main::pin_code[1] + main::pin_code[2] - main::pin_code[3]) + bytesRead) };
@@ -263,8 +263,8 @@ static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
 static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
-    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
+    const int x1_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 1) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 0);
+    const int x2_4bit = (main::pin_code[0] + 6) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 0) ^ (main::pin_code[3] + 3);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
             static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + bytesRead),
             static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + blockSize) };
@@ -532,17 +532,6 @@ void Widget::seed_dec_has_been_set()
 
 void Widget::on_btn_input_master_phrase_clicked()
 {
-    if (ui->tableWidget->rowCount() != 0) {
-        QMessageBox mb;
-        mb.setText(QString::fromUtf8("After setting the key, unsaved data will be lost."));
-        mb.setInformativeText(QString::fromUtf8("Do you agree?"));
-        mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-        mb.setDefaultButton(QMessageBox::No);
-        int ret = mb.exec();
-        if (ret != QMessageBox::Yes) {
-            return;
-        }
-    }
     txt_edit_master_phrase->setVisible(true);
     txt_edit_master_phrase->resize(400, 250);
     txt_edit_master_phrase->setFocus();
@@ -555,6 +544,7 @@ void Widget::update_master_phrase()
     if (text.isEmpty()) {
         return;
     }
+    ui->btn_input_master_phrase->setEnabled(false);
     lfsr_hash::u128 hash = pin_to_hash_1();
     constexpr size_t blockSize = 64;
     {
@@ -825,9 +815,9 @@ void Widget::save_to_store()
                 }
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QByteArray encodedString = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\0"));
+            QByteArray encoded_string = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\0"));
             QByteArray permuted;
-            encode_dlog256(encodedString.toHex(), permuted);
+            encode_dlog256(encoded_string.toHex(), permuted);
             for (auto it = permuted.begin(); it != permuted.end(); it++) {
                 if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                     gamma = enc::gamma_gen.next_u64();
@@ -845,6 +835,35 @@ void Widget::save_to_store()
             enc::gamma_gen.next_u64();
         }
         #pragma optimize( "", on )
+        {
+            int i;
+            char crc1 = '\0';
+            for (auto b : std::as_const(out)) {
+                crc1 ^= b;
+            }
+            out.push_back(crc1);
+            char crc2 = '\0';
+            i = 0;
+            for (auto b : std::as_const(out)) {
+                crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+                i++;
+            }
+            out.push_back(crc2);
+            char crc3 = '\0';
+            i = 0;
+            for (auto b : std::as_const(out)) {
+                crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+                i++;
+            }
+            out.push_back(crc3);
+            char crc4 = '\0';
+            i = 0;
+            for (auto b : std::as_const(out)) {
+                crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+                i++;
+            }
+            out.push_back(crc4);
+        }
         file.write(out);
         file.close();
         qDebug() << "Table has been saved!";
@@ -874,6 +893,41 @@ void Widget::load_storage()
     if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
+        {
+            int i;
+            char crc4 = data.back();
+            data.removeLast();
+            i = 0;
+            for (auto b : std::as_const(data)) {
+                crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+                i++;
+            }
+            char crc3 = data.back();
+            data.removeLast();
+            i = 0;
+            for (auto b : std::as_const(data)) {
+                crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+                i++;
+            }
+            char crc2 = data.back();
+            data.removeLast();
+            i = 0;
+            for (auto b : std::as_const(data)) {
+                crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+                i++;
+            }
+            char crc1 = data.back();
+            data.removeLast();
+            for (auto b : std::as_const(data)) {
+                crc1 ^= b;
+            }
+            if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
+            {
+                qDebug() << "CRC: storage data failure: " << main::storage;
+                main::storage = "";
+                return;
+            }
+        }
         const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
         #pragma optimize( "", off )
         for (int i = 0; i < sum_of_pin; ++i) {
@@ -913,30 +967,30 @@ void Widget::load_storage()
         qDebug() << "Empty row data.";
         return;
     }
-    for (int x = 0; x < rowOfData.size(); x++)
+    for (int row = 0; row < rowOfData.size(); row++)
     {
-        rowData = rowOfData.at(x).split("\30");
-        if (rowData.front() == "") {
-            qDebug() << "Empty row data.";
-            return;
+        rowData = rowOfData.at(row).split("\30");
+        if ( rowData.size() == 1 && rowData.front() == "") {
+            // qDebug() << "Empty row data.";
+            continue;
         }
         if (rowData.size() == ui->tableWidget->columnCount()) {
-            ui->tableWidget->insertRow(x);
+            ui->tableWidget->insertRow(row);
         } else {
             qDebug() << "Unrecognized column size: " << ui->tableWidget->columnCount() << " vs " << rowData.size();
             break;
         }
-        for (int y = 0; y < rowData.size(); y++)
+        for (int col = 0; col < rowData.size(); col++)
         {
-            const QString& row_str = rowData.at(y);
+            const QString& row_str = rowData.at(col);
             QTableWidgetItem *item = new QTableWidgetItem();
-            if (y == pswd_column_idx) {
+            if (col == pswd_column_idx) {
                 item->setData(Qt::DisplayRole, asterics);
                 item->setData(Qt::UserRole, row_str == "\08" ? "" : row_str);
             } else {
                 item->setText(row_str == "\08" ? "" : row_str);
             }
-            ui->tableWidget->setItem(x, y, item);
+            ui->tableWidget->setItem(row, col, item);
         }
     }
     ui->tableWidget->resizeColumnToContents(pswd_column_idx);
