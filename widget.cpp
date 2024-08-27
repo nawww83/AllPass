@@ -14,6 +14,8 @@
 #include <QFile>
 #include <QStringEncoder>
 
+#include <random>
+
 #include "worker.h"
 #include "key.h"
 #include "lfsr_hash.h"
@@ -50,24 +52,28 @@ namespace {
     int password_len;
     constexpr int pswd_column_idx = 1;
     const char* asterics {"*********"};
+    constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
+                             40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
+                             74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
+                             97, 101, 102, 103, 105, 106, 107, 108, 109, 110, 112, 115, 119, 125, 126, 127,
+                             130, 131, 132, 138, 142, 145, 147, 148, 149, 150, 151, 152, 154, 155, 156, 160,
+                             161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
+                             186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
+                             218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254};
 }
 
 static void encode_dlog256(const QByteArray& in, QByteArray& out) {
-    // goods = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
-    // 40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
-    // 74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
-    // 97, 101, 102, 103, 105, 106, 107, 108, 109, 110, 112, 115, 119, 125, 126, 127,
-    // 130, 131, 132, 138, 142, 145, 147, 148, 149, 150, 151, 152, 154, 155, 156, 160,
-    // 161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
-    // 186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
-    // 218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254}
     constexpr int p = 257;  // prime, modulo.
     const int n = in.size();
+    auto xor_val = static_cast<int>(in.front());
+    for (int i=1; i<n; ++i) {
+        xor_val ^= static_cast<int>(in[i]);
+    }
     const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
     const int N = n + r;
     out.resize(N);
     const int ch = N / (p - 1);
-    const int a = 3;  // any from goods.
+    const int a = goods[xor_val % std::ssize(goods)];
     int x;
     for (int i=0; i<ch-1; ++i) {
         int counter = 0;
@@ -106,11 +112,15 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     }
     out.resize(N);
     const int ch = N / (p - 1);
-    const int a = 3;  // any from goods.
     int x;
     int r = 0;
     for (int i=0; i<ch; ++i) {
         x = 1;
+        auto xor_val = static_cast<int>(in[i*(p-1)]);
+        for (int j=1; j<p-1; ++j) {
+            xor_val ^= static_cast<int>(in[i*(p-1) + j]);
+        }
+        const int a = goods[xor_val % std::ssize(goods)];
         {
             int counter = 0;
             while (counter++ < (p - 1)) {
@@ -495,7 +505,6 @@ void Widget::seed_enc_has_been_set()
     {
         mb.warning(this, "Failure", "The encryption was not set: put another phrase or pin.");
     } else {
-        // qDebug() << enc::gamma_gen.next_u64();
         // mb.information(this, "Success", "The encryption was set");
     }
 }
@@ -508,7 +517,6 @@ void Widget::seed_dec_has_been_set()
     {
         mb.warning(this, "Failure", "The decryption was not set: put another phrase or pin.");
     } else {
-        // qDebug() << dec::gamma_gen.next_u64();
         // mb.information(this, "Success", "The encryption was set");
         ui->tableWidget->clearContents();
         while (ui->tableWidget->rowCount() > 0) {
@@ -551,6 +559,11 @@ void Widget::update_master_phrase()
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
+        auto seed = std::random_device{}();
+        while (seed != 0) {
+            bytes.push_back( static_cast<char>(seed % 256));
+            seed >>= 8;
+        }
         {
             const auto bytesRead = bytes.size();
             const size_t r = bytesRead % blockSize;
@@ -677,6 +690,7 @@ void Widget::set_master_key()
         key.set_key(0, 5);
         key.set_key(0, 4);
     #pragma optimize( "", on )
+    watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
     // Clear
     #pragma optimize( "", off )
         st[0] = 0;
@@ -688,7 +702,6 @@ void Widget::set_master_key()
         st[6] = 0;
         st[7] = 0;
     #pragma optimize( "", on )
-    watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
 }
 
 void Widget::try_to_add_row() {
@@ -782,10 +795,6 @@ void Widget::save_to_store()
         qDebug() << "Empty encryption.";
         return;
     }
-    if (ui->tableWidget->rowCount() < 1) {
-        qDebug() << "Table is empty.";
-        return;
-    }
     QFile file(main::storage);
     if (file.open(QFile::WriteOnly))
     {
@@ -822,7 +831,6 @@ void Widget::save_to_store()
             for (auto it = permuted.begin(); it != permuted.end(); it++) {
                 if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
                     gamma = enc::gamma_gen.next_u64();
-
                 }
                 uint8_t b = *it;
                 const int rot = gamma % 8;
@@ -908,6 +916,10 @@ void Widget::load_storage()
     for (int x = 0; x < rowOfData.size(); x++)
     {
         rowData = rowOfData.at(x).split("\30");
+        if (rowData.front() == "") {
+            qDebug() << "Empty row data.";
+            return;
+        }
         if (rowData.size() == ui->tableWidget->columnCount()) {
             ui->tableWidget->insertRow(x);
         } else {
