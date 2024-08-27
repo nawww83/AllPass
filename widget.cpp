@@ -493,7 +493,7 @@ void Widget::seed_pass_has_been_set()
     {
         mb.warning(this, "Failure", "The key was not set: put another phrase.");
     } else {
-        mb.information(this, "Success", "The key was set");
+        // mb.information(this, "Success", "The key was set");
     }
 }
 
@@ -924,6 +924,9 @@ void Widget::load_storage()
             if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
             {
                 qDebug() << "CRC: storage data failure: " << main::storage;
+                QMessageBox mb;
+                mb.critical(nullptr, QString::fromUtf8("CRC: storage data failure"),
+                            QString::fromUtf8("See the file: %1").arg(main::storage));
                 main::storage = "";
                 return;
             }
