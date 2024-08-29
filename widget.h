@@ -31,8 +31,6 @@ public:
 private slots:
     void seed_pass_has_been_set();
 
-    void values_have_been_generated();
-
     void seed_enc_has_been_set();
 
     void seed_dec_has_been_set();
@@ -49,7 +47,7 @@ private slots:
 
     void delete_row();
 
-    void try_to_add_row();
+    void update_pass();
 
     void tableWidget_customContextMenuRequested(const QPoint &pos);
 
@@ -66,8 +64,6 @@ private slots:
 signals:
     void master_phrase_ready();
 
-    void values_ready();
-
 protected:
 
 private:
@@ -78,6 +74,7 @@ private:
     QFutureWatcher<QVector<lfsr8::u64>> watcher_passwords;
     QAction *copyAct;
     QAction *removeAct;
+    QAction *updatePassAct;
 };
 
 class MyTextEdit : public QTextEdit
