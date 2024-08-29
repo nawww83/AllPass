@@ -36,15 +36,19 @@ namespace main {
 namespace enc {
     lfsr_rng::Generators gamma_gen;
     Worker worker;
+    int aligner64 = 0;
+    lfsr_rng::u64 gamma = 0;
 }
 
 namespace dec {
     lfsr_rng::Generators gamma_gen;
     Worker worker;
+    int aligner64 = 0;
+    lfsr_rng::u64 gamma = 0;
 }
 
 namespace {
-    const auto gen_pass_txt = QString::fromUtf8("Insert new password");
+    const auto gen_pass_txt = QString::fromUtf8("Insert a new password");
     MyTextEdit* txt_edit_master_phrase = nullptr;
     QTableWidgetItem* selected_context_item = nullptr;
     constexpr int num_of_passwords = 10; // in pswd_buff.
@@ -60,6 +64,151 @@ namespace {
                              161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
                              186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
                              218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254};
+}
+
+static uint8_t rotl8(uint8_t n, unsigned int c)
+{
+    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
+    c &= mask;
+    return (n << c) | (n >> ( (-c) & mask ));
+}
+
+static uint8_t rotr8(uint8_t n, unsigned int c)
+{
+    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
+    c &= mask;
+    return (n >> c) | (n << ( (-c) & mask ));
+}
+
+static void encode_crc(QByteArray& data) {
+    int i;
+    char crc1 = '\0';
+    for (auto b : std::as_const(data)) {
+        crc1 ^= b;
+    }
+    data.push_back(crc1);
+    char crc2 = '\0';
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+        i++;
+    }
+    data.push_back(crc2);
+    char crc3 = '\0';
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+        i++;
+    }
+    data.push_back(crc3);
+    char crc4 = '\0';
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+        i++;
+    }
+    data.push_back(crc4);
+}
+
+static bool decode_crc(QByteArray& data) {
+    int i;
+    char crc4 = data.back();
+    data.removeLast();
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+        i++;
+    }
+    char crc3 = data.back();
+    data.removeLast();
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+        i++;
+    }
+    char crc2 = data.back();
+    data.removeLast();
+    i = 0;
+    for (auto b : std::as_const(data)) {
+        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+        i++;
+    }
+    char crc1 = data.back();
+    data.removeLast();
+    for (auto b : std::as_const(data)) {
+        crc1 ^= b;
+    }
+    if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
+    {
+        return false;
+    }
+    return true;
+}
+
+static void init_encryption() {
+    enc::aligner64 = 0;
+    const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
+    #pragma optimize( "", off )
+    for (int i = 0; i < sum_of_pin; ++i) {
+        enc::gamma_gen.next_u64();
+    }
+    #pragma optimize( "", on )
+    enc::gamma = 0;
+}
+
+static void finalize_encryption() {
+    #pragma optimize( "", off )
+    if (enc::aligner64 % sizeof(lfsr_rng::u64) != 0) {
+        enc::gamma_gen.next_u64();
+    }
+    #pragma optimize( "", on )
+}
+
+static void encrypt(const QByteArray& in, QByteArray& out) {
+    for (auto it = in.begin(); it != in.end(); it++) {
+        if (enc::aligner64 % sizeof(lfsr_rng::u64) == 0) {
+            enc::gamma = enc::gamma_gen.next_u64();
+        }
+        uint8_t b = *it;
+        const int rot = enc::gamma % 8;
+        b = rotr8(b, rot);
+        out.push_back(char(b) ^ char(enc::gamma));
+        enc::gamma >>= 8;
+        ++enc::aligner64;
+    }
+}
+
+static void init_decryption() {
+    dec::aligner64 = 0;
+    const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
+    #pragma optimize( "", off )
+    for (int i = 0; i < sum_of_pin; ++i) {
+        dec::gamma_gen.next_u64();
+    }
+    #pragma optimize( "", on )
+    dec::gamma = 0;
+}
+
+static void finalize_decryption() {
+    #pragma optimize( "", off )
+    if (dec::aligner64 % sizeof(lfsr_rng::u64) != 0) {
+        dec::gamma_gen.next_u64();
+    }
+    #pragma optimize( "", on )
+}
+
+static void decrypt(const QByteArray& in, QByteArray& out) {
+    for (auto it = in.begin(); it != in.end(); it++) {
+        if (dec::aligner64 % sizeof(lfsr_rng::u64) == 0) {
+            dec::gamma = dec::gamma_gen.next_u64();
+        }
+        const int rot = dec::gamma % 8;
+        uint8_t b = *it ^ char(dec::gamma);
+        b = rotl8(b, rot);
+        out.push_back(char(b));
+        dec::gamma >>= 8;
+        ++dec::aligner64;
+    }
 }
 
 static void encode_dlog256(const QByteArray& in, QByteArray& out) {
@@ -137,20 +286,6 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
             out.removeLast();
         }
     }
-}
-
-static uint8_t rotl8(uint8_t n, unsigned int c)
-{
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n << c) | (n >> ( (-c) & mask ));
-}
-
-static uint8_t rotr8(uint8_t n, unsigned int c)
-{
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n >> c) | (n << ( (-c) & mask ));
 }
 
 static QString encode_94(lfsr8::u32 x)
@@ -396,7 +531,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     removeAct->setStatusTip(tr("Delete the current row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
     updatePassAct = new QAction(QIcon(),
-                                tr("&New password"), this);
+                                tr("&Update the password"), this);
     updatePassAct->setStatusTip(tr("Generate a new password"));
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
     //
@@ -497,6 +632,16 @@ void Widget::update_pass() {
         return;
     }
     if (selected_context_item->column() == pswd_column_idx) {
+        if (!selected_context_item->data(Qt::UserRole).toString().isEmpty()) {
+            QMessageBox mb;
+            mb.setInformativeText(QString::fromUtf8("Do you really want to replace the current password by a new one?"));
+            mb.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+            mb.setDefaultButton(QMessageBox::No);
+            int ret = mb.exec();
+            if (ret != QMessageBox::Yes) {
+                return;
+            }
+        }
         QString pswd = get_password(password_len);
         if (pswd.length() < password_len) {
             const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
@@ -810,15 +955,8 @@ void Widget::save_to_store()
     if (file.open(QFile::WriteOnly))
     {
         QStringList strList;
-        int aligner64 = 0;
-        const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
-        #pragma optimize( "", off )
-        for (int i = 0; i < sum_of_pin; ++i) {
-            enc::gamma_gen.next_u64();
-        }
-        #pragma optimize( "", on )
-        lfsr_rng::u64 gamma = 0;
         QByteArray out;
+        init_encryption();
         for( int r = 0; r < ui->tableWidget->rowCount(); ++r )
         {
             strList.clear();
@@ -839,52 +977,10 @@ void Widget::save_to_store()
             QByteArray encoded_string = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\03"));
             QByteArray permuted;
             encode_dlog256(encoded_string.toHex(), permuted);
-            for (auto it = permuted.begin(); it != permuted.end(); it++) {
-                if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
-                    gamma = enc::gamma_gen.next_u64();
-                }
-                uint8_t b = *it;
-                const int rot = gamma % 8;
-                b = rotr8(b, rot);
-                out.push_back(char(b) ^ char(gamma));
-                gamma >>= 8;
-                ++aligner64;
-            }
+            encrypt(permuted, out);
         }
-        #pragma optimize( "", off )
-        if (aligner64 % sizeof(lfsr_rng::u64) != 0) {
-            enc::gamma_gen.next_u64();
-        }
-        #pragma optimize( "", on )
-        {
-            int i;
-            char crc1 = '\0';
-            for (auto b : std::as_const(out)) {
-                crc1 ^= b;
-            }
-            out.push_back(crc1);
-            char crc2 = '\0';
-            i = 0;
-            for (auto b : std::as_const(out)) {
-                crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-                i++;
-            }
-            out.push_back(crc2);
-            char crc3 = '\0';
-            i = 0;
-            for (auto b : std::as_const(out)) {
-                crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-                i++;
-            }
-            out.push_back(crc3);
-            char crc4 = '\0';
-            i = 0;
-            for (auto b : std::as_const(out)) {
-                crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-                i++;
-            }
-            out.push_back(crc4);
-        }
+        finalize_encryption();
+        encode_crc(out);
         file.write(out);
         file.close();
         qDebug() << "Table has been saved!";
@@ -914,75 +1010,24 @@ void Widget::load_storage()
     if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
-        {
-            int i;
-            char crc4 = data.back();
-            data.removeLast();
-            i = 0;
-            for (auto b : std::as_const(data)) {
-                crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-                i++;
-            }
-            char crc3 = data.back();
-            data.removeLast();
-            i = 0;
-            for (auto b : std::as_const(data)) {
-                crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-                i++;
-            }
-            char crc2 = data.back();
-            data.removeLast();
-            i = 0;
-            for (auto b : std::as_const(data)) {
-                crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-                i++;
-            }
-            char crc1 = data.back();
-            data.removeLast();
-            for (auto b : std::as_const(data)) {
-                crc1 ^= b;
-            }
-            if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
-            {
-                qDebug() << "CRC: storage data failure: " << main::storage;
-                QMessageBox mb;
-                mb.critical(nullptr, QString::fromUtf8("CRC: storage data failure"),
-                            QString::fromUtf8("See the file: %1").arg(main::storage));
-                main::storage = "";
-                return;
-            }
+        if (!decode_crc(data)) {
+            qDebug() << "CRC: storage data failure: " << main::storage;
+            QMessageBox mb;
+            mb.critical(nullptr, QString::fromUtf8("CRC: storage data failure"),
+                        QString::fromUtf8("See the file: %1").arg(main::storage));
+            main::storage = "";
+            return;
         }
-        const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
-        #pragma optimize( "", off )
-        for (int i = 0; i < sum_of_pin; ++i) {
-            dec::gamma_gen.next_u64();
-        }
-        #pragma optimize( "", on )
-        int aligner64 = 0;
-        lfsr_rng::u64 gamma = 0;
-        QByteArray in;
-        for (auto it = data.begin(); it != data.end(); it++) {
-            if (aligner64 % sizeof(lfsr_rng::u64) == 0) {
-                gamma = dec::gamma_gen.next_u64();
-            }
-            const int rot = gamma % 8;
-            uint8_t b = *it ^ char(gamma);
-            b = rotl8(b, rot);
-            in.push_back(char(b));
-            gamma >>= 8;
-            ++aligner64;
-        }
+        init_decryption();
+        QByteArray decrypted;
+        decrypt(data, decrypted);
         QByteArray depermuted;
-        decode_dlog256(in, depermuted);
+        decode_dlog256(decrypted, depermuted);
         auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
         QString decoded_string = toUtf16(QByteArray::fromHex(depermuted));
         decoded_string.removeLast(); // "\03"
         rowOfData = decoded_string.split("\31");
-        #pragma optimize( "", off )
-        if (aligner64 % sizeof(lfsr_rng::u64) != 0) {
-            dec::gamma_gen.next_u64();
-        }
-        #pragma optimize( "", on )
+        finalize_decryption();
         file.close();
     } else {
         // qDebug() << "Storage cannot be opened.";
