@@ -89,9 +89,26 @@ inline void sawtooth(std::array<u16, N>& v, const std::array<int, N>& p) {
 }
 
 template <size_t N>
+inline void undo_sawtooth(std::array<u16, N>& v, const std::array<int, N>& p) {
+    size_t i = 0;
+    for (auto& el : v) {
+        el = (el == 0) ? p[i] - 1 : el - 1;
+        el %= p[i];
+        i++;
+    }
+}
+
+template <size_t N>
 inline void increment(std::array<u32, N>& v) {
     for (auto& el : v) {
         el++;
+    }
+}
+
+template <size_t N>
+inline void decrement(std::array<u32, N>& v) {
+    for (auto& el : v) {
+        el--;
     }
 }
 
@@ -335,6 +352,15 @@ public:
     u64 next_u64() {
         u64 x = 0;
         for (int i=0; i<4; ++i) {
+            STATE mSt = gp1.get_state();
+            mSt ^= gp2.get_state();
+            mSt ^= gp3.get_state();
+            mSt ^= gp4.get_state();
+            mSt %= 16;
+            for (int j=0; j<4; ++j) {
+                x <<= 4;
+                x |= mSt[j] ^ mSt[j+4];
+            }
             gp1.next(ii_saw[0], ii_saw[1]);
             gp2.next(ii_saw[2], ii_saw[3]);
             gp3.next(ii_saw[4], ii_saw[5]);
@@ -347,14 +373,30 @@ public:
             }
             increment(Tc);
             //
+
+        }
+        return x;
+    }
+    u64 back_u64() {
+        u64 x = 0;
+        for (int i=0; i<4; ++i) {
+            decrement(Tc);
+            for (int j=0; j<8; ++j) {
+                ii_saw[j] = (Tc[j] == 0) ? ii0_saw[j] : ii_saw[j];
+                Tc[j] = (Tc[j] == 0) ? Tref[j] : Tc[j];
+            }
+            undo_sawtooth(ii_saw, primes_duplicates);
+            gp1.back(ii_saw[0], ii_saw[1]);
+            gp2.back(ii_saw[2], ii_saw[3]);
+            gp3.back(ii_saw[4], ii_saw[5]);
+            gp4.back(ii_saw[6], ii_saw[7]);
             STATE mSt = gp1.get_state();
             mSt ^= gp2.get_state();
             mSt ^= gp3.get_state();
             mSt ^= gp4.get_state();
             mSt %= 16;
             for (int j=0; j<4; ++j) {
-                x <<= 4;
-                x |= mSt[j] ^ mSt[j+4];
+                x |= static_cast<u64>(mSt[j] ^ mSt[j+4]) << (12 - 4*j + 16*i);
             }
         }
         return x;

@@ -55,7 +55,7 @@ namespace {
     constexpr int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
     int password_len;
     constexpr int pswd_column_idx = 1;
-    const char* asterics {"*********"};
+    const char* asterics {"*************"};
     constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
                              40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
                              74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
@@ -211,60 +211,56 @@ static void decrypt(const QByteArray& in, QByteArray& out) {
     }
 }
 
+static void padd_256(QByteArray& data) {
+    constexpr int p = 257;  // prime, modulo.
+    const int n = data.size();
+    const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
+    int counter = 0;
+    while (counter++ < r) {
+        data.push_back('\0');
+    }
+}
+
+static void dpadd_256(QByteArray& data) {
+    while (data.back() == '\0') {
+        data.removeLast();
+    }
+}
+
 static void encode_dlog256(const QByteArray& in, QByteArray& out) {
     constexpr int p = 257;  // prime, modulo.
     const int n = in.size();
-    auto xor_val = static_cast<int>(in.front());
-    for (int i=1; i<n; ++i) {
-        xor_val ^= static_cast<int>(in[i]);
-    }
-    const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
-    const int N = n + r;
-    out.resize(N);
-    const int ch = N / (p - 1);
-    const int a = goods[xor_val % std::ssize(goods)];
-    int x;
-    for (int i=0; i<ch-1; ++i) {
-        int counter = 0;
-        x = 1;
-        while (counter++ < p-1) {
-            out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
-            x *= a;
-            x %= p;
+    out.resize(n);
+    const int ch = n / (p - 1);
+    for (int i=0; i<ch; ++i) {
+        int x = 1;
+        auto xor_val = static_cast<int>(in[i*(p-1)]);
+        for (int j=1; j<p-1; ++j) {
+            xor_val ^= static_cast<int>(in[i*(p-1) + j]);
         }
-    }
-    x = 1;
-    {
-        int counter = 0;
-        while (counter++ < (p - 1 - r)) {
-            out[(ch-1)*(p-1) + x - 1] = in[(ch-1)*(p-1) + counter - 1];
-            x *= a;
-            x %= p;
-        }
-    }
-    {
-        int counter = 0;
-        while (counter++ < r) {
-            out[(ch-1)*(p-1) + x - 1] = '\0';
-            x *= a;
-            x %= p;
+        const int a = goods[xor_val % std::ssize(goods)];
+        {
+            int counter = 0;
+            while (counter++ < p-1) {
+                out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
+                x *= a;
+                x %= p;
+            }
         }
     }
 }
 
 static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     constexpr int p = 257;  // prime, modulo.
-    const int N = in.size();
-    if (N % (p - 1) != 0) {
+    const int n = in.size();
+    if (n % (p - 1) != 0) {
         qDebug() << "Decode dlog256 error\n";
         return;
     }
-    out.resize(N);
-    const int ch = N / (p - 1);
-    int x;
-    int r = 0;
+    out.resize(n);
+    const int ch = n / (p - 1);
     for (int i=0; i<ch; ++i) {
-        x = 1;
+        int x = 1;
         auto xor_val = static_cast<int>(in[i*(p-1)]);
         for (int j=1; j<p-1; ++j) {
             xor_val ^= static_cast<int>(in[i*(p-1) + j]);
@@ -274,21 +270,14 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
             int counter = 0;
             while (counter++ < (p - 1)) {
                 out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
-                r += (i == (ch - 1)) && (out[i*(p-1) + counter - 1] == '\0') ? 1 : 0;
                 x *= a;
                 x %= p;
             }
         }
     }
-    {
-        int counter = 0;
-        while (counter++ < r) {
-            out.removeLast();
-        }
-    }
 }
 
-static QString encode_94(lfsr8::u32 x)
+static QString Encode94(lfsr8::u32 x)
 {
     constexpr int m = 5; // See the password_len_per_request.
     QString res;
@@ -302,7 +291,7 @@ static QString encode_94(lfsr8::u32 x)
     return res;
 }
 
-static QString get_password(int len)
+static QString GetPassword(int len)
 {
     QString pswd{};
     int capacity = 2;
@@ -317,7 +306,7 @@ static QString get_password(int len)
             main::pswd_buff.back() = 0;
             main::pswd_buff.pop_back();
         }
-        pswd += encode_94(raw64);
+        pswd += Encode94(raw64);
         capacity -= 1;
         capacity = capacity == 0 ? 2 : capacity;
         raw64 >>= 32;
@@ -405,7 +394,7 @@ static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
             static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + blockSize) };
 }
 
-static QString get_file_name(lfsr_hash::u128 hash)
+static QString GetFileName(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
     static constexpr auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
@@ -510,9 +499,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
     QStringList table_header {"Login","Password","Comments"};
     ui->tableWidget->setHorizontalHeaderLabels(table_header);
     ui->tableWidget->verticalHeader()->setVisible(false);
-    ui->tableWidget->setColumnWidth(0, 190);
+    ui->tableWidget->setColumnWidth(0, 200);
     ui->tableWidget->setColumnWidth(1, 200);
-    ui->tableWidget->setColumnWidth(2, 360);
+    ui->tableWidget->setColumnWidth(2, 370);
     PassEditDelegate* pass_delegate = new PassEditDelegate(this);
     ui->tableWidget->setItemDelegateForColumn(pswd_column_idx, pass_delegate);
     ui->tableWidget->installEventFilter(this);
@@ -627,6 +616,13 @@ void Widget::delete_row() {
     selected_context_item = nullptr;
 }
 
+static void RequestPasswords(QFutureWatcher<QVector<lfsr8::u64>>& watcher) {
+    const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
+    watcher.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
+    watcher.waitForFinished();
+    main::pswd_buff = watcher.result();
+}
+
 void Widget::update_pass() {
     if (!selected_context_item) {
         return;
@@ -642,13 +638,10 @@ void Widget::update_pass() {
                 return;
             }
         }
-        QString pswd = get_password(password_len);
+        QString pswd = GetPassword(password_len);
         if (pswd.length() < password_len) {
-            const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
-            watcher_passwords.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
-            watcher_passwords.waitForFinished();
-            main::pswd_buff = watcher_passwords.result();
-            pswd = get_password(password_len);
+            RequestPasswords(watcher_passwords);
+            pswd = GetPassword(password_len);
         }
         selected_context_item->setData(Qt::DisplayRole, asterics);
         selected_context_item->setData(Qt::UserRole, pswd);
@@ -791,7 +784,7 @@ void Widget::update_master_phrase()
                 }
             }
         }
-        main::storage = get_file_name(hash_fs);
+        main::storage = GetFileName(hash_fs);
         lfsr_hash::u128 hash_enc = pin_to_hash_1();
         {
             auto bytes = text.toUtf8();
@@ -886,13 +879,10 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(QString::fromUtf8("Wait..."));
     ui->btn_generate->setEnabled(false);
-    const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
-    QString pswd = get_password(password_len);
+    QString pswd = GetPassword(password_len);
     if (pswd.length() < password_len) {
-        watcher_passwords.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
-        watcher_passwords.waitForFinished();
-        main::pswd_buff = watcher_passwords.result();
-        pswd = get_password(password_len);
+        RequestPasswords(watcher_passwords);
+        pswd = GetPassword(password_len);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
@@ -975,8 +965,10 @@ void Widget::save_to_store()
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
             QByteArray encoded_string = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\03"));
+            encoded_string = encoded_string.toHex();
             QByteArray permuted;
-            encode_dlog256(encoded_string.toHex(), permuted);
+            padd_256(encoded_string);
+            encode_dlog256(encoded_string, permuted);
             encrypt(permuted, out);
         }
         finalize_encryption();
@@ -1023,6 +1015,7 @@ void Widget::load_storage()
         decrypt(data, decrypted);
         QByteArray depermuted;
         decode_dlog256(decrypted, depermuted);
+        dpadd_256(depermuted);
         auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
         QString decoded_string = toUtf16(QByteArray::fromHex(depermuted));
         decoded_string.removeLast(); // "\03"

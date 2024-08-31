@@ -140,7 +140,7 @@ private:
         const auto x = m_K[0];
         assert(x != 0);
         m_inv_K0 = 1;
-        while (true) {
+        for (;;) {
             if (((x*m_inv_K0) % p) == 1) {
                 break;
             }
@@ -160,7 +160,7 @@ class LFSR_paired_2x4 {
     static_assert(p < 256);
     static_assert(p > 1);
 public:
-    constexpr LFSR_paired_2x4(u16x8 K): m_K(K) {};
+    constexpr LFSR_paired_2x4(u16x8 K): m_K(K) {m_calc_inv_K();};
     void set_state(u16x8 state) {
         m_state = state;
     }
@@ -169,6 +169,7 @@ public:
     }
     void set_K(u16x8 K) {
         m_K = K;
+        m_calc_inv_K();
     }
     void next(u16 input=0) {
 #ifdef USE_SSE
@@ -235,6 +236,16 @@ public:
         m_state[4] = (inp2 + m_v7*m_K[4]) % p;
 #endif
     }
+    void back(u16 inp1, u16 inp2) {
+        const u16 m_v_1 = (m_inv_K[0]*(m_state[0] - inp1 + p)) % p;
+        const u16 m_v_2 = (m_inv_K[4]*(m_state[4] - inp2 + p)) % p;
+        for (int i=0; i<3; i++) {
+            m_state[i] = (m_state[i+1] - m_v_1*m_K[i+1] + p*p) % p;
+            m_state[i+4] = (m_state[i+5] - m_v_2*m_K[i+5] + p*p) % p;
+        }
+        m_state[3] = m_v_1;
+        m_state[7] = m_v_2;
+    }
     auto get_state() const {
         return m_state;
     }
@@ -253,8 +264,28 @@ public:
         return res;
     }
 private:
-    u16x8 m_state {};
+    u16x8 m_state {}; // must be aligned.
     u16x8 m_K {};
+    u16x8 m_inv_K {};
+    void m_calc_inv_K() {
+        const auto x0 = m_K[0];
+        const auto x4 = m_K[4];
+        assert(x0 != 0);
+        assert(x4 != 0);
+        m_inv_K[0] = 1;
+        m_inv_K[4] = 1;
+        bool achieved0 = false;
+        bool achieved4 = false;
+        for (;;) {
+            achieved0 = achieved0 ? achieved0 : ((x0*m_inv_K[0]) % p) == 1;
+            achieved4 = achieved4 ? achieved4 : ((x4*m_inv_K[4]) % p) == 1;
+            if (achieved0 && achieved4) {
+                break;
+            }
+            m_inv_K[0] += achieved0 ? 0 : 1;
+            m_inv_K[4] += achieved4 ? 0 : 1;
+        }
+    }
 };
 
 }
