@@ -47,6 +47,21 @@ namespace dec {
     lfsr_rng::u64 gamma = 0;
 }
 
+namespace enc_inner {
+    lfsr_rng::Generators gamma_gen;
+    Worker worker;
+    int aligner64 = 0;
+    lfsr_rng::u64 gamma = 0;
+}
+
+namespace dec_inner {
+    lfsr_rng::Generators gamma_gen;
+    Worker worker;
+    int aligner64 = 0;
+    lfsr_rng::u64 gamma = 0;
+}
+
+
 namespace {
     const auto gen_pass_txt = QString::fromUtf8("Insert a new password");
     MyTextEdit* txt_edit_master_phrase = nullptr;
@@ -111,6 +126,10 @@ static void encode_crc(QByteArray& data) {
 }
 
 static bool decode_crc(QByteArray& data) {
+    if (data.size() < 4) {
+        qDebug() << "CRC size is small.";
+        return false;
+    }
     int i;
     char crc4 = data.back();
     data.removeLast();
@@ -161,7 +180,40 @@ static void finalize_encryption() {
     if (enc::aligner64 % sizeof(lfsr_rng::u64) != 0) {
         enc::gamma_gen.next_u64();
     }
+    enc::gamma = 0;
     #pragma optimize( "", on )
+}
+
+static void encrypt256_inner(const QByteArray& in, QByteArray& out) {
+    if (in.size() % 256 != 0) {
+        qDebug() << "Encryption error: data size is not a 256*k bytes";
+        return;
+    }
+    for (auto it = in.begin(); it != in.end(); it++) {
+        if (enc_inner::aligner64 % sizeof(lfsr_rng::u64) == 0) {
+            enc_inner::gamma = enc_inner::gamma_gen.next_u64();
+        }
+        uint8_t b = *it;
+        out.push_back(char(b) ^ char(enc_inner::gamma));
+        enc_inner::gamma >>= 8;
+        ++enc_inner::aligner64;
+    }
+}
+
+static void decrypt256_inner(const QByteArray& in, QByteArray& out) {
+    if (in.size() % 256 != 0) {
+        qDebug() << "Decryption error: data size is not a 256*k bytes";
+        return;
+    }
+    for (auto it = in.begin(); it != in.end(); it++) {
+        if (dec_inner::aligner64 % sizeof(lfsr_rng::u64) == 0) {
+            dec_inner::gamma = dec_inner::gamma_gen.next_u64();
+        }
+        uint8_t b = *it;
+        out.push_back(char(b) ^ char(dec_inner::gamma));
+        dec_inner::gamma >>= 8;
+        ++dec_inner::aligner64;
+    }
 }
 
 static void encrypt(const QByteArray& in, QByteArray& out) {
@@ -194,6 +246,7 @@ static void finalize_decryption() {
     if (dec::aligner64 % sizeof(lfsr_rng::u64) != 0) {
         dec::gamma_gen.next_u64();
     }
+    dec::gamma = 0;
     #pragma optimize( "", on )
 }
 
@@ -222,7 +275,10 @@ static void padd_256(QByteArray& data) {
 }
 
 static void dpadd_256(QByteArray& data) {
-    while (data.back() == '\0') {
+    if (data.isEmpty()) {
+        return;
+    }
+    while (!data.isEmpty() && data.back() == '\0') {
         data.removeLast();
     }
 }
@@ -234,14 +290,14 @@ static void encode_dlog256(const QByteArray& in, QByteArray& out) {
     const int ch = n / (p - 1);
     for (int i=0; i<ch; ++i) {
         int x = 1;
-        auto xor_val = static_cast<int>(in[i*(p-1)]);
+        char xor_val = in[i*(p-1)];
         for (int j=1; j<p-1; ++j) {
-            xor_val ^= static_cast<int>(in[i*(p-1) + j]);
+            xor_val ^= in[i*(p-1) + j];
         }
-        const int a = goods[xor_val % std::ssize(goods)];
+        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
         {
             int counter = 0;
-            while (counter++ < p-1) {
+            while (counter++ < (p-1)) {
                 out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
                 x *= a;
                 x %= p;
@@ -261,14 +317,14 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     const int ch = n / (p - 1);
     for (int i=0; i<ch; ++i) {
         int x = 1;
-        auto xor_val = static_cast<int>(in[i*(p-1)]);
+        char xor_val = in[i*(p-1)];
         for (int j=1; j<p-1; ++j) {
-            xor_val ^= static_cast<int>(in[i*(p-1) + j]);
+            xor_val ^= in[i*(p-1) + j];
         }
-        const int a = goods[xor_val % std::ssize(goods)];
+        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
         {
             int counter = 0;
-            while (counter++ < (p - 1)) {
+            while (counter++ < (p-1)) {
                 out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
                 x *= a;
                 x %= p;
@@ -525,8 +581,6 @@ Widget::Widget(QString&& pin, QWidget *parent)
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
     //
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
-    connect(&watcher_seed_enc_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_enc_has_been_set);
-    connect(&watcher_seed_dec_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_dec_has_been_set);
     //
     ui->btn_input_master_phrase->setFocus();
 }
@@ -662,41 +716,17 @@ void Widget::seed_pass_has_been_set()
         if (!main::storage.isEmpty()) {
             mb.information(this, "Success", "The key was set");
             ui->btn_input_master_phrase->setText(QString::fromUtf8("Your storage: %1").arg(main::storage));
+            ui->tableWidget->clearContents();
+            while (ui->tableWidget->rowCount() > 0) {
+                ui->tableWidget->removeRow(0);
+            }
+            load_storage();
+            ui->btn_generate->setEnabled(true);
+            ui->btn_add_empty_row->setEnabled(true);
+            ui->btn_generate->setFocus();
+            ui->btn_generate->setText(gen_pass_txt);
         }
     }
-}
-
-void Widget::seed_enc_has_been_set()
-{
-    enc::gamma_gen = watcher_seed_enc_gen.result();
-    QMessageBox mb;
-    if (!enc::gamma_gen.is_succes())
-    {
-        mb.warning(this, "Failure", "The encryption was not set: put another phrase or pin.");
-    } else {
-        // mb.information(this, "Success", "The encryption was set");
-    }
-}
-
-void Widget::seed_dec_has_been_set()
-{
-    dec::gamma_gen = watcher_seed_dec_gen.result();
-    QMessageBox mb;
-    if (!dec::gamma_gen.is_succes())
-    {
-        mb.warning(this, "Failure", "The decryption was not set: put another phrase or pin.");
-    } else {
-        // mb.information(this, "Success", "The encryption was set");
-        ui->tableWidget->clearContents();
-        while (ui->tableWidget->rowCount() > 0) {
-            ui->tableWidget->removeRow(0);
-        }
-        load_storage();
-        ui->btn_generate->setEnabled(true);
-        ui->btn_add_empty_row->setEnabled(true);
-        ui->btn_generate->setFocus();
-    }
-    ui->btn_generate->setText(gen_pass_txt);
 }
 
 void Widget::on_btn_input_master_phrase_clicked()
@@ -814,10 +844,48 @@ void Widget::update_master_phrase()
         }
         watcher_seed_enc_gen.setFuture(enc::worker.seed(st));
         watcher_seed_dec_gen.setFuture(dec::worker.seed(st));
+        //
+        lfsr_hash::u128 hash_enc_inner = pin_to_hash_2();
+        {
+            auto bytes = text.toUtf8();
+            {
+                const auto bytesRead = bytes.size();
+                const size_t r = bytesRead % blockSize;
+                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+            }
+            const auto bytesRead = bytes.size();
+            {
+                using namespace lfsr_hash;
+                const salt& original_size_salt = pin_to_salt_3(bytesRead, blockSize);
+                const size_t n = bytesRead / blockSize;
+                for (size_t i=0; i<n; ++i) {
+                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                    hash_enc_inner.first ^= inner_hash.first;
+                    hash_enc_inner.second ^= inner_hash.second;
+                }
+            }
+        }
+        for (int i=0; i<8; ++i) {
+            lfsr_hash::u16 byte_1 = 255 & (hash_enc_inner.first >> 8*i);
+            lfsr_hash::u16 byte_2 = 255 & (hash_enc_inner.second >> 8*i);
+            st[i] = (byte_1 << 8) | byte_2;
+        }
+        watcher_seed_enc_inner_gen.setFuture(enc_inner::worker.seed(st));
+        watcher_seed_dec_inner_gen.setFuture(dec_inner::worker.seed(st));
+        watcher_seed_enc_gen.waitForFinished();
+        watcher_seed_dec_gen.waitForFinished();
+        watcher_seed_enc_inner_gen.waitForFinished();
+        watcher_seed_dec_inner_gen.waitForFinished();
+        enc::gamma_gen = watcher_seed_enc_gen.result();
+        dec::gamma_gen = watcher_seed_dec_gen.result();
+        enc_inner::gamma_gen = watcher_seed_enc_inner_gen.result();
+        dec_inner::gamma_gen = watcher_seed_dec_inner_gen.result();
         // Clear
         #pragma optimize( "", off )
             hash_fs = {0, 0};
             hash_enc = {0, 0};
+            hash_enc_inner = {0, 0};
             st[0] = 0;
             st[1] = 0;
             st[2] = 0;
@@ -828,6 +896,7 @@ void Widget::update_master_phrase()
             st[7] = 0;
         #pragma optimize( "", on )
     }
+    //
     emit master_phrase_ready();
 }
 
@@ -941,36 +1010,48 @@ void Widget::save_to_store()
         qDebug() << "Empty encryption.";
         return;
     }
+    if (!enc_inner::gamma_gen.is_succes()) {
+        qDebug() << "Empty inner encryption.";
+        return;
+    }
     QFile file(main::storage);
     if (file.open(QFile::WriteOnly))
     {
         QStringList strList;
         QByteArray out;
+        QByteArray encoded_string;
+        qDebug() << "Init encryption";
         init_encryption();
-        for( int r = 0; r < ui->tableWidget->rowCount(); ++r )
+        const int rc = ui->tableWidget->rowCount();
+        const int cc = ui->tableWidget->columnCount();
+        for( int row = 0; row < rc; ++row )
         {
             strList.clear();
-            for( int c = 0; c < ui->tableWidget->columnCount(); ++c )
+            for( int col = 0; col < cc; ++col )
             {
-                if (ui->tableWidget->item(r, c)) {
-                    if (c != pswd_column_idx) {
-                        strList << ui->tableWidget->item(r, c)->text();
+                if (ui->tableWidget->item(row, col)) {
+                    if (col != pswd_column_idx) {
+                        const auto& txt = ui->tableWidget->item(row, col)->text();
+                        strList << (txt == "" ? QChar(0x0008) : txt);
                     } else {
-                        strList << ui->tableWidget->item(r, c)->data(Qt::UserRole).toString();
+                        strList << ui->tableWidget->item(row, col)->data(Qt::UserRole).toString();
                     }
                 }
                 else {
-                    strList << "\08";
+                    strList << QChar(0x0008);
                 }
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QByteArray encoded_string = fromUtf16(strList.join( "\30" ) + (r < ui->tableWidget->rowCount()-1 ? "\31" : "\03"));
-            encoded_string = encoded_string.toHex();
-            QByteArray permuted;
-            padd_256(encoded_string);
-            encode_dlog256(encoded_string, permuted);
-            encrypt(permuted, out);
+            QString tmp = strList.join( QChar(0x001E) );
+            tmp.append( (row < ui->tableWidget->rowCount() - 1 ? QChar(0x001F) : QChar(0x0003)) );
+            encoded_string.append(fromUtf16( tmp ));
         }
+        padd_256(encoded_string);
+        QByteArray encrypted_inner;
+        encrypt256_inner(encoded_string, encrypted_inner);
+        QByteArray permuted;
+        encode_dlog256(encrypted_inner, permuted);
+        encrypt(permuted, out);
         finalize_encryption();
         encode_crc(out);
         file.write(out);
@@ -989,6 +1070,10 @@ void Widget::load_storage()
     }
     if (!dec::gamma_gen.is_succes()) {
         qDebug() << "Empty decryption.";
+        return;
+    }
+    if (!dec_inner::gamma_gen.is_succes()) {
+        qDebug() << "Empty inner decryption.";
         return;
     }
     if (ui->tableWidget->rowCount() > 0) {
@@ -1015,11 +1100,13 @@ void Widget::load_storage()
         decrypt(data, decrypted);
         QByteArray depermuted;
         decode_dlog256(decrypted, depermuted);
-        dpadd_256(depermuted);
+        QByteArray decrypted_inner;
+        decrypt256_inner(depermuted, decrypted_inner);
+        dpadd_256(decrypted_inner);
         auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-        QString decoded_string = toUtf16(QByteArray::fromHex(depermuted));
-        decoded_string.removeLast(); // "\03"
-        rowOfData = decoded_string.split("\31");
+        QString decoded_string = toUtf16(decrypted_inner);
+        decoded_string.removeLast(); // 0x0003
+        rowOfData = decoded_string.split(QChar(0x001F));
         finalize_decryption();
         file.close();
     } else {
@@ -1032,11 +1119,7 @@ void Widget::load_storage()
     }
     for (int row = 0; row < rowOfData.size(); row++)
     {
-        rowData = rowOfData.at(row).split("\30");
-        if ( rowData.size() == 1 && rowData.front() == "") {
-            // qDebug() << "Empty row data.";
-            continue;
-        }
+        rowData = rowOfData.at(row).split(QChar(0x001E));
         if (rowData.size() == ui->tableWidget->columnCount()) {
             ui->tableWidget->insertRow(row);
         } else {
@@ -1049,9 +1132,9 @@ void Widget::load_storage()
             QTableWidgetItem *item = new QTableWidgetItem();
             if (col == pswd_column_idx) {
                 item->setData(Qt::DisplayRole, asterics);
-                item->setData(Qt::UserRole, row_str == "\08" ? "" : row_str);
+                item->setData(Qt::UserRole, row_str.at(0) == QChar(0x0008) ? "" : row_str);
             } else {
-                item->setText(row_str == "\08" ? "" : row_str);
+                item->setText(row_str.at(0) == QChar(0x0008)  ? "" : row_str);
             }
             ui->tableWidget->setItem(row, col, item);
         }

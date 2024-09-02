@@ -31,10 +31,6 @@ public:
 private slots:
     void seed_pass_has_been_set();
 
-    void seed_enc_has_been_set();
-
-    void seed_dec_has_been_set();
-
     void on_btn_input_master_phrase_clicked();
 
     void on_btn_generate_clicked();
@@ -71,6 +67,8 @@ private:
     QFutureWatcher<lfsr_rng::Generators> watcher_seed_pass_gen;
     QFutureWatcher<lfsr_rng::Generators> watcher_seed_enc_gen;
     QFutureWatcher<lfsr_rng::Generators> watcher_seed_dec_gen;
+    QFutureWatcher<lfsr_rng::Generators> watcher_seed_enc_inner_gen;
+    QFutureWatcher<lfsr_rng::Generators> watcher_seed_dec_inner_gen;
     QFutureWatcher<QVector<lfsr8::u64>> watcher_passwords;
     QAction *copyAct;
     QAction *removeAct;
@@ -113,6 +111,7 @@ public:
         le_pin = new QLineEdit(this);
         le_pin->setInputMask("9999");
         layout->addWidget(le_pin);
+        le_pin->setText("");
 
         buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok
                                          | QDialogButtonBox::Cancel);
@@ -122,6 +121,8 @@ public:
 
         layout->addWidget(buttonBox);
         setLayout(layout);
+
+        le_pin->setFocus();
     }
     QString get_pin() const {
         return le_pin ? le_pin->text() : "";
@@ -131,7 +132,7 @@ public:
     }
 
 private:
-    QLineEdit* le_pin;
+    QLineEdit* le_pin = nullptr;
     QDialogButtonBox *buttonBox;
 };
 
