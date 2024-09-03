@@ -56,7 +56,7 @@ static QString GetPassword(int len)
 }
 
 void insert_hash128_256padd(QByteArray& bytes) {
-    lfsr_hash::u128 hash = pin_to_hash_2();
+    lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 256;
     {
         {
@@ -67,7 +67,7 @@ void insert_hash128_256padd(QByteArray& bytes) {
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
+            const salt& original_size_salt = get_salt(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(main::hash_gen,
@@ -101,13 +101,13 @@ bool extract_and_check_hash128_256padd(QByteArray& bytes) {
         extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
         bytes.removeLast();
     }
-    lfsr_hash::u128 hash = pin_to_hash_2();
+    lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 256;
     {
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
+            const salt& original_size_salt = get_salt(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(main::hash_gen,

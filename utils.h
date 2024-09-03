@@ -5,7 +5,7 @@
 #include "key.h"
 #include <qdebug.h>
 
-namespace {
+namespace const_arr {
 constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
                          40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
                          74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
@@ -212,6 +212,16 @@ inline static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
             static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + blockSize) };
 }
 
+inline static lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
+{
+    using namespace lfsr_hash;
+    const int x1_4bit = (0 + 0) ^ (0 + 3) ^ (0 + 5) ^ (0 + 6);
+    const int x2_4bit = (0 + 3) ^ (0 + 6) ^ (0 + 6) ^ (0 + 6);
+    return {((x1_4bit << 4) | x2_4bit) % 41 + 36,
+            static_cast<u16>(bytesRead*2 + 11),
+            static_cast<u16>(blockSize*3 + 7)};
+}
+
 
 inline static void init_encryption() {
     enc::aligner64 = 0;
@@ -343,7 +353,7 @@ inline static void encode_dlog256(const QByteArray& in, QByteArray& out) {
         for (int j=1; j<p-1; ++j) {
             xor_val ^= in[i*(p-1) + j];
         }
-        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
+        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
         {
             int counter = 0;
             while (counter++ < (p-1)) {
@@ -370,7 +380,7 @@ inline static void decode_dlog256(const QByteArray& in, QByteArray& out) {
         for (int j=1; j<p-1; ++j) {
             xor_val ^= in[i*(p-1) + j];
         }
-        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
+        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
         {
             int counter = 0;
             while (counter++ < (p-1)) {
