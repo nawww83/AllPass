@@ -239,19 +239,20 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked);
     ui->tableWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    ui->tableWidget->horizontalHeader()->setStretchLastSection(true);
     connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
     copyAct = new QAction(QIcon(),
-                         tr("&Copy the item to the clipboard"), this);
+                         tr("&Copy to the clipboard"), this);
     copyAct->setShortcuts(QKeySequence::Copy);
     copyAct->setStatusTip(tr("Copy the item to the clipboard"));
     connect(copyAct, &QAction::triggered, this, &Widget::copy_clipboard);
     removeAct = new QAction(QIcon(),
-                          tr("&Delete the current row"), this);
+                          tr("&Delete the row"), this);
     removeAct->setShortcuts(QKeySequence::Delete);
     removeAct->setStatusTip(tr("Delete the current row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
     updatePassAct = new QAction(QIcon(),
-                                tr("&Change the password to a new one"), this);
+                                tr("&Change the password"), this);
     updatePassAct->setStatusTip(tr("Change the password to a new one"));
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
     //
@@ -687,6 +688,10 @@ void Widget::save_to_store()
     }
     if (!enc_inner::gamma_gen.is_succes()) {
         qDebug() << "Empty inner encryption.";
+        return;
+    }
+    if (ui->tableWidget->rowCount() < 1) {
+        qDebug() << "Empty table.";
         return;
     }
     QFile file(main::storage);
