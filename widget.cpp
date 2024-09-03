@@ -14,56 +14,14 @@
 #include <QFile>
 #include <QStringEncoder>
 
-#include <random>
+#include <random> // std::random_device
 
-#include "worker.h"
-#include "key.h"
-#include "lfsr_hash.h"
+#include "utils.h"
 
-static constexpr auto VERSION = "v1.0";
-
-namespace main {
-    lfsr_rng::Generators pass_gen;
-    Worker worker;
-    key::Key key;
-    lfsr_hash::gens hash_gen;
-    QVector<lfsr8::u64> pswd_buff{};
-    QString storage{};
-    int pin_code[4]{};
-    bool needToGeneratePasswords = true;
-}
-
-namespace enc {
-    lfsr_rng::Generators gamma_gen;
-    Worker worker;
-    int aligner64 = 0;
-    lfsr_rng::u64 gamma = 0;
-}
-
-namespace dec {
-    lfsr_rng::Generators gamma_gen;
-    Worker worker;
-    int aligner64 = 0;
-    lfsr_rng::u64 gamma = 0;
-}
-
-namespace enc_inner {
-    lfsr_rng::Generators gamma_gen;
-    Worker worker;
-    int aligner64 = 0;
-    lfsr_rng::u64 gamma = 0;
-}
-
-namespace dec_inner {
-    lfsr_rng::Generators gamma_gen;
-    Worker worker;
-    int aligner64 = 0;
-    lfsr_rng::u64 gamma = 0;
-}
-
+static constexpr auto VERSION = "#v1.00";
 
 namespace {
-    const auto gen_pass_txt = QString::fromUtf8("Insert a new password");
+    const auto gen_pass_txt = QString::fromUtf8("Insert a row with a new password");
     MyTextEdit* txt_edit_master_phrase = nullptr;
     QTableWidgetItem* selected_context_item = nullptr;
     constexpr int num_of_passwords = 10; // in pswd_buff.
@@ -71,280 +29,6 @@ namespace {
     int password_len;
     constexpr int pswd_column_idx = 1;
     const char* asterics {"*************"};
-    constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
-                             40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
-                             74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
-                             97, 101, 102, 103, 105, 106, 107, 108, 109, 110, 112, 115, 119, 125, 126, 127,
-                             130, 131, 132, 138, 142, 145, 147, 148, 149, 150, 151, 152, 154, 155, 156, 160,
-                             161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
-                             186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
-                             218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254};
-}
-
-static uint8_t rotl8(uint8_t n, unsigned int c)
-{
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n << c) | (n >> ( (-c) & mask ));
-}
-
-static uint8_t rotr8(uint8_t n, unsigned int c)
-{
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n >> c) | (n << ( (-c) & mask ));
-}
-
-static void encode_crc(QByteArray& data) {
-    int i;
-    char crc1 = '\0';
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
-    }
-    data.push_back(crc1);
-    char crc2 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc2);
-    char crc3 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc3);
-    char crc4 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc4);
-}
-
-static bool decode_crc(QByteArray& data) {
-    if (data.size() < 4) {
-        qDebug() << "CRC size is small.";
-        return false;
-    }
-    int i;
-    char crc4 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-        i++;
-    }
-    char crc3 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-        i++;
-    }
-    char crc2 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-        i++;
-    }
-    char crc1 = data.back();
-    data.removeLast();
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
-    }
-    if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
-    {
-        return false;
-    }
-    return true;
-}
-
-static void init_encryption() {
-    enc::aligner64 = 0;
-    const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
-    #pragma optimize( "", off )
-    for (int i = 0; i < sum_of_pin; ++i) {
-        enc::gamma_gen.next_u64();
-    }
-    #pragma optimize( "", on )
-    enc::gamma = 0;
-}
-
-static void finalize_encryption() {
-    #pragma optimize( "", off )
-    if (enc::aligner64 % sizeof(lfsr_rng::u64) != 0) {
-        enc::gamma_gen.next_u64();
-    }
-    enc::gamma = 0;
-    #pragma optimize( "", on )
-}
-
-static void encrypt256_inner(const QByteArray& in, QByteArray& out) {
-    if (in.size() % 256 != 0) {
-        qDebug() << "Encryption error: data size is not a 256*k bytes";
-        return;
-    }
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc_inner::aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc_inner::gamma = enc_inner::gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        out.push_back(char(b) ^ char(enc_inner::gamma));
-        enc_inner::gamma >>= 8;
-        ++enc_inner::aligner64;
-    }
-}
-
-static void decrypt256_inner(const QByteArray& in, QByteArray& out) {
-    if (in.size() % 256 != 0) {
-        qDebug() << "Decryption error: data size is not a 256*k bytes";
-        return;
-    }
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (dec_inner::aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            dec_inner::gamma = dec_inner::gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        out.push_back(char(b) ^ char(dec_inner::gamma));
-        dec_inner::gamma >>= 8;
-        ++dec_inner::aligner64;
-    }
-}
-
-static void encrypt(const QByteArray& in, QByteArray& out) {
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc::aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc::gamma = enc::gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        const int rot = enc::gamma % 8;
-        b = rotr8(b, rot);
-        out.push_back(char(b) ^ char(enc::gamma));
-        enc::gamma >>= 8;
-        ++enc::aligner64;
-    }
-}
-
-static void init_decryption() {
-    dec::aligner64 = 0;
-    const int sum_of_pin = main::pin_code[0] + main::pin_code[1] + main::pin_code[2] + main::pin_code[3] + 16;
-    #pragma optimize( "", off )
-    for (int i = 0; i < sum_of_pin; ++i) {
-        dec::gamma_gen.next_u64();
-    }
-    #pragma optimize( "", on )
-    dec::gamma = 0;
-}
-
-static void finalize_decryption() {
-    #pragma optimize( "", off )
-    if (dec::aligner64 % sizeof(lfsr_rng::u64) != 0) {
-        dec::gamma_gen.next_u64();
-    }
-    dec::gamma = 0;
-    #pragma optimize( "", on )
-}
-
-static void decrypt(const QByteArray& in, QByteArray& out) {
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (dec::aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            dec::gamma = dec::gamma_gen.next_u64();
-        }
-        const int rot = dec::gamma % 8;
-        uint8_t b = *it ^ char(dec::gamma);
-        b = rotl8(b, rot);
-        out.push_back(char(b));
-        dec::gamma >>= 8;
-        ++dec::aligner64;
-    }
-}
-
-static void padd_256(QByteArray& data) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = data.size();
-    const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
-    int counter = 0;
-    while (counter++ < r) {
-        data.push_back('\0');
-    }
-}
-
-static void dpadd_256(QByteArray& data) {
-    if (data.isEmpty()) {
-        return;
-    }
-    while (!data.isEmpty() && data.back() == '\0') {
-        data.removeLast();
-    }
-}
-
-static void encode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = in.size();
-    out.resize(n);
-    const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        int x = 1;
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
-                x *= a;
-                x %= p;
-            }
-        }
-    }
-}
-
-static void decode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = in.size();
-    if (n % (p - 1) != 0) {
-        qDebug() << "Decode dlog256 error\n";
-        return;
-    }
-    out.resize(n);
-    const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        int x = 1;
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = goods[((int)xor_val + 128) % std::ssize(goods)];
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
-                x *= a;
-                x %= p;
-            }
-        }
-    }
-}
-
-static QString Encode94(lfsr8::u32 x)
-{
-    constexpr int m = 5; // See the password_len_per_request.
-    QString res;
-    res.resize(m);
-    for (int i=0; i<m; ++i) {
-        auto y = x % 94;
-        res[m-i-1] = (char)(y + 33);
-        x -= y;
-        x /= 94;
-    }
-    return res;
 }
 
 static QString GetPassword(int len)
@@ -371,83 +55,72 @@ static QString GetPassword(int len)
     return pswd;
 }
 
-static lfsr_hash::salt pin_to_salt_1()
-{
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 1) ^ (main::pin_code[3] + 3);
-    return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(main::pin_code[0] + main::pin_code[1] - main::pin_code[2] - main::pin_code[3]) + 32768),
-            static_cast<u16>(1800*(main::pin_code[0] - main::pin_code[1] + main::pin_code[2] - main::pin_code[3]) + 32768) };
+void insert_hash128_256padd(QByteArray& bytes) {
+    lfsr_hash::u128 hash = pin_to_hash_2();
+    constexpr size_t blockSize = 256;
+    {
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash.first ^= inner_hash.first;
+                hash.second ^= inner_hash.second;
+            }
+        }
+    }
+    while (hash.first) {
+        bytes.append(char(hash.first));
+        hash.first >>= 8;
+    }
+    while (hash.second) {
+        bytes.append(char(hash.second));
+        hash.second >>= 8;
+    }
 }
 
-static lfsr_hash::salt pin_to_salt_2()
-{
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 3) ^ (main::pin_code[2] + 5) ^ (main::pin_code[3] + 6);
-    return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + 32768),
-            static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + 32768) };
-}
-
-static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
-{
-    using namespace lfsr_hash;
-    return {static_cast<int>(hash.first % 31) + static_cast<int>(hash.first % 17) + 11,
-            static_cast<u16>(hash.first),
-            static_cast<u16>(hash.second)};
-}
-
-static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
-{
-    using namespace lfsr_hash;
-    return  {static_cast<int>(hash.first % 19) + static_cast<int>(hash.first % 31) + 13,
-            static_cast<u16>(hash.first),
-            static_cast<u16>(hash.second)};
-}
-
-static lfsr_hash::u128 pin_to_hash_1()
-{
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 3) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 6);
-    uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
-                   static_cast<uint8_t>(x2_4bit),
-                   static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
-                   static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(main::hash_gen, b_, pin_to_salt_1());
-}
-
-static lfsr_hash::u128 pin_to_hash_2() {
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 1) ^ (main::pin_code[3] + 3);
-    const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 3) ^ (main::pin_code[2] + 5) ^ (main::pin_code[3] + 6);
-    uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
-                   static_cast<uint8_t>(x2_4bit),
-                   static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
-                   static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(main::hash_gen, b_, pin_to_salt_2());
-}
-
-static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
-{
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 1) ^ (main::pin_code[3] + 3);
-    const int x2_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 6);
-    return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(main::pin_code[0] + main::pin_code[1] - main::pin_code[2] - main::pin_code[3]) + blockSize),
-            static_cast<u16>(1800*(main::pin_code[0] - main::pin_code[1] + main::pin_code[2] - main::pin_code[3]) + bytesRead) };
-}
-
-static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
-{
-    using namespace lfsr_hash;
-    const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 3) ^ (main::pin_code[2] + 5) ^ (main::pin_code[3] + 6);
-    const int x2_4bit = (main::pin_code[0] + 3) ^ (main::pin_code[1] + 6) ^ (main::pin_code[2] + 6) ^ (main::pin_code[3] + 6);
-    return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-main::pin_code[0] - main::pin_code[1] + main::pin_code[2] + main::pin_code[3]) + bytesRead),
-            static_cast<u16>(1800*(-main::pin_code[0] + main::pin_code[1] - main::pin_code[2] + main::pin_code[3]) + blockSize) };
+bool extract_and_check_hash128_256padd(QByteArray& bytes) {
+    if (bytes.size() < 16) {
+        qDebug() << "Small size while hash128 extracting: " << bytes.size();
+        return false;
+    }
+    lfsr_hash::u128 extracted_hash = {0, 0};
+    for (int i=0; i<8; ++i) {
+        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+        bytes.removeLast();
+    }
+    for (int i=0; i<8; ++i) {
+        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+        bytes.removeLast();
+    }
+    lfsr_hash::u128 hash = pin_to_hash_2();
+    constexpr size_t blockSize = 256;
+    {
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash.first ^= inner_hash.first;
+                hash.second ^= inner_hash.second;
+            }
+        }
+    }
+    while (!bytes.isEmpty() && bytes.back() == '\0') {
+        bytes.removeLast();
+    }
+    return extracted_hash == hash;
 }
 
 static QString GetFileName(lfsr_hash::u128 hash)
@@ -534,7 +207,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->setupUi(this);
     //
     QString title = "AllPass 128-bit ";
-    title.append(VERSION);
+    QString version = QString(VERSION).remove("#");
+    title.append(version);
+    title.append(QString(" - Password Manager"));
     this->setWindowTitle( title );
     //
     txt_edit_master_phrase = new MyTextEdit();
@@ -566,18 +241,18 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
     copyAct = new QAction(QIcon(),
-                         tr("&Copy the item"), this);
+                         tr("&Copy the item to the clipboard"), this);
     copyAct->setShortcuts(QKeySequence::Copy);
-    copyAct->setStatusTip(tr("Copy the item content to clipboard"));
+    copyAct->setStatusTip(tr("Copy the item to the clipboard"));
     connect(copyAct, &QAction::triggered, this, &Widget::copy_clipboard);
     removeAct = new QAction(QIcon(),
-                          tr("&Delete the row"), this);
+                          tr("&Delete the current row"), this);
     removeAct->setShortcuts(QKeySequence::Delete);
     removeAct->setStatusTip(tr("Delete the current row"));
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
     updatePassAct = new QAction(QIcon(),
-                                tr("&Update the password"), this);
-    updatePassAct->setStatusTip(tr("Generate a new password"));
+                                tr("&Change the password to a new one"), this);
+    updatePassAct->setStatusTip(tr("Change the password to a new one"));
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
     //
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
@@ -715,14 +390,14 @@ void Widget::seed_pass_has_been_set()
     } else {
         if (!main::storage.isEmpty()) {
             mb.information(this, "Success", "The key was set");
-            ui->btn_input_master_phrase->setText(QString::fromUtf8("Your storage: %1").arg(main::storage));
             ui->tableWidget->clearContents();
             while (ui->tableWidget->rowCount() > 0) {
                 ui->tableWidget->removeRow(0);
             }
             load_storage();
-            ui->btn_generate->setEnabled(true);
-            ui->btn_add_empty_row->setEnabled(true);
+            ui->btn_input_master_phrase->setText(QString::fromUtf8("Your storage: %1").arg(main::storage));
+            ui->btn_generate->setEnabled(!main::storage.isEmpty());
+            ui->btn_add_empty_row->setEnabled(!main::storage.isEmpty());
             ui->btn_generate->setFocus();
             ui->btn_generate->setText(gen_pass_txt);
         }
@@ -842,8 +517,8 @@ void Widget::update_master_phrase()
             lfsr_hash::u16 byte_2 = 255 & (hash_enc.second >> 8*i);
             st[i] = (byte_1 << 8) | byte_2;
         }
-        watcher_seed_enc_gen.setFuture(enc::worker.seed(st));
-        watcher_seed_dec_gen.setFuture(dec::worker.seed(st));
+        watcher_seed_enc_gen.setFuture(main::worker.seed(st));
+        watcher_seed_dec_gen.setFuture(main::worker.seed(st));
         //
         lfsr_hash::u128 hash_enc_inner = pin_to_hash_2();
         {
@@ -871,8 +546,8 @@ void Widget::update_master_phrase()
             lfsr_hash::u16 byte_2 = 255 & (hash_enc_inner.second >> 8*i);
             st[i] = (byte_1 << 8) | byte_2;
         }
-        watcher_seed_enc_inner_gen.setFuture(enc_inner::worker.seed(st));
-        watcher_seed_dec_inner_gen.setFuture(dec_inner::worker.seed(st));
+        watcher_seed_enc_inner_gen.setFuture(main::worker.seed(st));
+        watcher_seed_dec_inner_gen.setFuture(main::worker.seed(st));
         watcher_seed_enc_gen.waitForFinished();
         watcher_seed_dec_gen.waitForFinished();
         watcher_seed_enc_inner_gen.waitForFinished();
@@ -1020,7 +695,6 @@ void Widget::save_to_store()
         QStringList strList;
         QByteArray out;
         QByteArray encoded_string;
-        qDebug() << "Init encryption";
         init_encryption();
         const int rc = ui->tableWidget->rowCount();
         const int cc = ui->tableWidget->columnCount();
@@ -1054,6 +728,8 @@ void Widget::save_to_store()
         encrypt(permuted, out);
         finalize_encryption();
         encode_crc(out);
+        out.append(VERSION);
+        insert_hash128_256padd(out);
         file.write(out);
         file.close();
         qDebug() << "Table has been saved!";
@@ -1087,6 +763,28 @@ void Widget::load_storage()
     if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
+        const bool hash_check_is_ok = extract_and_check_hash128_256padd(data);
+        if (!hash_check_is_ok) {
+            QMessageBox mb;
+            mb.critical(nullptr, QString::fromUtf8("LFSR hash128: storage data failure"),
+                        QString::fromUtf8("See the file: %1").arg(main::storage));
+            main::storage = "";
+            return;
+        }
+        QString version;
+        while (!data.isEmpty() && data.back() != '#') {
+            version.push_back(data.back());
+            data.removeLast();
+        }
+        if (!data.isEmpty()) {
+            data.removeLast();
+        }
+        std::reverse(version.begin(), version.end());
+        const QString etalon_version = QString(VERSION).remove("#");
+        if (version != etalon_version) {
+            qDebug() << "Unrecognized version: " << version;
+            return;
+        }
         if (!decode_crc(data)) {
             qDebug() << "CRC: storage data failure: " << main::storage;
             QMessageBox mb;
