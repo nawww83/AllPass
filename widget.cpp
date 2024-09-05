@@ -29,134 +29,19 @@ namespace {
     int password_len;
     constexpr int pswd_column_idx = 1;
     const char* asterics {"*************"};
-}
-
-static QString GetPassword(int len)
-{
-    QString pswd{};
-    int capacity = 2;
-    lfsr8::u64 raw64;
-    while (pswd.size() < len) {
-        if (main::pswd_buff.empty()) {
-            break;
-        }
-        #pragma optimize( "", off )
-        raw64 = capacity == 2 ? main::pswd_buff.back() : raw64;
-        if (capacity == 2) {
-            main::pswd_buff.back() = 0;
-            main::pswd_buff.pop_back();
-        }
-        pswd += Encode94(raw64);
-        capacity -= 1;
-        capacity = capacity == 0 ? 2 : capacity;
-        raw64 >>= 32;
-        #pragma optimize( "", on )
-    }
-    return pswd;
-}
-
-void insert_hash128_256padd(QByteArray& bytes) {
-    lfsr_hash::u128 hash = {0, 0};
-    constexpr size_t blockSize = 256;
-    {
-        {
-            const auto bytesRead = bytes.size();
-            const size_t r = bytesRead % blockSize;
-            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt& original_size_salt = get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
-        }
-    }
-    while (hash.first) {
-        bytes.append(char(hash.first));
-        hash.first >>= 8;
-    }
-    while (hash.second) {
-        bytes.append(char(hash.second));
-        hash.second >>= 8;
+    namespace symbols {
+        const auto end_message = QChar(0x0003);
+        const auto empty_item = QChar(0x0008);
+        const auto row_delimiter = QChar(0x001E);
+        const auto col_delimiter = QChar(0x001F);
     }
 }
 
-bool extract_and_check_hash128_256padd(QByteArray& bytes) {
-    if (bytes.size() < 16) {
-        qDebug() << "Small size while hash128 extracting: " << bytes.size();
-        return false;
-    }
-    lfsr_hash::u128 extracted_hash = {0, 0};
-    for (int i=0; i<8; ++i) {
-        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
-        bytes.removeLast();
-    }
-    for (int i=0; i<8; ++i) {
-        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
-        bytes.removeLast();
-    }
-    lfsr_hash::u128 hash = {0, 0};
-    constexpr size_t blockSize = 256;
-    {
-        const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt& original_size_salt = get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
-        }
-    }
-    while (!bytes.isEmpty() && bytes.back() == '\0') {
-        bytes.removeLast();
-    }
-    return extracted_hash == hash;
-}
-
-static QString GetFileName(lfsr_hash::u128 hash)
-{
-    using namespace lfsr_hash;
-    static constexpr auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
-    const int allowed_len = std::strlen(allowed);
-    if (allowed_len < 36) {
-        qDebug() << "Allowed alphabet is small.";
-        return "";
-    }
-    if (allowed_len > 36) {
-        qDebug() << "Allowed alphabet is big.";
-        return "";
-    }
-    uint8_t b_[64]{};
-    for (int i=0; i<8; ++i) {
-        b_[2*i] = hash.first >> 8*i;
-        b_[2*i + 1] = hash.second >> 8*i;
-    }
-    u128 hash2 = hash128<64>(main::hash_gen, b_, hash_to_salt_1(hash));
-    QString name {};
-    for (int i=0; i<8; ++i) {
-        name.push_back( allowed[(hash2.first >> 8*i) % 36] );
-        name.push_back( allowed[(hash2.second >> 8*i) % 36] );
-    }
-    for (int i=0; i<8; ++i) {
-        b_[16 + 2*i] = hash2.first >> 8*i;
-        b_[16 + 2*i + 1] = hash2.second >> 8*i;
-    }
-    u128 hash3 = hash128<64>(main::hash_gen, b_, hash_to_salt_2(hash2));
-    for (int i=0; i<8; ++i) {
-        name.push_back( allowed[(hash3.first >> 8*i) % 36] );
-        name.push_back( allowed[(hash3.second >> 8*i) % 36] );
-    }
-    return name;
+static void RequestPasswords(QFutureWatcher<QVector<lfsr8::u64>>& watcher) {
+    const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
+    watcher.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
+    watcher.waitForFinished();
+    main::pswd_buff = watcher.result();
 }
 
 class PassEditDelegate : public QItemDelegate
@@ -203,29 +88,27 @@ Widget::Widget(QString&& pin, QWidget *parent)
         }
         #pragma optimize( "", on )
     }
-    //
     ui->setupUi(this);
-    //
     QString title = "AllPass 128-bit ";
     QString version = QString(VERSION).remove("#");
     title.append(version);
     title.append(QString(" - Password Manager"));
     this->setWindowTitle( title );
-    //
+
     txt_edit_master_phrase = new MyTextEdit();
     txt_edit_master_phrase->setWindowTitle("Master phrase input");
     txt_edit_master_phrase->setStyleSheet("color: white; background-color: black; font: 14px;");
     txt_edit_master_phrase->setVisible(false);
-    //
+
     connect(txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
-    //
+
     password_len = ui->spbx_pass_len->value();
-    //
+
     ui->btn_generate->setText(gen_pass_txt);
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
-    //
+
     ui->tableWidget->setSortingEnabled(false);
     QStringList table_header {"Login","Password","Comments"};
     ui->tableWidget->setHorizontalHeaderLabels(table_header);
@@ -255,9 +138,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
                                 tr("&Change the password"), this);
     updatePassAct->setStatusTip(tr("Change the password to a new one"));
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
-    //
+
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
-    //
+
     ui->btn_input_master_phrase->setFocus();
 }
 
@@ -346,13 +229,6 @@ void Widget::delete_row() {
     selected_context_item = nullptr;
 }
 
-static void RequestPasswords(QFutureWatcher<QVector<lfsr8::u64>>& watcher) {
-    const int Nw = (password_len * num_of_passwords) / password_len_per_request + 1;
-    watcher.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
-    watcher.waitForFinished();
-    main::pswd_buff = watcher.result();
-}
-
 void Widget::update_pass() {
     if (!selected_context_item) {
         return;
@@ -368,10 +244,10 @@ void Widget::update_pass() {
                 return;
             }
         }
-        QString pswd = GetPassword(password_len);
+        QString pswd = utils::GetPassword(password_len);
         if (pswd.length() < password_len) {
             RequestPasswords(watcher_passwords);
-            pswd = GetPassword(password_len);
+            pswd = utils::GetPassword(password_len);
         }
         selected_context_item->setData(Qt::DisplayRole, asterics);
         selected_context_item->setData(Qt::UserRole, pswd);
@@ -420,135 +296,34 @@ void Widget::update_master_phrase()
         return;
     }
     ui->btn_input_master_phrase->setEnabled(false);
-    lfsr_hash::u128 hash = pin_to_hash_1();
-    constexpr size_t blockSize = 64;
-    {
-        auto bytes = text.toUtf8();
-        auto seed = std::random_device{}();
-        while (seed != 0) {
-            bytes.push_back( static_cast<char>(seed % 256));
-            seed >>= 8;
-        }
-        {
-            const auto bytesRead = bytes.size();
-            const size_t r = bytesRead % blockSize;
-            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt& original_size_salt = pin_to_salt_3(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
-        }
-    }
-    //
-    auto x = hash.first;
-    auto y = hash.second;
-    {
-        using main::key;
-        key.set_key(x % 65536, 3);
-        key.set_key((x >> 16) % 65536, 2);
-        key.set_key((x >> 32) % 65536, 1);
-        key.set_key((x >> 48) % 65536, 0);
-        key.set_key(y % 65536, 7);
-        key.set_key((y >> 16) % 65536, 6);
-        key.set_key((y >> 32) % 65536, 5);
-        key.set_key((y >> 48) % 65536, 4);
-    }
+    lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
+    utils::fill_key_by_hash128(hash);
     // Clear
     #pragma optimize( "", off )
-        x ^= x; y ^= y;
         hash.first = 0; hash.second = 0;
     #pragma optimize( "", on )
-    //
     {
-        lfsr_hash::u128 hash_fs = pin_to_hash_2();
-        constexpr size_t blockSize = 64;
-        {
-            auto bytes = text.toUtf8();
-            {
-                const auto bytesRead = bytes.size();
-                const size_t r = bytesRead % blockSize;
-                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        lfsr_hash::u128 hash_fs = utils::gen_hash_for_storage(text);
+        main::storage = utils::GetStorageName(hash_fs);
+        lfsr_hash::u128 hash_enc = utils::gen_hash_for_encryption(text);
+        lfsr_rng::STATE st1 = utils::fill_state_by_hash(hash_enc);
+        watcher_seed_enc_gen.setFuture(main::worker.seed(st1));
+        watcher_seed_dec_gen.setFuture(main::worker.seed(st1));
+        lfsr_hash::u128 hash_enc_inner = utils::gen_hash_for_inner_encryption(text);
+        lfsr_rng::STATE st2 = utils::fill_state_by_hash(hash_enc_inner);
+        watcher_seed_enc_inner_gen.setFuture(main::worker.seed(st2));
+        watcher_seed_dec_inner_gen.setFuture(main::worker.seed(st2));
+        // Clear
+        #pragma optimize( "", off )
+            hash_fs = {0, 0};
+            hash_enc = {0, 0};
+            hash_enc_inner = {0, 0};
+            for (auto& el : text) {
+                el = '\0';
             }
-            const auto bytesRead = bytes.size();
-            {
-                using namespace lfsr_hash;
-                const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
-                const size_t n = bytesRead / blockSize;
-                for (size_t i=0; i<n; ++i) {
-                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                    hash_fs.first ^= inner_hash.first;
-                    hash_fs.second ^= inner_hash.second;
-                }
-            }
-        }
-        main::storage = GetFileName(hash_fs);
-        lfsr_hash::u128 hash_enc = pin_to_hash_1();
-        {
-            auto bytes = text.toUtf8();
-            {
-                const auto bytesRead = bytes.size();
-                const size_t r = bytesRead % blockSize;
-                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-            }
-            const auto bytesRead = bytes.size();
-            {
-                using namespace lfsr_hash;
-                const salt& original_size_salt = pin_to_salt_4(bytesRead, blockSize);
-                const size_t n = bytesRead / blockSize;
-                for (size_t i=0; i<n; ++i) {
-                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                    hash_enc.first ^= inner_hash.first;
-                    hash_enc.second ^= inner_hash.second;
-                }
-            }
-        }
-        lfsr_rng::STATE st;
-        for (int i=0; i<8; ++i) {
-            lfsr_hash::u16 byte_1 = 255 & (hash_enc.first >> 8*i);
-            lfsr_hash::u16 byte_2 = 255 & (hash_enc.second >> 8*i);
-            st[i] = (byte_1 << 8) | byte_2;
-        }
-        watcher_seed_enc_gen.setFuture(main::worker.seed(st));
-        watcher_seed_dec_gen.setFuture(main::worker.seed(st));
-        //
-        lfsr_hash::u128 hash_enc_inner = pin_to_hash_2();
-        {
-            auto bytes = text.toUtf8();
-            {
-                const auto bytesRead = bytes.size();
-                const size_t r = bytesRead % blockSize;
-                bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-            }
-            const auto bytesRead = bytes.size();
-            {
-                using namespace lfsr_hash;
-                const salt& original_size_salt = pin_to_salt_3(bytesRead, blockSize);
-                const size_t n = bytesRead / blockSize;
-                for (size_t i=0; i<n; ++i) {
-                    u128 inner_hash = hash128<blockSize>(main::hash_gen,
-                                                         reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                    hash_enc_inner.first ^= inner_hash.first;
-                    hash_enc_inner.second ^= inner_hash.second;
-                }
-            }
-        }
-        for (int i=0; i<8; ++i) {
-            lfsr_hash::u16 byte_1 = 255 & (hash_enc_inner.first >> 8*i);
-            lfsr_hash::u16 byte_2 = 255 & (hash_enc_inner.second >> 8*i);
-            st[i] = (byte_1 << 8) | byte_2;
-        }
-        watcher_seed_enc_inner_gen.setFuture(main::worker.seed(st));
-        watcher_seed_dec_inner_gen.setFuture(main::worker.seed(st));
+        #pragma optimize( "", on )
+        utils::clear_lfsr_rng_state(st1);
+        utils::clear_lfsr_rng_state(st2);
         watcher_seed_enc_gen.waitForFinished();
         watcher_seed_dec_gen.waitForFinished();
         watcher_seed_enc_inner_gen.waitForFinished();
@@ -557,22 +332,7 @@ void Widget::update_master_phrase()
         dec::gamma_gen = watcher_seed_dec_gen.result();
         enc_inner::gamma_gen = watcher_seed_enc_inner_gen.result();
         dec_inner::gamma_gen = watcher_seed_dec_inner_gen.result();
-        // Clear
-        #pragma optimize( "", off )
-            hash_fs = {0, 0};
-            hash_enc = {0, 0};
-            hash_enc_inner = {0, 0};
-            st[0] = 0;
-            st[1] = 0;
-            st[2] = 0;
-            st[3] = 0;
-            st[4] = 0;
-            st[5] = 0;
-            st[6] = 0;
-            st[7] = 0;
-        #pragma optimize( "", on )
     }
-    //
     emit master_phrase_ready();
 }
 
@@ -582,30 +342,9 @@ void Widget::set_master_key()
     for (int i=0; i<main::key.N(); ++i) {
         st[i] = main::key.get_key(i);
     }
-    // Clear
-    #pragma optimize( "", off )
-        using main::key;
-        key.set_key(0, 3);
-        key.set_key(0, 2);
-        key.set_key(0, 1);
-        key.set_key(0, 0);
-        key.set_key(0, 7);
-        key.set_key(0, 6);
-        key.set_key(0, 5);
-        key.set_key(0, 4);
-    #pragma optimize( "", on )
     watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
-    // Clear
-    #pragma optimize( "", off )
-        st[0] = 0;
-        st[1] = 0;
-        st[2] = 0;
-        st[3] = 0;
-        st[4] = 0;
-        st[5] = 0;
-        st[6] = 0;
-        st[7] = 0;
-    #pragma optimize( "", on )
+    utils::clear_main_key();
+    utils::clear_lfsr_rng_state(st);
 }
 
 void Widget::on_btn_generate_clicked()
@@ -624,10 +363,10 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(QString::fromUtf8("Wait..."));
     ui->btn_generate->setEnabled(false);
-    QString pswd = GetPassword(password_len);
+    QString pswd = utils::GetPassword(password_len);
     if (pswd.length() < password_len) {
         RequestPasswords(watcher_passwords);
-        pswd = GetPassword(password_len);
+        pswd = utils::GetPassword(password_len);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
@@ -700,7 +439,7 @@ void Widget::save_to_store()
         QStringList strList;
         QByteArray out;
         QByteArray encoded_string;
-        init_encryption();
+        utils::init_encryption();
         const int rc = ui->tableWidget->rowCount();
         const int cc = ui->tableWidget->columnCount();
         for( int row = 0; row < rc; ++row )
@@ -711,30 +450,30 @@ void Widget::save_to_store()
                 if (ui->tableWidget->item(row, col)) {
                     if (col != pswd_column_idx) {
                         const auto& txt = ui->tableWidget->item(row, col)->text();
-                        strList << (txt == "" ? QChar(0x0008) : txt);
+                        strList << (txt == "" ? symbols::empty_item : txt);
                     } else {
                         strList << ui->tableWidget->item(row, col)->data(Qt::UserRole).toString();
                     }
                 }
                 else {
-                    strList << QChar(0x0008);
+                    strList << symbols::empty_item;
                 }
             }
             auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QString tmp = strList.join( QChar(0x001E) );
-            tmp.append( (row < ui->tableWidget->rowCount() - 1 ? QChar(0x001F) : QChar(0x0003)) );
+            QString tmp = strList.join( symbols::row_delimiter );
+            tmp.append( (row < ui->tableWidget->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
             encoded_string.append(fromUtf16( tmp ));
         }
-        padd_256(encoded_string);
+        utils::padd_256(encoded_string);
         QByteArray encrypted_inner;
-        encrypt256_inner(encoded_string, encrypted_inner);
+        utils::encrypt256_inner(encoded_string, encrypted_inner);
         QByteArray permuted;
-        encode_dlog256(encrypted_inner, permuted);
-        encrypt(permuted, out);
-        finalize_encryption();
-        encode_crc(out);
+        utils::encode_dlog256(encrypted_inner, permuted);
+        utils::encrypt(permuted, out);
+        utils::finalize_encryption();
+        utils::encode_crc(out);
         out.append(VERSION);
-        insert_hash128_256padd(out);
+        utils::insert_hash128_256padd(out);
         file.write(out);
         file.close();
         qDebug() << "Table has been saved!";
@@ -768,7 +507,7 @@ void Widget::load_storage()
     if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
-        const bool hash_check_is_ok = extract_and_check_hash128_256padd(data);
+        const bool hash_check_is_ok = utils::extract_and_check_hash128_256padd(data);
         if (!hash_check_is_ok) {
             QMessageBox mb;
             mb.critical(nullptr, QString::fromUtf8("LFSR hash128: storage data failure"),
@@ -790,7 +529,7 @@ void Widget::load_storage()
             qDebug() << "Unrecognized version: " << version;
             return;
         }
-        if (!decode_crc(data)) {
+        if (!utils::decode_crc(data)) {
             qDebug() << "CRC: storage data failure: " << main::storage;
             QMessageBox mb;
             mb.critical(nullptr, QString::fromUtf8("CRC: storage data failure"),
@@ -798,19 +537,23 @@ void Widget::load_storage()
             main::storage = "";
             return;
         }
-        init_decryption();
+        utils::init_decryption();
         QByteArray decrypted;
-        decrypt(data, decrypted);
+        utils::decrypt(data, decrypted);
         QByteArray depermuted;
-        decode_dlog256(decrypted, depermuted);
+        utils::decode_dlog256(decrypted, depermuted);
         QByteArray decrypted_inner;
-        decrypt256_inner(depermuted, decrypted_inner);
-        dpadd_256(decrypted_inner);
+        utils::decrypt256_inner(depermuted, decrypted_inner);
+        utils::dpadd_256(decrypted_inner);
         auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
         QString decoded_string = toUtf16(decrypted_inner);
-        decoded_string.removeLast(); // 0x0003
-        rowOfData = decoded_string.split(QChar(0x001F));
-        finalize_decryption();
+        if (decoded_string.isEmpty()) {
+            qDebug() << "Unrecognized error while loading.";
+            return;
+        }
+        decoded_string.removeLast(); // 0x0003 = symbols::end_message.
+        rowOfData = decoded_string.split(symbols::col_delimiter);
+        utils::finalize_decryption();
         file.close();
     } else {
         // qDebug() << "Storage cannot be opened.";
@@ -822,7 +565,7 @@ void Widget::load_storage()
     }
     for (int row = 0; row < rowOfData.size(); row++)
     {
-        rowData = rowOfData.at(row).split(QChar(0x001E));
+        rowData = rowOfData.at(row).split(symbols::row_delimiter);
         if (rowData.size() == ui->tableWidget->columnCount()) {
             ui->tableWidget->insertRow(row);
         } else {
@@ -835,9 +578,9 @@ void Widget::load_storage()
             QTableWidgetItem *item = new QTableWidgetItem();
             if (col == pswd_column_idx) {
                 item->setData(Qt::DisplayRole, asterics);
-                item->setData(Qt::UserRole, row_str.at(0) == QChar(0x0008) ? "" : row_str);
+                item->setData(Qt::UserRole, row_str.at(0) == symbols::empty_item ? "" : row_str);
             } else {
-                item->setText(row_str.at(0) == QChar(0x0008)  ? "" : row_str);
+                item->setText(row_str.at(0) == symbols::empty_item ? "" : row_str);
             }
             ui->tableWidget->setItem(row, col, item);
         }

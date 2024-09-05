@@ -51,6 +51,64 @@ namespace dec_inner {
     lfsr_rng::u64 gamma = 0;
 }
 
+namespace utils {
+
+inline static void fill_key_by_hash128(lfsr_hash::u128 hash) {
+    auto x = hash.first;
+    auto y = hash.second;
+    {
+        using main::key;
+        key.set_key(x % 65536, 3);
+        key.set_key((x >> 16) % 65536, 2);
+        key.set_key((x >> 32) % 65536, 1);
+        key.set_key((x >> 48) % 65536, 0);
+        key.set_key(y % 65536, 7);
+        key.set_key((y >> 16) % 65536, 6);
+        key.set_key((y >> 32) % 65536, 5);
+        key.set_key((y >> 48) % 65536, 4);
+    }
+    #pragma optimize( "", off )
+    x ^= x; y ^= y;
+    #pragma optimize( "", on )
+}
+
+inline static lfsr_rng::STATE fill_state_by_hash(lfsr_hash::u128 hash) {
+    lfsr_rng::STATE st;
+    for (int i=0; i<8; ++i) {
+        lfsr_hash::u16 byte_1 = 255 & (hash.first >> 8*i);
+        lfsr_hash::u16 byte_2 = 255 & (hash.second >> 8*i);
+        st[i] = (byte_1 << 8) | byte_2;
+    }
+    return st;
+}
+
+inline static void clear_main_key() {
+    #pragma optimize( "", off )
+        using main::key;
+        key.set_key(0, 3);
+        key.set_key(0, 2);
+        key.set_key(0, 1);
+        key.set_key(0, 0);
+        key.set_key(0, 7);
+        key.set_key(0, 6);
+        key.set_key(0, 5);
+        key.set_key(0, 4);
+    #pragma optimize( "", on )
+}
+
+inline static void clear_lfsr_rng_state(lfsr_rng::STATE& st) {
+    #pragma optimize( "", off )
+        st[0] = 0;
+        st[1] = 0;
+        st[2] = 0;
+        st[3] = 0;
+        st[4] = 0;
+        st[5] = 0;
+        st[6] = 0;
+        st[7] = 0;
+    #pragma optimize( "", on )
+}
+
 inline static uint8_t rotl8(uint8_t n, unsigned int c)
 {
     const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
@@ -63,6 +121,20 @@ inline static uint8_t rotr8(uint8_t n, unsigned int c)
     const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
     c &= mask;
     return (n >> c) | (n << ( (-c) & mask ));
+}
+
+inline static QString Encode94(lfsr8::u32 x)
+{
+    constexpr int m = 5; // See the password_len_per_request.
+    QString res;
+    res.resize(m);
+    for (int i=0; i<m; ++i) {
+        auto y = x % 94;
+        res[m-i-1] = (char)(y + 33);
+        x -= y;
+        x /= 94;
+    }
+    return res;
 }
 
 inline static void encode_crc(QByteArray& data) {
@@ -181,7 +253,8 @@ inline static lfsr_hash::u128 pin_to_hash_1()
     return hash128<64>(main::hash_gen, b_, pin_to_salt_1());
 }
 
-inline static lfsr_hash::u128 pin_to_hash_2() {
+inline static lfsr_hash::u128 pin_to_hash_2()
+{
     using namespace lfsr_hash;
     const int x1_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 0) ^ (main::pin_code[2] + 1) ^ (main::pin_code[3] + 3);
     const int x2_4bit = (main::pin_code[0] + 0) ^ (main::pin_code[1] + 3) ^ (main::pin_code[2] + 5) ^ (main::pin_code[3] + 6);
@@ -222,6 +295,117 @@ inline static lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
             static_cast<u16>(blockSize*3 + 7)};
 }
 
+inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint seed)
+{
+    lfsr_hash::u128 hash = utils::pin_to_hash_1();
+    constexpr size_t blockSize = 64;
+    {
+        auto bytes = text.toUtf8();
+        while (seed != 0) {
+            bytes.push_back(static_cast<char>(seed % 256));
+            seed >>= 8;
+        }
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash.first ^= inner_hash.first;
+                hash.second ^= inner_hash.second;
+            }
+        }
+    }
+    return hash;
+}
+
+inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
+{
+    lfsr_hash::u128 hash_fs = utils::pin_to_hash_2();
+    constexpr size_t blockSize = 64;
+    {
+        auto bytes = text.toUtf8();
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash_fs.first ^= inner_hash.first;
+                hash_fs.second ^= inner_hash.second;
+            }
+        }
+    }
+    return hash_fs;
+}
+
+inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
+{
+    lfsr_hash::u128 hash_enc = utils::pin_to_hash_1();
+    constexpr size_t blockSize = 64;
+    {
+        auto bytes = text.toUtf8();
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash_enc.first ^= inner_hash.first;
+                hash_enc.second ^= inner_hash.second;
+            }
+        }
+    }
+    return hash_enc;
+}
+
+inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
+{
+    lfsr_hash::u128 hash_enc_inner = utils::pin_to_hash_2();
+    constexpr size_t blockSize = 64;
+    {
+        auto bytes = text.toUtf8();
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash_enc_inner.first ^= inner_hash.first;
+                hash_enc_inner.second ^= inner_hash.second;
+            }
+        }
+    }
+    return hash_enc_inner;
+}
 
 inline static void init_encryption() {
     enc::aligner64 = 0;
@@ -392,16 +576,132 @@ inline static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     }
 }
 
-inline static QString Encode94(lfsr8::u32 x)
-{
-    constexpr int m = 5; // See the password_len_per_request.
-    QString res;
-    res.resize(m);
-    for (int i=0; i<m; ++i) {
-        auto y = x % 94;
-        res[m-i-1] = (char)(y + 33);
-        x -= y;
-        x /= 94;
+inline static void insert_hash128_256padd(QByteArray& bytes) {
+    lfsr_hash::u128 hash = {0, 0};
+    constexpr size_t blockSize = 256;
+    {
+        {
+            const auto bytesRead = bytes.size();
+            const size_t r = bytesRead % blockSize;
+            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+        }
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash.first ^= inner_hash.first;
+                hash.second ^= inner_hash.second;
+            }
+        }
     }
-    return res;
+    while (hash.first) {
+        bytes.append(char(hash.first));
+        hash.first >>= 8;
+    }
+    while (hash.second) {
+        bytes.append(char(hash.second));
+        hash.second >>= 8;
+    }
+}
+
+inline static bool extract_and_check_hash128_256padd(QByteArray& bytes) {
+    if (bytes.size() < 16) {
+        qDebug() << "Small size while hash128 extracting: " << bytes.size();
+        return false;
+    }
+    lfsr_hash::u128 extracted_hash = {0, 0};
+    for (int i=0; i<8; ++i) {
+        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+        bytes.removeLast();
+    }
+    for (int i=0; i<8; ++i) {
+        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+        bytes.removeLast();
+    }
+    lfsr_hash::u128 hash = {0, 0};
+    constexpr size_t blockSize = 256;
+    {
+        const auto bytesRead = bytes.size();
+        {
+            using namespace lfsr_hash;
+            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
+            const size_t n = bytesRead / blockSize;
+            for (size_t i=0; i<n; ++i) {
+                u128 inner_hash = hash128<blockSize>(main::hash_gen,
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+                hash.first ^= inner_hash.first;
+                hash.second ^= inner_hash.second;
+            }
+        }
+    }
+    while (!bytes.isEmpty() && bytes.back() == '\0') {
+        bytes.removeLast();
+    }
+    return extracted_hash == hash;
+}
+
+inline static QString GetPassword(int len)
+{
+    QString pswd{};
+    int capacity = 2;
+    lfsr8::u64 raw64;
+    while (pswd.size() < len) {
+        if (main::pswd_buff.empty()) {
+            break;
+        }
+    #pragma optimize( "", off )
+        raw64 = capacity == 2 ? main::pswd_buff.back() : raw64;
+        if (capacity == 2) {
+            main::pswd_buff.back() = 0;
+            main::pswd_buff.pop_back();
+        }
+        pswd += Encode94(raw64);
+        capacity -= 1;
+        capacity = capacity == 0 ? 2 : capacity;
+        raw64 >>= 32;
+    #pragma optimize( "", on )
+    }
+    return pswd;
+}
+
+inline static QString GetStorageName(lfsr_hash::u128 hash)
+{
+    using namespace lfsr_hash;
+    static constexpr auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
+    const int allowed_len = std::strlen(allowed);
+    if (allowed_len < 36) {
+        qDebug() << "Allowed alphabet is small.";
+        return "";
+    }
+    if (allowed_len > 36) {
+        qDebug() << "Allowed alphabet is big.";
+        return "";
+    }
+    uint8_t b_[64]{};
+    for (int i=0; i<8; ++i) {
+        b_[2*i] = hash.first >> 8*i;
+        b_[2*i + 1] = hash.second >> 8*i;
+    }
+    u128 hash2 = hash128<64>(main::hash_gen, b_, utils::hash_to_salt_1(hash));
+    QString name {};
+    for (int i=0; i<8; ++i) {
+        name.push_back( allowed[(hash2.first >> 8*i) % 36] );
+        name.push_back( allowed[(hash2.second >> 8*i) % 36] );
+    }
+    for (int i=0; i<8; ++i) {
+        b_[16 + 2*i] = hash2.first >> 8*i;
+        b_[16 + 2*i + 1] = hash2.second >> 8*i;
+    }
+    u128 hash3 = hash128<64>(main::hash_gen, b_, utils::hash_to_salt_2(hash2));
+    for (int i=0; i<8; ++i) {
+        name.push_back( allowed[(hash3.first >> 8*i) % 36] );
+        name.push_back( allowed[(hash3.second >> 8*i) % 36] );
+    }
+    return name;
+}
+
 }

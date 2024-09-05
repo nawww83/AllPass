@@ -9,6 +9,8 @@
 #include <QVBoxLayout>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <qregularexpression.h>
+#include <qvalidator.h>
 
 #include "stream_cipher.h"
 
@@ -109,7 +111,11 @@ public:
         QVBoxLayout *layout = new QVBoxLayout;
 
         le_pin = new QLineEdit(this);
-        le_pin->setInputMask("9999");
+        le_pin->setEchoMode(QLineEdit::Password);
+        static QRegularExpression rgx("[0-9]{4}");
+        QValidator *comValidator = new QRegularExpressionValidator(rgx, this);
+        le_pin->setValidator(comValidator);
+
         layout->addWidget(le_pin);
         le_pin->setText("");
 
