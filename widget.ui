@@ -51,7 +51,7 @@
         <enum>Qt::ContextMenuPolicy::NoContextMenu</enum>
        </property>
        <property name="text">
-        <string>Master phrase input...</string>
+        <string>Ввести мастер-фразу</string>
        </property>
       </widget>
      </item>
@@ -88,7 +88,7 @@
            <string/>
           </property>
           <property name="prefix">
-           <string>password length: </string>
+           <string>Длина пароля: </string>
           </property>
           <property name="minimum">
            <number>15</number>
@@ -119,7 +119,7 @@
            </font>
           </property>
           <property name="toolTip">
-           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Add an empty row&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Добавить пустую строку&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
            <string>+</string>

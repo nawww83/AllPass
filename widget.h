@@ -107,7 +107,7 @@ class MyDialog : public QDialog
 public:
     MyDialog(QWidget *parent = nullptr) : QDialog(parent)
     {
-        setWindowTitle("Enter your 4-digits PIN");
+        setWindowTitle(QString::fromUtf8("Введите PIN-код"));
         QVBoxLayout *layout = new QVBoxLayout;
 
         le_pin = new QLineEdit(this);
