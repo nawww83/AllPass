@@ -33,6 +33,9 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         stream_cipher.h
         key.h
         utils.h
+        passitemdelegate.h passitemdelegate.cpp
+        storagemanager.h storagemanager.cpp
+        constants.h
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET AllPass APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR

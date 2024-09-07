@@ -14,8 +14,8 @@ using u32 = lfsr8::u32;
 using u64 = lfsr8::u64;
 using u128 = std::pair<lfsr8::u64, lfsr8::u64>;
 
-static constexpr STATE K1 = {7, 1, 6, 0, 4, 1, 3, 2};    // p=251
-static constexpr STATE K2 = {13, 2, 5, 10, 7, 0, 10, 1}; // p=241
+static inline constexpr STATE K1 = {7, 1, 6, 0, 4, 1, 3, 2};    // p=251
+static inline constexpr STATE K2 = {13, 2, 5, 10, 7, 0, 10, 1}; // p=241
 
 struct salt {
     int q {0};
@@ -23,11 +23,11 @@ struct salt {
     u16 s1 {0};
 };
 
-static constexpr salt S0 {7, 2, 3};
-static constexpr salt S1 {6, 4, 7};
-static constexpr salt S2 {31, 8, 11};
-static constexpr salt S3 {29, 9, 5};
-static constexpr salt S4 {37, 2, 13};
+static inline constexpr salt S0 {7, 2, 3};
+static inline constexpr salt S1 {6, 4, 7};
+static inline constexpr salt S2 {31, 8, 11};
+static inline constexpr salt S3 {29, 9, 5};
+static inline constexpr salt S4 {37, 2, 13};
 
 static_assert(S0.q >= 4); // enough saturation, m = 4
 static_assert(S1.q >= 4);
@@ -36,7 +36,7 @@ static_assert(S2.q >= 6*4); // long distance, m = 4
 static_assert(S3.q >= 6*4);
 static_assert(S4.q >= 6*4);
 
-io_u::io_utils io;
+static inline io_u::io_utils io;
 
 struct gens {
     LFSR251x4 g_251x4;

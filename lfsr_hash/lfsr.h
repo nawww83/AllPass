@@ -264,9 +264,9 @@ public:
         return res;
     }
 private:
-    u16x8 m_state {}; // must be aligned.
-    u16x8 m_K {};
-    u16x8 m_inv_K {};
+    alignas(16) u16x8 m_state {}; // must be aligned.
+    alignas(16) u16x8 m_K {};
+    alignas(16) u16x8 m_inv_K {};
     void m_calc_inv_K() {
         const auto x0 = m_K[0];
         const auto x4 = m_K[4];

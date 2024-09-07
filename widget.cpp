@@ -5,96 +5,37 @@
 #include "widget.h"
 #include "./ui_widget.h"
 
+#include <random> // std::random_device
+
 #include <QMessageBox>
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QIcon>
 #include <QClipboard>
-#include <QItemDelegate>
-#include <QFile>
-#include <QStringEncoder>
 
-#include <random> // std::random_device
-
+#include "passitemdelegate.h"
 #include "utils.h"
+#include "constants.h"
+#include "storagemanager.h"
 
-static constexpr auto VERSION = "#v1.00";
 static int g_current_password_len;
-static const char* g_asterics {"*************"};
+Q_GLOBAL_STATIC( StorageManager, storage_manager);
 
 namespace {
-    const auto gen_pass_txt = QString::fromUtf8("Добавить запись с паролем");
     namespace pointers {
         MyTextEdit* txt_edit_master_phrase = nullptr;
         QTableWidgetItem* selected_context_item = nullptr;
     }
-    namespace constants {
-        const int num_of_passwords = 10; // in pswd_buff.
-        const int password_len_per_request = 10; // 64 bit = 2*32 = 2*5 ascii94 symbols.
-        const int pswd_column_idx = 1;
-    }
-    namespace symbols {
-        const auto end_message = QChar(0x0003);
-        const auto empty_item = QChar(0x0008);
-        const auto row_delimiter = QChar(0x001E);
-        const auto col_delimiter = QChar(0x001F);
-    }
 }
-
-static void RequestPasswords(QFutureWatcher<QVector<lfsr8::u64>>& watcher) {
-    const int Nw = (g_current_password_len * constants::num_of_passwords) / constants::password_len_per_request + 1;
-    watcher.setFuture( main::worker.gen_n(std::ref(main::pass_gen), Nw) );
-    watcher.waitForFinished();
-    main::pswd_buff = watcher.result();
-}
-
-class PassEditDelegate : public QItemDelegate
-{
-public:
-    explicit PassEditDelegate(QObject* parent = nullptr)
-        : QItemDelegate(parent)
-    {}
-    void setEditorData(QWidget *editor, const QModelIndex &index) const {
-        QVariant value = index.model()->data(index, Qt::UserRole);
-        QLineEdit* edit = qobject_cast<QLineEdit *>(editor);
-        if (edit) {
-            edit->setText(value.toString());
-        } else {
-            QItemDelegate::setEditorData(editor, index);
-        }
-    }
-    void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const {
-        QLineEdit* edit = qobject_cast<QLineEdit *>(editor);
-        if (edit) {
-            const QString value = edit->text();
-            model->setData(index, g_asterics, Qt::DisplayRole);
-            model->setData(index, value, Qt::UserRole);
-        } else {
-            QItemDelegate::setModelData(editor, model, index);
-        }
-    }
-};
-
 
 Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
-    {
-        QString mPin {pin};
-        main::pin_code[0] = mPin[0].digitValue();
-        main::pin_code[1] = mPin[1].digitValue();
-        main::pin_code[2] = mPin[2].digitValue();
-        main::pin_code[3] = mPin[3].digitValue();
-        #pragma optimize( "", off )
-        for (auto& el : mPin) {
-            el = '\0';
-        }
-        #pragma optimize( "", on )
-    }
+    utils::fill_pin(std::move(pin));
     ui->setupUi(this);
     QString title = QString::fromUtf8("AllPass 128-bit ");
-    QString version = QString(VERSION).remove("#");
+    QString version = QString(VERSION).remove(g_version_prefix);
     title.append(version);
     title.append(QString::fromUtf8(" - Менеджер паролей"));
     this->setWindowTitle( title );
@@ -107,9 +48,10 @@ Widget::Widget(QString&& pin, QWidget *parent)
     connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
 
+    ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
     g_current_password_len = ui->spbx_pass_len->value();
 
-    ui->btn_generate->setText(gen_pass_txt);
+    ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
@@ -120,7 +62,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->tableWidget->setColumnWidth(0, 200);
     ui->tableWidget->setColumnWidth(1, 200);
     ui->tableWidget->setColumnWidth(2, 370);
-    PassEditDelegate* pass_delegate = new PassEditDelegate(this);
+    PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this);
     ui->tableWidget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate);
     ui->tableWidget->installEventFilter(this);
     ui->tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked);
@@ -151,6 +93,17 @@ Widget::~Widget()
     delete ui;
 }
 
+static bool question_message_box(const QString& title, const QString& question) {
+    QMessageBox mb(QMessageBox::Question,
+                   title,
+                   question);
+    QPushButton* yes_button = mb.addButton(QObject::tr("Да"), QMessageBox::YesRole);
+    QPushButton* no_button = mb.addButton(QObject::tr("Нет"), QMessageBox::NoRole);
+    mb.setDefaultButton(no_button);
+    mb.exec();
+    return mb.clickedButton() == yes_button;
+}
+
 bool Widget::eventFilter(QObject *object, QEvent *event)
 {
     static bool foundCopy = false;
@@ -168,19 +121,9 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
         }
         if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus())
         {
-            QMessageBox mb(QMessageBox::Question,
-                           tr("Удаление текущей строки"),
-                           tr("Вы действительно хотите удалить выделенную строку?"));
-            QPushButton* yes_button = mb.addButton(tr("Да"), QMessageBox::YesRole);
-            QPushButton* no_button = mb.addButton(tr("Нет"), QMessageBox::NoRole);
-            mb.setDefaultButton(no_button);
-            mb.exec();
-            if (mb.clickedButton() != yes_button) {
-                return false;
-            }
-            const int row = ui->tableWidget->currentRow();
-            ui->tableWidget->removeRow(row);
-            return true;
+            const int rows = ui->tableWidget->rowCount();
+            delete_row();
+            return rows != ui->tableWidget->rowCount();
         }
     }
     if (event->type() == QEvent::KeyRelease)
@@ -215,14 +158,10 @@ void Widget::copy_clipboard() {
 }
 
 void Widget::delete_row() {
-    QMessageBox mb(QMessageBox::Question,
-                   tr("Удаление текущей строки"),
-                   tr("Вы действительно хотите удалить выделенную строку?"));
-    QPushButton* yes_button = mb.addButton(tr("Да"), QMessageBox::YesRole);
-    QPushButton* no_button = mb.addButton(tr("Нет"), QMessageBox::NoRole);
-    mb.setDefaultButton(no_button);
-    mb.exec();
-    if (mb.clickedButton() != yes_button) {
+    if (!question_message_box(
+            tr("Удаление текущей строки"),
+            tr("Вы действительно хотите удалить выделенную строку?")))
+    {
         return;
     }
     if (!pointers::selected_context_item) {
@@ -240,24 +179,23 @@ void Widget::update_pass() {
     }
     if (pointers::selected_context_item->column() == constants::pswd_column_idx) {
         if (!pointers::selected_context_item->data(Qt::UserRole).toString().isEmpty()) {
-            QMessageBox mb(QMessageBox::Question,
-                           tr("Замена текущего пароля новым"),
-                              tr("Вы действительно хотите заменить выделенный пароль новым?"));
-            QPushButton* yes_button = mb.addButton(tr("Да"), QMessageBox::YesRole);
-            QPushButton* no_button = mb.addButton(tr("Нет"), QMessageBox::NoRole);
-            mb.setDefaultButton(no_button);
-            mb.exec();
-            if (mb.clickedButton() != yes_button) {
+            if (!question_message_box(
+                    tr("Замена текущего пароля новым"),
+                    tr("Вы действительно хотите заменить выделенный пароль новым?")))
+            {
                 return;
             }
         }
         QString pswd = utils::GetPassword(g_current_password_len);
         if (pswd.length() < g_current_password_len) {
-            RequestPasswords(watcher_passwords);
+            utils::request_passwords(watcher_passwords, g_current_password_len);
             pswd = utils::GetPassword(g_current_password_len);
         }
         pointers::selected_context_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_item->setData(Qt::UserRole, pswd);
+        QMessageBox mb;
+        mb.information(this, QString::fromUtf8("Успех"),
+                       QString::fromUtf8("Пароль был обновлен"));
     } else {
         ;
     }
@@ -266,14 +204,15 @@ void Widget::update_pass() {
 
 void Widget::seed_pass_has_been_set()
 {
-    main::pass_gen = watcher_seed_pass_gen.result();
+    password::pass_gen = watcher_seed_pass_gen.result();
     QMessageBox mb;
-    if (!main::pass_gen.is_succes())
+    if (!password::pass_gen.is_succes())
     {
         mb.warning(this, QString::fromUtf8("Неудача"),
                    QString::fromUtf8("Ключ не был установлен: попробуйте ввести другую мастер-фразу."));
     } else {
-        if (!main::storage.isEmpty()) {
+        const QString& storage_name = storage_manager->Name();
+        if (!storage_name.isEmpty()) {
             mb.information(this, QString::fromUtf8("Успех"),
                            QString::fromUtf8("Ключ был установлен"));
             ui->tableWidget->clearContents();
@@ -281,11 +220,11 @@ void Widget::seed_pass_has_been_set()
                 ui->tableWidget->removeRow(0);
             }
             load_storage();
-            ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(main::storage));
-            ui->btn_generate->setEnabled(!main::storage.isEmpty());
-            ui->btn_add_empty_row->setEnabled(!main::storage.isEmpty());
+            ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(storage_name));
+            ui->btn_generate->setEnabled(!storage_name.isEmpty());
+            ui->btn_add_empty_row->setEnabled(!storage_name.isEmpty());
             ui->btn_generate->setFocus();
-            ui->btn_generate->setText(gen_pass_txt);
+            ui->btn_generate->setText(labels::gen_pass_txt);
         }
     }
 }
@@ -313,15 +252,16 @@ void Widget::update_master_phrase()
     #pragma optimize( "", on )
     {
         lfsr_hash::u128 hash_fs = utils::gen_hash_for_storage(text);
-        main::storage = utils::GetStorageName(hash_fs);
+        storage_manager->SetName( utils::GenerateStorageName(hash_fs) );
         lfsr_hash::u128 hash_enc = utils::gen_hash_for_encryption(text);
         lfsr_rng::STATE st1 = utils::fill_state_by_hash(hash_enc);
-        watcher_seed_enc_gen.setFuture(main::worker.seed(st1));
-        watcher_seed_dec_gen.setFuture(main::worker.seed(st1));
+        watcher_seed_enc_gen.setFuture(password::worker->seed(st1));
+        watcher_seed_dec_gen.setFuture(password::worker->seed(st1));
+
         lfsr_hash::u128 hash_enc_inner = utils::gen_hash_for_inner_encryption(text);
         lfsr_rng::STATE st2 = utils::fill_state_by_hash(hash_enc_inner);
-        watcher_seed_enc_inner_gen.setFuture(main::worker.seed(st2));
-        watcher_seed_dec_inner_gen.setFuture(main::worker.seed(st2));
+        watcher_seed_enc_inner_gen.setFuture(password::worker->seed(st2));
+        watcher_seed_dec_inner_gen.setFuture(password::worker->seed(st2));
         // Clear
         #pragma optimize( "", off )
             hash_fs = {0, 0};
@@ -333,14 +273,16 @@ void Widget::update_master_phrase()
         #pragma optimize( "", on )
         utils::clear_lfsr_rng_state(st1);
         utils::clear_lfsr_rng_state(st2);
+
         watcher_seed_enc_gen.waitForFinished();
         watcher_seed_dec_gen.waitForFinished();
         watcher_seed_enc_inner_gen.waitForFinished();
         watcher_seed_dec_inner_gen.waitForFinished();
-        enc::gamma_gen = watcher_seed_enc_gen.result();
-        dec::gamma_gen = watcher_seed_dec_gen.result();
-        enc_inner::gamma_gen = watcher_seed_enc_inner_gen.result();
-        dec_inner::gamma_gen = watcher_seed_dec_inner_gen.result();
+
+        storage_manager->SetEncGammaGenerator(watcher_seed_enc_gen.result());
+        storage_manager->SetDecGammaGenerator(watcher_seed_dec_gen.result());
+        storage_manager->SetEncInnerGammaGenerator(watcher_seed_enc_inner_gen.result());
+        storage_manager->SetDecInnerGammaGenerator(watcher_seed_dec_inner_gen.result());
     }
     emit master_phrase_ready();
 }
@@ -348,10 +290,10 @@ void Widget::update_master_phrase()
 void Widget::set_master_key()
 {
     lfsr_rng::STATE st; // key => state => generator
-    for (int i=0; i<main::key.N(); ++i) {
-        st[i] = main::key.get_key(i);
+    for (int i=0; i<password::key->N(); ++i) {
+        st[i] = password::key->get_key(i);
     }
-    watcher_seed_pass_gen.setFuture( main::worker.seed(st) );
+    watcher_seed_pass_gen.setFuture( password::worker->seed(st) );
     utils::clear_main_key();
     utils::clear_lfsr_rng_state(st);
 }
@@ -366,15 +308,15 @@ void Widget::on_btn_generate_clicked()
         qDebug() << "Rejected: not correct password length!";
         return;
     }
-    if (!main::pass_gen.is_succes()) {
+    if (!password::pass_gen.is_succes()) {
         qDebug() << "Rejected: set the master phrase first!";
         return;
     }
-    ui->btn_generate->setText(QString::fromUtf8("Wait..."));
+    ui->btn_generate->setText(labels::wait_txt);
     ui->btn_generate->setEnabled(false);
     QString pswd = utils::GetPassword(g_current_password_len);
     if (pswd.length() < g_current_password_len) {
-        RequestPasswords(watcher_passwords);
+        utils::request_passwords(watcher_passwords, g_current_password_len);
         pswd = utils::GetPassword(g_current_password_len);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
@@ -384,14 +326,14 @@ void Widget::on_btn_generate_clicked()
     item->setData(Qt::UserRole, pswd);
     ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
-    ui->btn_generate->setText(gen_pass_txt);
+    ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
 }
 
 void Widget::on_spbx_pass_len_valueChanged(int arg1)
 {
-    g_current_password_len = arg1 - (arg1 % 5);
+    g_current_password_len = arg1 - (arg1 % constants::pass_len_step);
 }
 
 void Widget::on_spbx_pass_len_editingFinished()
@@ -426,174 +368,12 @@ void Widget::on_btn_add_empty_row_clicked()
 
 void Widget::save_to_store()
 {
-    if (main::storage.isEmpty()) {
-        qDebug() << "Empty storage.";
-        return;
-    }
-    if (!enc::gamma_gen.is_succes()) {
-        qDebug() << "Empty encryption.";
-        return;
-    }
-    if (!enc_inner::gamma_gen.is_succes()) {
-        qDebug() << "Empty inner encryption.";
-        return;
-    }
-    if (ui->tableWidget->rowCount() < 1) {
-        qDebug() << "Empty table.";
-        return;
-    }
-    QFile file(main::storage);
-    if (file.open(QFile::WriteOnly))
-    {
-        QStringList strList;
-        QByteArray out;
-        QByteArray encoded_string;
-        utils::init_encryption();
-        const int rc = ui->tableWidget->rowCount();
-        const int cc = ui->tableWidget->columnCount();
-        for( int row = 0; row < rc; ++row )
-        {
-            strList.clear();
-            for( int col = 0; col < cc; ++col )
-            {
-                if (ui->tableWidget->item(row, col)) {
-                    if (col != constants::pswd_column_idx) {
-                        const auto& txt = ui->tableWidget->item(row, col)->text();
-                        strList << (txt == "" ? symbols::empty_item : txt);
-                    } else {
-                        strList << ui->tableWidget->item(row, col)->data(Qt::UserRole).toString();
-                    }
-                }
-                else {
-                    strList << symbols::empty_item;
-                }
-            }
-            auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QString tmp = strList.join( symbols::row_delimiter );
-            tmp.append( (row < ui->tableWidget->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
-            encoded_string.append(fromUtf16( tmp ));
-        }
-        utils::padd_256(encoded_string);
-        QByteArray encrypted_inner;
-        utils::encrypt256_inner(encoded_string, encrypted_inner);
-        QByteArray permuted;
-        utils::encode_dlog256(encrypted_inner, permuted);
-        utils::encrypt(permuted, out);
-        utils::finalize_encryption();
-        utils::encode_crc(out);
-        out.append(VERSION);
-        utils::insert_hash128_256padd(out);
-        file.write(out);
-        file.close();
-        qDebug() << "Table has been saved!";
-    } else {
-        ;
-    }
+    const QTableWidget* const table = ui->tableWidget;
+    storage_manager->SaveToStorage(table);
 }
 
 void Widget::load_storage()
 {
-    if (main::storage.isEmpty()) {
-        qDebug() << "Empty storage.";
-        return;
-    }
-    if (!dec::gamma_gen.is_succes()) {
-        qDebug() << "Empty decryption.";
-        return;
-    }
-    if (!dec_inner::gamma_gen.is_succes()) {
-        qDebug() << "Empty inner decryption.";
-        return;
-    }
-    if (ui->tableWidget->rowCount() > 0) {
-        qDebug() << "Table is not empty.";
-        return;
-    }
-    QFile file(main::storage);
-    QStringList rowOfData;
-    QStringList rowData;
-    QByteArray data;
-    if (file.open(QFile::ReadOnly))
-    {
-        data = file.readAll();
-        const bool hash_check_is_ok = utils::extract_and_check_hash128_256padd(data);
-        if (!hash_check_is_ok) {
-            QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"),
-                        QString::fromUtf8("Попробуйте заменить файл: %1 из резервного хранилища").arg(main::storage));
-            main::storage = "";
-            return;
-        }
-        QString version;
-        while (!data.isEmpty() && data.back() != '#') {
-            version.push_back(data.back());
-            data.removeLast();
-        }
-        if (!data.isEmpty()) {
-            data.removeLast();
-        }
-        std::reverse(version.begin(), version.end());
-        const QString etalon_version = QString(VERSION).remove("#");
-        if (version != etalon_version) {
-            qDebug() << "Unrecognized version: " << version;
-            return;
-        }
-        if (!utils::decode_crc(data)) {
-            qDebug() << "CRC: storage data failure: " << main::storage;
-            QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"),
-                        QString::fromUtf8("Попробуйте заменить файл: %1 из резервного хранилища").arg(main::storage));
-            main::storage = "";
-            return;
-        }
-        utils::init_decryption();
-        QByteArray decrypted;
-        utils::decrypt(data, decrypted);
-        QByteArray depermuted;
-        utils::decode_dlog256(decrypted, depermuted);
-        QByteArray decrypted_inner;
-        utils::decrypt256_inner(depermuted, decrypted_inner);
-        utils::dpadd_256(decrypted_inner);
-        auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-        QString decoded_string = toUtf16(decrypted_inner);
-        if (decoded_string.isEmpty()) {
-            qDebug() << "Unrecognized error while loading.";
-            return;
-        }
-        decoded_string.removeLast(); // 0x0003 = symbols::end_message.
-        rowOfData = decoded_string.split(symbols::col_delimiter);
-        utils::finalize_decryption();
-        file.close();
-    } else {
-        // qDebug() << "Storage cannot be opened.";
-        return;
-    }
-    if (rowOfData.isEmpty()) {
-        qDebug() << "Empty row data.";
-        return;
-    }
-    for (int row = 0; row < rowOfData.size(); row++)
-    {
-        rowData = rowOfData.at(row).split(symbols::row_delimiter);
-        if (rowData.size() == ui->tableWidget->columnCount()) {
-            ui->tableWidget->insertRow(row);
-        } else {
-            qDebug() << "Unrecognized column size: " << ui->tableWidget->columnCount() << " vs " << rowData.size();
-            break;
-        }
-        for (int col = 0; col < rowData.size(); col++)
-        {
-            const QString& row_str = rowData.at(col);
-            QTableWidgetItem *item = new QTableWidgetItem();
-            if (col == constants::pswd_column_idx) {
-                item->setData(Qt::DisplayRole, g_asterics);
-                item->setData(Qt::UserRole, row_str.at(0) == symbols::empty_item ? "" : row_str);
-            } else {
-                item->setText(row_str.at(0) == symbols::empty_item ? "" : row_str);
-            }
-            ui->tableWidget->setItem(row, col, item);
-        }
-    }
-    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
-    qDebug() << "Table has been loaded!";
+    QTableWidget* const table = ui->tableWidget;
+    storage_manager->LoadFromStorage(table);
 }
