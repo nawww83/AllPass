@@ -13,8 +13,6 @@ struct Encryption
     lfsr_rng::u64 gamma = 0;
 };
 
-namespace api_v1 {
-
 class StorageManager
 {
 public:
@@ -44,7 +42,5 @@ private:
     Encryption mEncInner;
     Encryption mDecInner;
 };
-
-}
 
 #endif // STORAGEMANAGER_H

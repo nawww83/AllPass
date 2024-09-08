@@ -18,7 +18,6 @@
 #include "constants.h"
 #include "storagemanager.h"
 
-using namespace api_v1;
 
 static int g_current_password_len;
 Q_GLOBAL_STATIC( StorageManager, storage_manager);

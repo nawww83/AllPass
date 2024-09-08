@@ -6,6 +6,9 @@
 #include <QFile>
 #include <QMessageBox>
 #include <QStringEncoder>
+#include <QSet>
+
+static const QSet<QString> g_version_1 {QString("v1.00")};
 
 namespace api_v1 {
 
@@ -335,9 +338,69 @@ static bool extract_and_check_hash128_256padd(QByteArray& bytes) {
     }
     return extracted_hash == hash;
 }
+}
 
 
 StorageManager::StorageManager() {}
+
+template <int version>
+QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& enc_inner) {
+    QByteArray out;
+    #define my_encode \
+    init_encryption(enc); \
+    encode_crc(encoded_string); \
+    padd_256(encoded_string); \
+    QByteArray encrypted_inner; \
+    encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
+    QByteArray permuted; \
+    encode_dlog256(encrypted_inner, permuted); \
+    encrypt(permuted, out, enc); \
+    finalize_encryption(enc); \
+    insert_hash128_256padd(out); \
+    out.append(VERSION);
+
+    if constexpr (version == 1) {
+        using namespace api_v1;
+        my_encode;
+    }
+    return out;
+}
+
+template <int version>
+QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, Encryption& dec_inner) {
+    QByteArray decrypted_inner;
+    #define my_decode \
+    const bool hash_check_is_ok = extract_and_check_hash128_256padd(data); \
+    if (!hash_check_is_ok) { \
+        QMessageBox mb; \
+        mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"), \
+                    QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
+        storage_name.clear(); \
+        return {}; \
+    } \
+    init_decryption(dec); \
+    QByteArray decrypted; \
+    decrypt(data, decrypted, dec); \
+    QByteArray depermuted; \
+    decode_dlog256(decrypted, depermuted); \
+    decrypt256_inner(depermuted, decrypted_inner, dec_inner); \
+    dpadd_256(decrypted_inner); \
+    if (!decode_crc(decrypted_inner)) { \
+        qDebug() << "CRC: storage data failure: " << storage_name; \
+        QMessageBox mb; \
+        mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"), \
+                    QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
+        storage_name.clear(); \
+        return {}; \
+    } \
+    finalize_decryption(dec);
+
+    if constexpr (version == 1) {
+        using namespace api_v1;
+        my_decode;
+    }
+    return decrypted_inner;
+}
 
 void StorageManager::SaveToStorage(const QTableWidget* const table )
 {
@@ -357,50 +420,42 @@ void StorageManager::SaveToStorage(const QTableWidget* const table )
         qDebug() << "Empty table.";
         return;
     }
+    QStringList strList;
+    QByteArray encoded_string;
+    const int rc = table->rowCount();
+    const int cc = table->columnCount();
+    for( int row = 0; row < rc; ++row )
+    {
+        strList.clear();
+        for( int col = 0; col < cc; ++col )
+        {
+            if (table->item(row, col)) {
+                if (col != constants::pswd_column_idx) {
+                    const auto& txt = table->item(row, col)->text();
+                    strList << (txt == "" ? symbols::empty_item : txt);
+            } else {
+                    strList << table->item(row, col)->data(Qt::UserRole).toString();
+            }
+        }
+            else {
+                strList << symbols::empty_item;
+        }
+        }
+        auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+        QString tmp = strList.join( symbols::row_delimiter );
+        tmp.append( (row < table->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
+        encoded_string.append(fromUtf16( tmp ));
+    }
     QFile file(mStorageName);
     if (file.open(QFile::WriteOnly))
     {
-        QStringList strList;
-        QByteArray out;
-        QByteArray encoded_string;
-        init_encryption(mEnc);
-        const int rc = table->rowCount();
-        const int cc = table->columnCount();
-        for( int row = 0; row < rc; ++row )
-        {
-            strList.clear();
-            for( int col = 0; col < cc; ++col )
-            {
-                if (table->item(row, col)) {
-                    if (col != constants::pswd_column_idx) {
-                        const auto& txt = table->item(row, col)->text();
-                        strList << (txt == "" ? symbols::empty_item : txt);
-                    } else {
-                        strList << table->item(row, col)->data(Qt::UserRole).toString();
-                    }
-                }
-                else {
-                    strList << symbols::empty_item;
-                }
-            }
-            auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-            QString tmp = strList.join( symbols::row_delimiter );
-            tmp.append( (row < table->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
-            encoded_string.append(fromUtf16( tmp ));
+        const QString etalon_version = QString(VERSION).remove(g_version_prefix);
+        if (g_version_1.contains(etalon_version)) {
+            QByteArray out = do_encode<1>(encoded_string, mEnc, mEncInner);
+            file.write(out);
+            file.close();
+            qDebug() << "Table has been saved!";
         }
-        encode_crc(encoded_string);
-        padd_256(encoded_string);
-        QByteArray encrypted_inner;
-        encrypt256_inner(encoded_string, encrypted_inner, mEncInner);
-        QByteArray permuted;
-        encode_dlog256(encrypted_inner, permuted);
-        encrypt(permuted, out, mEnc);
-        finalize_encryption(mEnc);
-        out.append(VERSION);
-        insert_hash128_256padd(out);
-        file.write(out);
-        file.close();
-        qDebug() << "Table has been saved!";
     } else {
         ;
     }
@@ -425,20 +480,11 @@ void StorageManager::LoadFromStorage(QTableWidget * const table)
         return;
     }
     QFile file(mStorageName);
-    QStringList rowOfData;
-    QStringList rowData;
     QByteArray data;
+    QByteArray decrypted_inner;
     if (file.open(QFile::ReadOnly))
     {
         data = file.readAll();
-        const bool hash_check_is_ok = extract_and_check_hash128_256padd(data);
-        if (!hash_check_is_ok) {
-            QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"),
-                        QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(mStorageName));
-            mStorageName.clear();
-            return;
-        }
         QString version;
         while (!data.isEmpty() && data.back() != g_version_prefix) {
             version.push_back(data.back());
@@ -448,41 +494,24 @@ void StorageManager::LoadFromStorage(QTableWidget * const table)
             data.removeLast();
         }
         std::reverse(version.begin(), version.end());
-        const QString etalon_version = QString(VERSION).remove(g_version_prefix);
-        if (version != etalon_version) {
-            qDebug() << "Unrecognized version: " << version;
-            return;
+        if (g_version_1.contains(version)) {
+            decrypted_inner = do_decode<1>(data, mStorageName, mDec, mDecInner);
         }
-        init_decryption(mDec);
-        QByteArray decrypted;
-        decrypt(data, decrypted, mDec);
-        QByteArray depermuted;
-        decode_dlog256(decrypted, depermuted);
-        QByteArray decrypted_inner;
-        decrypt256_inner(depermuted, decrypted_inner, mDecInner);
-        dpadd_256(decrypted_inner);
-        if (!decode_crc(decrypted_inner)) {
-            qDebug() << "CRC: storage data failure: " << mStorageName;
-            QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"),
-                        QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(mStorageName));
-            mStorageName.clear();
-            return;
-        }
-        auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-        QString decoded_string = toUtf16(decrypted_inner);
-        if (decoded_string.isEmpty()) {
-            qDebug() << "Unrecognized error while loading.";
-            return;
-        }
-        decoded_string.removeLast(); // 0x0003 = symbols::end_message.
-        rowOfData = decoded_string.split(symbols::col_delimiter);
-        finalize_decryption(mDec);
         file.close();
     } else {
         // qDebug() << "Storage cannot be opened.";
         return;
     }
+    auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
+    QString decoded_string = toUtf16(decrypted_inner);
+    if (decoded_string.isEmpty()) {
+        qDebug() << "Unrecognized error while loading.";
+        return;
+    }
+    decoded_string.removeLast();
+    QStringList rowOfData;
+    QStringList rowData;
+    rowOfData = decoded_string.split(symbols::col_delimiter);
     if (rowOfData.isEmpty()) {
         qDebug() << "Empty row data.";
         return;
@@ -546,6 +575,4 @@ void StorageManager::SetEncInnerGammaGenerator(const lfsr_rng::Generators &gener
 void StorageManager::SetDecInnerGammaGenerator(const lfsr_rng::Generators &generator)
 {
     mDecInner.gamma_gen = generator;
-}
-
 }
