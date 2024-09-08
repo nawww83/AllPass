@@ -18,9 +18,9 @@ class StorageManager
 public:
     StorageManager();
 
-    void SaveToStorage(const QTableWidget * const table);
+    void SaveToStorage(const QTableWidget * const ro_table);
 
-    void LoadFromStorage(QTableWidget * const table);
+    void LoadFromStorage(QTableWidget * const wr_table);
 
     void SetName(const QString& name);
 

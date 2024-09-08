@@ -25,7 +25,7 @@ Q_GLOBAL_STATIC( StorageManager, storage_manager);
 namespace {
     namespace pointers {
         MyTextEdit* txt_edit_master_phrase = nullptr;
-        QTableWidgetItem* selected_context_item = nullptr;
+        QTableWidgetItem* selected_context_table_item = nullptr;
     }
 }
 
@@ -35,11 +35,11 @@ Widget::Widget(QString&& pin, QWidget *parent)
 {
     utils::fill_pin(std::move(pin));
     ui->setupUi(this);
-    QString title = QString::fromUtf8("AllPass 128-bit ");
-    QString version = QString(VERSION).remove(g_version_prefix);
-    title.append(version);
-    title.append(QString::fromUtf8(" - Менеджер паролей"));
-    this->setWindowTitle( title );
+    QString app_title = QString::fromUtf8("AllPass 128-bit ");
+    QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
+    app_title.append(current_version);
+    app_title.append(QString::fromUtf8(" - Менеджер паролей"));
+    this->setWindowTitle( app_title );
 
     pointers::txt_edit_master_phrase = new MyTextEdit();
     pointers::txt_edit_master_phrase->setWindowTitle(QString::fromUtf8("Ввод мастер-фразы"));
@@ -132,7 +132,7 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
         QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
         if (foundCopy)
         {
-            pointers::selected_context_item = ui->tableWidget->currentItem();
+            pointers::selected_context_table_item = ui->tableWidget->currentItem();
             copy_clipboard();
             foundCopy = false;
             return true;
@@ -146,16 +146,16 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
 }
 
 void Widget::copy_clipboard() {
-    if (!pointers::selected_context_item) {
+    if (!pointers::selected_context_table_item) {
         return;
     }
     QClipboard * clipboard = QApplication::clipboard();
-    if (pointers::selected_context_item->column() == constants::pswd_column_idx) {
-        clipboard->setText(pointers::selected_context_item->data(Qt::UserRole).toString());
+    if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
+        clipboard->setText(pointers::selected_context_table_item->data(Qt::UserRole).toString());
     } else {
-        clipboard->setText(pointers::selected_context_item->text());
+        clipboard->setText(pointers::selected_context_table_item->text());
     }
-    pointers::selected_context_item = nullptr;
+    pointers::selected_context_table_item = nullptr;
 }
 
 void Widget::delete_row() {
@@ -165,21 +165,21 @@ void Widget::delete_row() {
     {
         return;
     }
-    if (!pointers::selected_context_item) {
+    if (!pointers::selected_context_table_item) {
         const int row = ui->tableWidget->currentRow();
         ui->tableWidget->removeRow(row);
         return;
     }
-    ui->tableWidget->removeRow(pointers::selected_context_item->row());
-    pointers::selected_context_item = nullptr;
+    ui->tableWidget->removeRow(pointers::selected_context_table_item->row());
+    pointers::selected_context_table_item = nullptr;
 }
 
 void Widget::update_pass() {
-    if (!pointers::selected_context_item) {
+    if (!pointers::selected_context_table_item) {
         return;
     }
-    if (pointers::selected_context_item->column() == constants::pswd_column_idx) {
-        if (!pointers::selected_context_item->data(Qt::UserRole).toString().isEmpty()) {
+    if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
+        if (!pointers::selected_context_table_item->data(Qt::UserRole).toString().isEmpty()) {
             if (!question_message_box(
                     tr("Замена текущего пароля новым"),
                     tr("Вы действительно хотите заменить выделенный пароль новым?")))
@@ -192,15 +192,15 @@ void Widget::update_pass() {
             utils::request_passwords(watcher_passwords, g_current_password_len);
             pswd = utils::get_password(g_current_password_len);
         }
-        pointers::selected_context_item->setData(Qt::DisplayRole, g_asterics);
-        pointers::selected_context_item->setData(Qt::UserRole, pswd);
+        pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
+        pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
         QMessageBox mb;
         mb.information(this, QString::fromUtf8("Успех"),
                        QString::fromUtf8("Пароль был обновлен"));
     } else {
         ;
     }
-    pointers::selected_context_item = nullptr;
+    pointers::selected_context_table_item = nullptr;
 }
 
 void Widget::seed_pass_has_been_set()
@@ -225,7 +225,7 @@ void Widget::seed_pass_has_been_set()
             if (!storage_name.isEmpty()) {
                 ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(storage_name));
             } else {
-                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: повреждено"));
+                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: недоступно."));
             }
             ui->btn_generate->setEnabled(!storage_name.isEmpty());
             ui->btn_add_empty_row->setEnabled(!storage_name.isEmpty());
@@ -253,34 +253,28 @@ void Widget::update_master_phrase()
     {
         lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
         utils::fill_key_by_hash128(hash);
-        // Clear
-        #pragma optimize( "", off )
-            hash.first = 0; hash.second = 0;
-        #pragma optimize( "", on )
+        utils::clear_lfsr_hash(hash);
     }
     {
         lfsr_hash::u128 hash_fs = utils::gen_hash_for_storage(text);
         storage_manager->SetName( utils::generate_storage_name(hash_fs) );
+        utils::clear_lfsr_hash(hash_fs);
+    }
+    {
         lfsr_hash::u128 hash_enc = utils::gen_hash_for_encryption(text);
-        lfsr_rng::STATE st1 = utils::fill_state_by_hash(hash_enc);
-        watcher_seed_enc_gen.setFuture(password::worker->seed(st1));
-        watcher_seed_dec_gen.setFuture(password::worker->seed(st1));
+        lfsr_rng::STATE state = utils::fill_state_by_hash(hash_enc);
+        watcher_seed_enc_gen.setFuture(password::worker->seed(state));
+        watcher_seed_dec_gen.setFuture(password::worker->seed(state));
 
         lfsr_hash::u128 hash_enc_inner = utils::gen_hash_for_inner_encryption(text);
-        lfsr_rng::STATE st2 = utils::fill_state_by_hash(hash_enc_inner);
-        watcher_seed_enc_inner_gen.setFuture(password::worker->seed(st2));
-        watcher_seed_dec_inner_gen.setFuture(password::worker->seed(st2));
-        // Clear
-        #pragma optimize( "", off )
-            hash_fs = {0, 0};
-            hash_enc = {0, 0};
-            hash_enc_inner = {0, 0};
-            for (auto& el : text) {
-                el = '\0';
-            }
-        #pragma optimize( "", on )
-        utils::clear_lfsr_rng_state(st1);
-        utils::clear_lfsr_rng_state(st2);
+        lfsr_rng::STATE state_inner = utils::fill_state_by_hash(hash_enc_inner);
+        watcher_seed_enc_inner_gen.setFuture(password::worker->seed(state_inner));
+        watcher_seed_dec_inner_gen.setFuture(password::worker->seed(state_inner));
+
+        utils::clear_lfsr_hash(hash_enc);
+        utils::clear_lfsr_hash(hash_enc_inner);
+        utils::clear_lfsr_rng_state(state);
+        utils::clear_lfsr_rng_state(state_inner);
 
         watcher_seed_enc_gen.waitForFinished();
         watcher_seed_dec_gen.waitForFinished();
@@ -292,18 +286,20 @@ void Widget::update_master_phrase()
         storage_manager->SetEncInnerGammaGenerator(watcher_seed_enc_inner_gen.result());
         storage_manager->SetDecInnerGammaGenerator(watcher_seed_dec_inner_gen.result());
     }
+
+    utils::erase_string(text);
     emit master_phrase_ready();
 }
 
 void Widget::set_master_key()
 {
-    lfsr_rng::STATE st; // key => state => generator
+    lfsr_rng::STATE state; // key => state => password generator
     for (int i=0; i<password::key->N(); ++i) {
-        st[i] = password::key->get_key(i);
+        state[i] = password::key->get_key(i);
     }
-    watcher_seed_pass_gen.setFuture( password::worker->seed(st) );
+    watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
     utils::clear_main_key();
-    utils::clear_lfsr_rng_state(st);
+    utils::clear_lfsr_rng_state(state);
 }
 
 void Widget::on_btn_generate_clicked()
@@ -352,8 +348,8 @@ void Widget::on_spbx_pass_len_editingFinished()
 
 void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 {
-    pointers::selected_context_item = ui->tableWidget->itemAt(pos);
-    if (!pointers::selected_context_item) {
+    pointers::selected_context_table_item = ui->tableWidget->itemAt(pos);
+    if (!pointers::selected_context_table_item) {
         QMenu menu;
         menu.addAction(removeAct);
         menu.exec(ui->tableWidget->mapToGlobal(pos));
@@ -362,7 +358,7 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     QMenu menu;
     menu.addAction(copyAct);
     menu.addAction(removeAct);
-    if (pointers::selected_context_item->column() == constants::pswd_column_idx) {
+    if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
         menu.addAction(updatePassAct);
     }
     menu.exec(ui->tableWidget->mapToGlobal(pos));

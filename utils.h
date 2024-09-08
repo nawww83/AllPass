@@ -26,13 +26,17 @@ struct PasswordBuffer {
     QVector<lfsr8::u64> mPasswords{};
 };
 
+struct PinCode {
+    std::array<int, 4> mPinCode{};
+};
+
 namespace password {
     static inline lfsr_rng::Generators pass_gen;
     static inline lfsr_hash::gens hash_gen;
     Q_GLOBAL_STATIC( Worker, worker );
     Q_GLOBAL_STATIC( key::Key, key );
     Q_GLOBAL_STATIC(PasswordBuffer, pswd_buff);
-    static inline std::array<int, 4> pin_code{};
+    Q_GLOBAL_STATIC(PinCode, pin_code);
     static inline bool needToGeneratePasswords = true;
 }
 
@@ -48,10 +52,11 @@ inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watche
 
 inline static void fill_pin(QString&& pin) {
     QString mPin {pin};
-    password::pin_code[0] = mPin[0].digitValue();
-    password::pin_code[1] = mPin[1].digitValue();
-    password::pin_code[2] = mPin[2].digitValue();
-    password::pin_code[3] = mPin[3].digitValue();
+    using namespace password;
+    pin_code->mPinCode[0] = mPin[0].digitValue();
+    pin_code->mPinCode[1] = mPin[1].digitValue();
+    pin_code->mPinCode[2] = mPin[2].digitValue();
+    pin_code->mPinCode[3] = mPin[3].digitValue();
     #pragma optimize( "", off )
         for (auto& el : mPin) {
             el = '\0';
@@ -102,6 +107,21 @@ inline static void clear_main_key() {
     #pragma optimize( "", on )
 }
 
+inline static void erase_string(QString& str) {
+    #pragma optimize( "", off )
+        for (auto& el : str) {
+            el = '\0';
+        }
+    #pragma optimize( "", on )
+}
+
+inline static void clear_lfsr_hash(lfsr_hash::u128& hash) {
+    #pragma optimize( "", off )
+        hash.first = 0;
+        hash.second = 0;
+    #pragma optimize( "", on )
+}
+
 inline static void clear_lfsr_rng_state(lfsr_rng::STATE& st) {
     #pragma optimize( "", off )
         st[0] = 0;
@@ -146,23 +166,23 @@ inline static QString encode_94(lfsr8::u32 x)
 inline static lfsr_hash::salt pin_to_salt_1()
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 1) ^ (pin_code[3] + 3);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 3) ^ (code[3] + 6);
+    const int x2_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 1) ^ (code[3] + 3);
     return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + 32768),
-            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + 32768) };
+            static_cast<u16>(1800*(code[0] + code[1] - code[2] - code[3]) + 32768),
+            static_cast<u16>(1800*(code[0] - code[1] + code[2] - code[3]) + 32768) };
 }
 
 inline static lfsr_hash::salt pin_to_salt_2()
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 3) ^ (pin_code[2] + 5) ^ (pin_code[3] + 6);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 3) ^ (code[3] + 6);
+    const int x2_4bit = (code[0] + 0) ^ (code[1] + 3) ^ (code[2] + 5) ^ (code[3] + 6);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + 32768),
-            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + 32768) };
+            static_cast<u16>(1800*(-code[0] - code[1] + code[2] + code[3]) + 32768),
+            static_cast<u16>(1800*(-code[0] + code[1] - code[2] + code[3]) + 32768) };
 }
 
 inline static lfsr_hash::salt hash_to_salt_1(lfsr_hash::u128 hash)
@@ -184,49 +204,49 @@ inline static lfsr_hash::salt hash_to_salt_2(lfsr_hash::u128 hash)
 inline static lfsr_hash::u128 pin_to_hash_1()
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 3) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 6) ^ (pin_code[2] + 6) ^ (pin_code[3] + 6);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 3) ^ (code[3] + 6);
+    const int x2_4bit = (code[0] + 3) ^ (code[1] + 6) ^ (code[2] + 6) ^ (code[3] + 6);
     uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(hash_gen, b_, pin_to_salt_1());
+    return hash128<64>(password::hash_gen, b_, pin_to_salt_1());
 }
 
 inline static lfsr_hash::u128 pin_to_hash_2()
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 1) ^ (pin_code[3] + 3);
-    const int x2_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 3) ^ (pin_code[2] + 5) ^ (pin_code[3] + 6);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 1) ^ (code[3] + 3);
+    const int x2_4bit = (code[0] + 0) ^ (code[1] + 3) ^ (code[2] + 5) ^ (code[3] + 6);
     uint8_t b_[64]{static_cast<uint8_t>(x1_4bit),
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(hash_gen, b_, pin_to_salt_2());
+    return hash128<64>(password::hash_gen, b_, pin_to_salt_2());
 }
 
 inline static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 0) ^ (pin_code[2] + 1) ^ (pin_code[3] + 3);
-    const int x2_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 6) ^ (pin_code[2] + 6) ^ (pin_code[3] + 6);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 0) ^ (code[2] + 1) ^ (code[3] + 3);
+    const int x2_4bit = (code[0] + 3) ^ (code[1] + 6) ^ (code[2] + 6) ^ (code[3] + 6);
     return {((x1_4bit << 4) | x2_4bit) % 31 + 32,
-            static_cast<u16>(1800*(pin_code[0] + pin_code[1] - pin_code[2] - pin_code[3]) + blockSize),
-            static_cast<u16>(1800*(pin_code[0] - pin_code[1] + pin_code[2] - pin_code[3]) + bytesRead) };
+            static_cast<u16>(1800*(code[0] + code[1] - code[2] - code[3]) + blockSize),
+            static_cast<u16>(1800*(code[0] - code[1] + code[2] - code[3]) + bytesRead) };
 }
 
 inline static lfsr_hash::salt pin_to_salt_4(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
-    using namespace password;
-    const int x1_4bit = (pin_code[0] + 0) ^ (pin_code[1] + 3) ^ (pin_code[2] + 5) ^ (pin_code[3] + 6);
-    const int x2_4bit = (pin_code[0] + 3) ^ (pin_code[1] + 6) ^ (pin_code[2] + 6) ^ (pin_code[3] + 6);
+    const auto& code = password::pin_code->mPinCode;
+    const int x1_4bit = (code[0] + 0) ^ (code[1] + 3) ^ (code[2] + 5) ^ (code[3] + 6);
+    const int x2_4bit = (code[0] + 3) ^ (code[1] + 6) ^ (code[2] + 6) ^ (code[3] + 6);
     return {((x1_4bit << 4) | x2_4bit) % 29 + 32,
-            static_cast<u16>(1800*(-pin_code[0] - pin_code[1] + pin_code[2] + pin_code[3]) + bytesRead),
-            static_cast<u16>(1800*(-pin_code[0] + pin_code[1] - pin_code[2] + pin_code[3]) + blockSize) };
+            static_cast<u16>(1800*(-code[0] - code[1] + code[2] + code[3]) + bytesRead),
+            static_cast<u16>(1800*(-code[0] + code[1] - code[2] + code[3]) + blockSize) };
 }
 
 inline static lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
