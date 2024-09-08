@@ -15,7 +15,10 @@ namespace {
         static inline const int pass_len_step = 5;
         static inline const int num_of_passwords = 10;          // in pswd_buff.
         static inline const int password_len_per_request = 2*pass_len_step; // 64 bit = 2*32 = 2*5 ascii94 symbols.
+
+        static inline const int login_column_idx = 0;
         static inline const int pswd_column_idx = 1;
+        static inline const int comments_column_idx = 2;
     }
     namespace symbols {
         static inline const auto end_message = QChar(0x0003);

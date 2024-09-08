@@ -23,6 +23,9 @@
          <pointsize>12</pointsize>
         </font>
        </property>
+       <property name="sortingEnabled">
+        <bool>true</bool>
+       </property>
        <column>
         <property name="text">
          <string>Login</string>

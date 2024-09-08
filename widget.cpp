@@ -380,4 +380,6 @@ void Widget::load_storage()
 {
     QTableWidget* const table = ui->tableWidget;
     storage_manager->LoadFromStorage(table);
+    table->resizeColumnToContents(constants::pswd_column_idx);
+    table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
 }

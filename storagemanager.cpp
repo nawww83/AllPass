@@ -540,7 +540,6 @@ void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
             wr_table->setItem(row, col, item);
         }
     }
-    wr_table->resizeColumnToContents(constants::pswd_column_idx);
     qDebug() << "Table has been loaded!";
 }
 

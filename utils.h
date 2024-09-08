@@ -107,6 +107,22 @@ inline static void clear_main_key() {
     #pragma optimize( "", on )
 }
 
+inline static void erase_bytes(uint8_t* b, int len) {
+    #pragma optimize( "", off )
+        for (int i=0; i<len; ++i) {
+            b[i] = 0;
+        }
+    #pragma optimize( "", on )
+}
+
+inline static void erase_bytes(QByteArray& b) {
+#pragma optimize( "", off )
+    for (int i=0; i<b.length(); ++i) {
+        b[i] = '\0';
+    }
+#pragma optimize( "", on )
+}
+
 inline static void erase_string(QString& str) {
     #pragma optimize( "", off )
         for (auto& el : str) {
@@ -135,32 +151,31 @@ inline static void clear_lfsr_rng_state(lfsr_rng::STATE& st) {
     #pragma optimize( "", on )
 }
 
-inline static uint8_t rotl8(uint8_t n, unsigned int c)
+inline static uint8_t rotl8(uint8_t value, unsigned int count)
 {
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n << c) | (n >> ( (-c) & mask ));
+    const unsigned int mask = CHAR_BIT*sizeof(value) - 1;
+    count &= mask;
+    return (value << count) | (value >> ( (-count) & mask ));
 }
 
-inline static uint8_t rotr8(uint8_t n, unsigned int c)
+inline static uint8_t rotr8(uint8_t value, unsigned int count)
 {
-    const unsigned int mask = CHAR_BIT*sizeof(n) - 1;
-    c &= mask;
-    return (n >> c) | (n << ( (-c) & mask ));
+    const unsigned int mask = CHAR_BIT*sizeof(value) - 1;
+    count &= mask;
+    return (value >> count) | (value << ( (-count) & mask ));
 }
 
-inline static QString encode_94(lfsr8::u32 x)
+inline static QString encode_u32_to_94(lfsr8::u32 sample)
 {
-    constexpr int m = 5; // See the password_len_per_request.
-    QString res;
-    res.resize(m);
-    for (int i=0; i<m; ++i) {
-        auto y = x % 94;
-        res[m-i-1] = (char)(y + 33);
-        x -= y;
-        x /= 94;
+    constexpr int num_of_symbols_per_sample = 5; // See the password_len_per_request.
+    QString word(num_of_symbols_per_sample, '\0');
+    for (int i=0; i<num_of_symbols_per_sample; ++i) {
+        const auto code = sample % 94 + 33;
+        word[num_of_symbols_per_sample-i-1] = char(code);
+        sample -= code;
+        sample /= 94;
     }
-    return res;
+    return word;
 }
 
 inline static lfsr_hash::salt pin_to_salt_1()
@@ -211,7 +226,9 @@ inline static lfsr_hash::u128 pin_to_hash_1()
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(password::hash_gen, b_, pin_to_salt_1());
+    const auto hash = hash128<64>(password::hash_gen, b_, pin_to_salt_1());
+    utils::erase_bytes(b_, 64);
+    return hash;
 }
 
 inline static lfsr_hash::u128 pin_to_hash_2()
@@ -224,7 +241,9 @@ inline static lfsr_hash::u128 pin_to_hash_2()
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    return hash128<64>(password::hash_gen, b_, pin_to_salt_2());
+    const auto hash = hash128<64>(password::hash_gen, b_, pin_to_salt_2());
+    utils::erase_bytes(b_, 64);
+    return hash;
 }
 
 inline static lfsr_hash::salt pin_to_salt_3(size_t bytesRead, size_t blockSize)
@@ -286,6 +305,7 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint se
                 hash.second ^= inner_hash.second;
             }
         }
+        utils::erase_bytes(bytes);
     }
     return hash;
 }
@@ -313,6 +333,7 @@ inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
                 hash_fs.second ^= inner_hash.second;
             }
         }
+        utils::erase_bytes(bytes);
     }
     return hash_fs;
 }
@@ -340,6 +361,7 @@ inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
                 hash_enc.second ^= inner_hash.second;
             }
         }
+        utils::erase_bytes(bytes);
     }
     return hash_enc;
 }
@@ -367,6 +389,7 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
                 hash_enc_inner.second ^= inner_hash.second;
             }
         }
+        utils::erase_bytes(bytes);
     }
     return hash_enc_inner;
 }
@@ -386,7 +409,7 @@ inline static QString try_to_get_password(int len)
             pswd_buff->mPasswords.back() = 0;
             pswd_buff->mPasswords.pop_back();
         }
-        pswd += encode_94(raw64);
+        pswd += encode_u32_to_94(raw64);
         #pragma optimize( "", off )
             capacity -= 1;
             capacity = capacity == 0 ? 2 : capacity;
@@ -410,12 +433,16 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
         qDebug() << "Allowed alphabet is big.";
         return "";
     }
-    uint8_t b_[64]{};
+    constexpr int buffer_len = 64;
+    uint8_t b_[buffer_len]{};
+    if (buffer_len < 2*8) {
+        return "";
+    }
     for (int i=0; i<8; ++i) {
         b_[2*i] = hash.first >> 8*i;
         b_[2*i + 1] = hash.second >> 8*i;
     }
-    u128 hash2 = hash128<64>(hash_gen, b_, utils::hash_to_salt_1(hash));
+    u128 hash2 = hash128<buffer_len>(hash_gen, b_, utils::hash_to_salt_1(hash));
     QString name {};
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash2.first >> 8*i) % 36] );
@@ -425,11 +452,12 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
         b_[16 + 2*i] = hash2.first >> 8*i;
         b_[16 + 2*i + 1] = hash2.second >> 8*i;
     }
-    u128 hash3 = hash128<64>(hash_gen, b_, utils::hash_to_salt_2(hash2));
+    u128 hash3 = hash128<buffer_len>(hash_gen, b_, utils::hash_to_salt_2(hash2));
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash3.first >> 8*i) % 36] );
         name.push_back( allowed[(hash3.second >> 8*i) % 36] );
     }
+    utils::erase_bytes(b_, buffer_len);
     return name;
 }
 
