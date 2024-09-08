@@ -7,6 +7,8 @@
 #include <QMessageBox>
 #include <QStringEncoder>
 
+namespace api_v1 {
+
 static void encode_crc(QByteArray& data) {
     int i;
     char x;
@@ -37,8 +39,11 @@ static void encode_crc(QByteArray& data) {
     data.push_back(crc3);
     char crc5 = '\0';
     i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc5 = crc5 ^ (i % 5 == 0 ? b : '\0');
+        x = (i % 5 == 0) ? (x % 5) + 1 : x++;
+        char mul = (i % 5 == 0) ? x : 0;
+        crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
         i++;
     }
     data.push_back(crc5);
@@ -53,8 +58,11 @@ static bool decode_crc(QByteArray& data) {
     char crc5 = data.back();
     data.removeLast();
     i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc5 = crc5 ^ (i % 5 == 0 ? b : '\0');
+        x = (i % 5 == 0) ? (x % 5) + 1 : x++;
+        char mul = (i % 5 == 0) ? x : 0;
+        crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
         i++;
     }
     char crc3 = data.back();
@@ -502,6 +510,11 @@ void StorageManager::LoadFromStorage(QTableWidget * const table)
         }
     }
     table->resizeColumnToContents(constants::pswd_column_idx);
+    {
+        QMessageBox mb;
+        mb.information(nullptr, QString::fromUtf8("Успех"),
+                QString::fromUtf8("Данные хранилища загружены в таблицу."));
+    }
     qDebug() << "Table has been loaded!";
 }
 
@@ -533,4 +546,6 @@ void StorageManager::SetEncInnerGammaGenerator(const lfsr_rng::Generators &gener
 void StorageManager::SetDecInnerGammaGenerator(const lfsr_rng::Generators &generator)
 {
     mDecInner.gamma_gen = generator;
+}
+
 }

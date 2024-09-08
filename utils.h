@@ -36,6 +36,7 @@ namespace password {
     static inline bool needToGeneratePasswords = true;
 }
 
+namespace api_v1 {
 namespace utils {
 
 inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watcher, int password_len) {
@@ -413,4 +414,5 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
     return name;
 }
 
+}
 }

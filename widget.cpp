@@ -18,6 +18,8 @@
 #include "constants.h"
 #include "storagemanager.h"
 
+using namespace api_v1;
+
 static int g_current_password_len;
 Q_GLOBAL_STATIC( StorageManager, storage_manager);
 
@@ -249,12 +251,14 @@ void Widget::update_master_phrase()
         return;
     }
     ui->btn_input_master_phrase->setEnabled(false);
-    lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
-    utils::fill_key_by_hash128(hash);
-    // Clear
-    #pragma optimize( "", off )
-        hash.first = 0; hash.second = 0;
-    #pragma optimize( "", on )
+    {
+        lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
+        utils::fill_key_by_hash128(hash);
+        // Clear
+        #pragma optimize( "", off )
+            hash.first = 0; hash.second = 0;
+        #pragma optimize( "", on )
+    }
     {
         lfsr_hash::u128 hash_fs = utils::gen_hash_for_storage(text);
         storage_manager->SetName( utils::generate_storage_name(hash_fs) );
