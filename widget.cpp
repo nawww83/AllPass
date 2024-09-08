@@ -186,10 +186,10 @@ void Widget::update_pass() {
                 return;
             }
         }
-        QString pswd = utils::GetPassword(g_current_password_len);
+        QString&& pswd = utils::get_password(g_current_password_len);
         if (pswd.length() < g_current_password_len) {
             utils::request_passwords(watcher_passwords, g_current_password_len);
-            pswd = utils::GetPassword(g_current_password_len);
+            pswd = utils::get_password(g_current_password_len);
         }
         pointers::selected_context_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_item->setData(Qt::UserRole, pswd);
@@ -211,7 +211,7 @@ void Widget::seed_pass_has_been_set()
         mb.warning(this, QString::fromUtf8("Неудача"),
                    QString::fromUtf8("Ключ не был установлен: попробуйте ввести другую мастер-фразу."));
     } else {
-        const QString& storage_name = storage_manager->Name();
+        QString&& storage_name = storage_manager->Name();
         if (!storage_name.isEmpty()) {
             mb.information(this, QString::fromUtf8("Успех"),
                            QString::fromUtf8("Ключ был установлен"));
@@ -220,7 +220,12 @@ void Widget::seed_pass_has_been_set()
                 ui->tableWidget->removeRow(0);
             }
             load_storage();
-            ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(storage_name));
+            storage_name = storage_manager->Name();
+            if (!storage_name.isEmpty()) {
+                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(storage_name));
+            } else {
+                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: повреждено"));
+            }
             ui->btn_generate->setEnabled(!storage_name.isEmpty());
             ui->btn_add_empty_row->setEnabled(!storage_name.isEmpty());
             ui->btn_generate->setFocus();
@@ -252,7 +257,7 @@ void Widget::update_master_phrase()
     #pragma optimize( "", on )
     {
         lfsr_hash::u128 hash_fs = utils::gen_hash_for_storage(text);
-        storage_manager->SetName( utils::GenerateStorageName(hash_fs) );
+        storage_manager->SetName( utils::generate_storage_name(hash_fs) );
         lfsr_hash::u128 hash_enc = utils::gen_hash_for_encryption(text);
         lfsr_rng::STATE st1 = utils::fill_state_by_hash(hash_enc);
         watcher_seed_enc_gen.setFuture(password::worker->seed(st1));
@@ -314,10 +319,10 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(labels::wait_txt);
     ui->btn_generate->setEnabled(false);
-    QString pswd = utils::GetPassword(g_current_password_len);
+    QString&& pswd = utils::get_password(g_current_password_len);
     if (pswd.length() < g_current_password_len) {
         utils::request_passwords(watcher_passwords, g_current_password_len);
-        pswd = utils::GetPassword(g_current_password_len);
+        pswd = utils::get_password(g_current_password_len);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;

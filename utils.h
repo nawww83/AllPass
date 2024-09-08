@@ -7,7 +7,6 @@
 #include <qglobalstatic.h>
 
 #include "lfsr_hash.h"
-#include "storagemanager.h"
 #include "worker.h"
 #include "key.h"
 #include "constants.h"
@@ -130,7 +129,7 @@ inline static uint8_t rotr8(uint8_t n, unsigned int c)
     return (n >> c) | (n << ( (-c) & mask ));
 }
 
-inline static QString Encode94(lfsr8::u32 x)
+inline static QString encode_94(lfsr8::u32 x)
 {
     constexpr int m = 5; // See the password_len_per_request.
     QString res;
@@ -142,74 +141,6 @@ inline static QString Encode94(lfsr8::u32 x)
         x /= 94;
     }
     return res;
-}
-
-inline static void encode_crc(QByteArray& data) {
-    int i;
-    char crc1 = '\0';
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
-    }
-    data.push_back(crc1);
-    char crc2 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc2);
-    char crc3 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc3);
-    char crc4 = '\0';
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-        i++;
-    }
-    data.push_back(crc4);
-}
-
-inline static bool decode_crc(QByteArray& data) {
-    if (data.size() < 4) {
-        return false;
-    }
-    int i;
-    char crc4 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
-        i++;
-    }
-    char crc3 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
-        i++;
-    }
-    char crc2 = data.back();
-    data.removeLast();
-    i = 0;
-    for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
-        i++;
-    }
-    char crc1 = data.back();
-    data.removeLast();
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
-    }
-    if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
-    {
-        return false;
-    }
-    return true;
 }
 
 inline static lfsr_hash::salt pin_to_salt_1()
@@ -420,246 +351,7 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
     return hash_enc_inner;
 }
 
-inline static void init_encryption(Encryption& enc) {
-    using namespace password;
-    enc.aligner64 = 0;
-    const int sum_of_pin = pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3] + 16;
-    #pragma optimize( "", off )
-    for (int i = 0; i < sum_of_pin; ++i) {
-        enc.gamma_gen.next_u64();
-    }
-    #pragma optimize( "", on )
-    enc.gamma = 0;
-}
-
-inline static void finalize_encryption(Encryption& enc) {
-    #pragma optimize( "", off )
-    if (enc.aligner64 % sizeof(lfsr_rng::u64) != 0) {
-        enc.gamma_gen.next_u64();
-    }
-    enc.gamma = 0;
-    #pragma optimize( "", on )
-}
-
-inline static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    if (in.size() % 256 != 0) {
-        qDebug() << "Encryption error: data size is not a 256*k bytes";
-        return;
-    }
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        out.push_back(char(b) ^ char(enc.gamma));
-        enc.gamma >>= 8;
-        ++enc.aligner64;
-    }
-}
-
-inline static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    if (in.size() % 256 != 0) {
-        qDebug() << "Decryption error: data size is not a 256*k bytes";
-        return;
-    }
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        out.push_back(char(b) ^ char(enc.gamma));
-        enc.gamma >>= 8;
-        ++enc.aligner64;
-    }
-}
-
-inline static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
-        }
-        uint8_t b = *it;
-        const int rot = enc.gamma % 8;
-        b = rotr8(b, rot);
-        out.push_back(char(b) ^ char(enc.gamma));
-        enc.gamma >>= 8;
-        ++enc.aligner64;
-    }
-}
-
-inline static void init_decryption(Encryption& enc) {
-    using namespace password;
-    enc.aligner64 = 0;
-    const int sum_of_pin = pin_code[0] + pin_code[1] + pin_code[2] + pin_code[3] + 16;
-    #pragma optimize( "", off )
-    for (int i = 0; i < sum_of_pin; ++i) {
-        enc.gamma_gen.next_u64();
-    }
-    #pragma optimize( "", on )
-    enc.gamma = 0;
-}
-
-inline static void finalize_decryption(Encryption& enc) {
-    #pragma optimize( "", off )
-    if (enc.aligner64 % sizeof(lfsr_rng::u64) != 0) {
-        enc.gamma_gen.next_u64();
-    }
-    enc.gamma = 0;
-    #pragma optimize( "", on )
-}
-
-inline static void decrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    for (auto it = in.begin(); it != in.end(); it++) {
-        if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
-        }
-        const int rot = enc.gamma % 8;
-        uint8_t b = *it ^ char(enc.gamma);
-        b = rotl8(b, rot);
-        out.push_back(char(b));
-        enc.gamma >>= 8;
-        ++enc.aligner64;
-    }
-}
-
-inline static void padd_256(QByteArray& data) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = data.size();
-    const int r =  n % (p - 1) != 0 ? (p - 1) - n % (p - 1) : 0;
-    int counter = 0;
-    while (counter++ < r) {
-        data.push_back('\0');
-    }
-}
-
-inline static void dpadd_256(QByteArray& data) {
-    if (data.isEmpty()) {
-        return;
-    }
-    while (!data.isEmpty() && data.back() == '\0') {
-        data.removeLast();
-    }
-}
-
-inline static void encode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = in.size();
-    out.resize(n);
-    const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        int x = 1;
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
-                x *= a;
-                x %= p;
-            }
-        }
-    }
-}
-
-inline static void decode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
-    const int n = in.size();
-    if (n % (p - 1) != 0) {
-        qDebug() << "Decode dlog256 error\n";
-        return;
-    }
-    out.resize(n);
-    const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        int x = 1;
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
-                x *= a;
-                x %= p;
-            }
-        }
-    }
-}
-
-inline static void insert_hash128_256padd(QByteArray& bytes) {
-    lfsr_hash::u128 hash = {0, 0};
-    constexpr size_t blockSize = 256;
-    {
-        {
-            const auto bytesRead = bytes.size();
-            const size_t r = bytesRead % blockSize;
-            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
-        }
-    }
-    while (hash.first) {
-        bytes.append(char(hash.first));
-        hash.first >>= 8;
-    }
-    while (hash.second) {
-        bytes.append(char(hash.second));
-        hash.second >>= 8;
-    }
-}
-
-inline static bool extract_and_check_hash128_256padd(QByteArray& bytes) {
-    if (bytes.size() < 16) {
-        qDebug() << "Small size while hash128 extracting: " << bytes.size();
-        return false;
-    }
-    lfsr_hash::u128 extracted_hash = {0, 0};
-    for (int i=0; i<8; ++i) {
-        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
-        bytes.removeLast();
-    }
-    for (int i=0; i<8; ++i) {
-        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
-        bytes.removeLast();
-    }
-    lfsr_hash::u128 hash = {0, 0};
-    constexpr size_t blockSize = 256;
-    {
-        const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
-        }
-    }
-    while (!bytes.isEmpty() && bytes.back() == '\0') {
-        bytes.removeLast();
-    }
-    return extracted_hash == hash;
-}
-
-inline static QString GetPassword(int len)
+inline static QString get_password(int len)
 {
     using namespace password;
     QString pswd{};
@@ -675,7 +367,7 @@ inline static QString GetPassword(int len)
             pswd_buff->mPasswords.back() = 0;
             pswd_buff->mPasswords.pop_back();
         }
-        pswd += Encode94(raw64);
+        pswd += encode_94(raw64);
         capacity -= 1;
         capacity = capacity == 0 ? 2 : capacity;
         raw64 >>= 32;
@@ -684,7 +376,7 @@ inline static QString GetPassword(int len)
     return pswd;
 }
 
-inline static QString GenerateStorageName(lfsr_hash::u128 hash)
+inline static QString generate_storage_name(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
     using namespace password;
