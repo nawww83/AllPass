@@ -9,32 +9,39 @@
 
 static void encode_crc(QByteArray& data) {
     int i;
+    char x;
     char crc1 = '\0';
     for (auto b : std::as_const(data)) {
         crc1 ^= b;
     }
     data.push_back(crc1);
     char crc2 = '\0';
-    i = 0;
+    i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+        x = (i % 2 == 0) ? (x % 2) + 1 : x++;
+        char mul = (i % 2 == 0) ? x : 0;
+        crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
         i++;
     }
     data.push_back(crc2);
     char crc3 = '\0';
-    i = 0;
+    i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+        x = (i % 3 != 0) ? (x % 3) + 1 : x++;
+        char mul = (i % 3 != 0) ? x : 0;
+        crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
         i++;
     }
     data.push_back(crc3);
-    char crc4 = '\0';
-    i = 0;
+    char crc5 = '\0';
+    i = 1;
     for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+        crc5 = crc5 ^ (i % 5 == 0 ? b : '\0');
         i++;
     }
-    data.push_back(crc4);
+    data.push_back(crc5);
 }
 
 static bool decode_crc(QByteArray& data) {
@@ -42,25 +49,32 @@ static bool decode_crc(QByteArray& data) {
         return false;
     }
     int i;
-    char crc4 = data.back();
+    char x;
+    char crc5 = data.back();
     data.removeLast();
-    i = 0;
+    i = 1;
     for (auto b : std::as_const(data)) {
-        crc4 = crc4 ^ (i % 5 == 0 ? b : '\0');
+        crc5 = crc5 ^ (i % 5 == 0 ? b : '\0');
         i++;
     }
     char crc3 = data.back();
     data.removeLast();
-    i = 0;
+    i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc3 = crc3 ^ (i % 3 == 0 ? b : '\0');
+        x = (i % 3 != 0) ? (x % 3) + 1 : x++;
+        char mul = (i % 3 != 0) ? x : 0;
+        crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
         i++;
     }
     char crc2 = data.back();
     data.removeLast();
-    i = 0;
+    i = 1;
+    x = 0;
     for (auto b : std::as_const(data)) {
-        crc2 = crc2 ^ (i % 2 == 0 ? b : '\0');
+        x = (i % 2 == 0) ? (x % 2) + 1 : x++;
+        char mul = (i % 2 == 0) ? x : 0;
+        crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
         i++;
     }
     char crc1 = data.back();
@@ -68,7 +82,7 @@ static bool decode_crc(QByteArray& data) {
     for (auto b : std::as_const(data)) {
         crc1 ^= b;
     }
-    if (crc4 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
+    if (crc5 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
     {
         return false;
     }
