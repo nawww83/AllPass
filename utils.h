@@ -265,14 +265,14 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint se
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
-        while (seed != 0) {
+        for (int i=0; i<sizeof(uint); ++i) {
             bytes.push_back(static_cast<char>(seed % 256));
             seed >>= 8;
         }
         {
             const auto bytesRead = bytes.size();
-            const size_t r = bytesRead % blockSize;
-            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
+            const size_t res = bytesRead % blockSize;
+            bytes.resize(bytesRead + (res > 0 ? blockSize - res : 0), '\0'); // Zero padding.
         }
         const auto bytesRead = bytes.size();
         {
@@ -371,7 +371,7 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
     return hash_enc_inner;
 }
 
-inline static QString get_password(int len)
+inline static QString try_to_get_password(int len)
 {
     using namespace password;
     QString pswd{};
@@ -381,17 +381,17 @@ inline static QString get_password(int len)
         if (pswd_buff->mPasswords.empty()) {
             break;
         }
-    #pragma optimize( "", off )
         raw64 = capacity == 2 ? pswd_buff->mPasswords.back() : raw64;
         if (capacity == 2) {
             pswd_buff->mPasswords.back() = 0;
             pswd_buff->mPasswords.pop_back();
         }
         pswd += encode_94(raw64);
-        capacity -= 1;
-        capacity = capacity == 0 ? 2 : capacity;
-        raw64 >>= 32;
-    #pragma optimize( "", on )
+        #pragma optimize( "", off )
+            capacity -= 1;
+            capacity = capacity == 0 ? 2 : capacity;
+            raw64 >>= 32;
+        #pragma optimize( "", on )
     }
     return pswd;
 }

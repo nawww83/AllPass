@@ -295,11 +295,11 @@ static void insert_hash128_128padd(QByteArray& bytes) {
             }
         }
     }
-    while (hash.first) {
+    for (int i=0; i<8; ++i) {
         bytes.append(char(hash.first));
         hash.first >>= 8;
     }
-    while (hash.second) {
+    for (int i=0; i<8; ++i) {
         bytes.append(char(hash.second));
         hash.second >>= 8;
     }

@@ -187,10 +187,10 @@ void Widget::update_pass() {
                 return;
             }
         }
-        QString&& pswd = utils::get_password(g_current_password_len);
+        QString&& pswd = utils::try_to_get_password(g_current_password_len);
         if (pswd.length() < g_current_password_len) {
             utils::request_passwords(watcher_passwords, g_current_password_len);
-            pswd = utils::get_password(g_current_password_len);
+            pswd = utils::try_to_get_password(g_current_password_len);
         }
         pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
@@ -318,10 +318,10 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(labels::wait_txt);
     ui->btn_generate->setEnabled(false);
-    QString&& pswd = utils::get_password(g_current_password_len);
+    QString&& pswd = utils::try_to_get_password(g_current_password_len);
     if (pswd.length() < g_current_password_len) {
         utils::request_passwords(watcher_passwords, g_current_password_len);
-        pswd = utils::get_password(g_current_password_len);
+        pswd = utils::try_to_get_password(g_current_password_len);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;

@@ -277,7 +277,7 @@ public:
             gp3.set_state(refs[2]);
             gp4.set_state(refs[3]);
             std::array<u16, 4> i {i01, i02, i03, i04};
-            while (true) {
+            for (;;) {
                 gp1.next(i[0]);
                 gp2.next(i[1]);
                 gp3.next(i[2]);
