@@ -14,100 +14,176 @@ static const QSet<QString> g_supported_as_version_1 {
 
 namespace api_v1 {
 
-static void encode_crc(QByteArray& data) {
+static QByteArray encode_crc(const QByteArray& data) {
+    QByteArray out_crc;
     int i;
     char sequence;
-    char crc1 = '\0';
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
+    {
+        char crc1 = '\0';
+        for (auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        out_crc.push_back(crc1);
+        char crc2 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 2 == 0) ? (sequence % 2) + 1 : sequence++;
+            char mul = (i % 2 == 0) ? sequence : 0;
+            crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc2);
+        char crc3 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 3 != 0) ? (sequence % 3) + 1 : sequence++;
+            char mul = (i % 3 != 0) ? sequence : 0;
+            crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc3);
+        char crc5 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 5 == 0) ? (sequence % 5) + 1 : sequence++;
+            char mul = (i % 5 == 0) ? sequence : 0;
+            crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc5);
     }
-    data.push_back(crc1);
-    char crc2 = '\0';
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 2 == 0) ? (sequence % 2) + 1 : sequence++;
-        char mul = (i % 2 == 0) ? sequence : 0;
-        crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
-        i++;
+    {
+        char crc2 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 2 != 0) ? (sequence % 2) + 1 : sequence++;
+            char mul = (i % 2 != 0) ? sequence : 0;
+            crc2 = crc2 ^ (i % 2 != 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc2);
+        char crc3 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 3 == 0) ? (sequence % 3) + 1 : sequence++;
+            char mul = (i % 3 == 0) ? sequence : 0;
+            crc3 = crc3 ^ (i % 3 == 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc3);
+        char crc5 = '\0';
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 5 != 0) ? (sequence % 5) + 1 : sequence++;
+            char mul = (i % 5 != 0) ? sequence : 0;
+            crc5 = crc5 ^ (i % 5 != 0 ? mul*b : '\0');
+            i++;
+        }
+        out_crc.push_back(crc5);
     }
-    data.push_back(crc2);
-    char crc3 = '\0';
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 3 != 0) ? (sequence % 3) + 1 : sequence++;
-        char mul = (i % 3 != 0) ? sequence : 0;
-        crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
-        i++;
-    }
-    data.push_back(crc3);
-    char crc5 = '\0';
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 5 == 0) ? (sequence % 5) + 1 : sequence++;
-        char mul = (i % 5 == 0) ? sequence : 0;
-        crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
-        i++;
-    }
-    data.push_back(crc5);
+    return out_crc;
 }
 
-static bool decode_crc(QByteArray& data) {
-    if (data.size() < 4) {
+static bool decode_crc(const QByteArray& data, QByteArray& crc) {
+    if (crc.size() < 7) {
         return false;
     }
     int i;
     char sequence;
-    char crc5 = data.back();
-    data.removeLast();
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 5 == 0) ? (sequence % 5) + 1 : sequence++;
-        char mul = (i % 5 == 0) ? sequence : 0;
-        crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
-        i++;
-    }
-    char crc3 = data.back();
-    data.removeLast();
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 3 != 0) ? (sequence % 3) + 1 : sequence++;
-        char mul = (i % 3 != 0) ? sequence : 0;
-        crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
-        i++;
-    }
-    char crc2 = data.back();
-    data.removeLast();
-    i = 1;
-    sequence = 0;
-    for (auto b : std::as_const(data)) {
-        sequence = (i % 2 == 0) ? (sequence % 2) + 1 : sequence++;
-        char mul = (i % 2 == 0) ? sequence : 0;
-        crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
-        i++;
-    }
-    char crc1 = data.back();
-    data.removeLast();
-    for (auto b : std::as_const(data)) {
-        crc1 ^= b;
-    }
-    if (crc5 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
     {
-        return false;
+        char crc5 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 5 != 0) ? (sequence % 5) + 1 : sequence++;
+            char mul = (i % 5 != 0) ? sequence : 0;
+            crc5 = crc5 ^ (i % 5 != 0 ? mul*b : '\0');
+            i++;
+        }
+        char crc3 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 3 == 0) ? (sequence % 3) + 1 : sequence++;
+            char mul = (i % 3 == 0) ? sequence : 0;
+            crc3 = crc3 ^ (i % 3 == 0 ? mul*b : '\0');
+            i++;
+        }
+        char crc2 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 2 != 0) ? (sequence % 2) + 1 : sequence++;
+            char mul = (i % 2 != 0) ? sequence : 0;
+            crc2 = crc2 ^ (i % 2 != 0 ? mul*b : '\0');
+            i++;
+        }
+        if (crc5 != '\0' || crc3 != '\0' || crc2 != '\0')
+        {
+            return false;
+        }
+    }
+    {
+        char crc5 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 5 == 0) ? (sequence % 5) + 1 : sequence++;
+            char mul = (i % 5 == 0) ? sequence : 0;
+            crc5 = crc5 ^ (i % 5 == 0 ? mul*b : '\0');
+            i++;
+        }
+        char crc3 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 3 != 0) ? (sequence % 3) + 1 : sequence++;
+            char mul = (i % 3 != 0) ? sequence : 0;
+            crc3 = crc3 ^ (i % 3 != 0 ? mul*b : '\0');
+            i++;
+        }
+        char crc2 = crc.back();
+        crc.removeLast();
+        i = 1;
+        sequence = 0;
+        for (auto b : std::as_const(data)) {
+            sequence = (i % 2 == 0) ? (sequence % 2) + 1 : sequence++;
+            char mul = (i % 2 == 0) ? sequence : 0;
+            crc2 = crc2 ^ (i % 2 == 0 ? mul*b : '\0');
+            i++;
+        }
+        char crc1 = crc.back();
+        crc.removeLast();
+        for (auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        if (crc5 != '\0' || crc3 != '\0' || crc2 != '\0' || crc1 != '\0')
+        {
+            return false;
+        }
     }
     return true;
 }
 
-static void init_encryption(Encryption& enc) {
+static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
     enc.aligner64 = 0;
-    const auto& code = password::pin_code->mPinCode;
-    const int sum_of_pin = code[0] + code[1] + code[2] + code[3] + 16;
+    char xor_val = salt.isEmpty() ? '\0' : salt[0];
+    for (int j=1; j<salt.size(); ++j) {
+        xor_val ^= salt[j];
+    }
     #pragma optimize( "", off )
-        for (int i = 0; i < sum_of_pin; ++i) {
+        for (int i = 0; i < (int)xor_val + 128 + 16; ++i) {
             enc.gamma_gen.next_u64();
         }
         enc.gamma = 0;
@@ -134,14 +210,14 @@ static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
         }
         uint8_t b = *it;
         out.push_back(char(b) ^ char(enc.gamma));
-        enc.gamma >>= 8;
+        enc.gamma >>= CHAR_BIT;
         ++enc.aligner64;
     }
 }
 
 static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& dec) {
     if (in.size() % 256 != 0) {
-        qDebug() << "Decryption error: data size is not a 256*k bytes";
+        qDebug() << "Inner decryption error: data size is not a 256*k bytes";
         return;
     }
     for (auto it = in.begin(); it != in.end(); it++) {
@@ -150,7 +226,7 @@ static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
         }
         uint8_t b = *it;
         out.push_back(char(b) ^ char(dec.gamma));
-        dec.gamma >>= 8;
+        dec.gamma >>= CHAR_BIT;
         ++dec.aligner64;
     }
 }
@@ -161,20 +237,22 @@ static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
             enc.gamma = enc.gamma_gen.next_u64();
         }
         uint8_t b = *it;
-        const int rot = enc.gamma % 8;
+        const int rot = enc.gamma % CHAR_BIT;
         b = utils::rotr8(b, rot);
         out.push_back(char(b) ^ char(enc.gamma));
-        enc.gamma >>= 8;
+        enc.gamma >>= CHAR_BIT;
         ++enc.aligner64;
     }
 }
 
-static void init_decryption(Encryption& dec) {
+static void init_decryption(Encryption& dec, const QByteArray& salt = {}) {
     dec.aligner64 = 0;
-    const auto& code = password::pin_code->mPinCode;
-    const int sum_of_pin = code[0] + code[1] + code[2] + code[3] + 16;
+    char xor_val = salt.isEmpty() ? '\0' : salt[0];
+    for (int j=1; j<salt.size(); ++j) {
+        xor_val ^= salt[j];
+    }
     #pragma optimize( "", off )
-        for (int i = 0; i < sum_of_pin; ++i) {
+        for (int i = 0; i < (int)xor_val + 128 + 16; ++i) {
             dec.gamma_gen.next_u64();
         }
         dec.gamma = 0;
@@ -191,15 +269,19 @@ static void finalize_decryption(Encryption& dec) {
 }
 
 static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
+    if (in.size() % 256 != 0) {
+        qDebug() << "Decryption error: data size is not a 256*k bytes";
+        return;
+    }
     for (auto it = in.begin(); it != in.end(); it++) {
         if (dec.aligner64 % sizeof(lfsr_rng::u64) == 0) {
             dec.gamma = dec.gamma_gen.next_u64();
         }
-        const int rot = dec.gamma % 8;
+        const int rot = dec.gamma % CHAR_BIT;
         uint8_t b = *it ^ char(dec.gamma);
         b = utils::rotl8(b, rot);
         out.push_back(char(b));
-        dec.gamma >>= 8;
+        dec.gamma >>= CHAR_BIT;
         ++dec.aligner64;
     }
 }
@@ -214,7 +296,7 @@ inline static void padd_256(QByteArray& data) {
     }
 }
 
-static void dpadd_256(QByteArray& data) {
+inline static void dpadd_256(QByteArray& data) {
     if (data.isEmpty()) {
         return;
     }
@@ -229,12 +311,12 @@ static void encode_dlog256(const QByteArray& in, QByteArray& out) {
     out.resize(n);
     const int ch = n / (p - 1);
     for (int i=0; i<ch; ++i) {
-        int x = 1;
         char xor_val = in[i*(p-1)];
         for (int j=1; j<p-1; ++j) {
             xor_val ^= in[i*(p-1) + j];
         }
-        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
+        const int a = const_arr::goods[((int)xor_val - std::numeric_limits<char>::min()) % std::ssize(const_arr::goods)];
+        int x = a;
         {
             int counter = 0;
             while (counter++ < (p-1)) {
@@ -256,12 +338,12 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     out.resize(n);
     const int ch = n / (p - 1);
     for (int i=0; i<ch; ++i) {
-        int x = 1;
         char xor_val = in[i*(p-1)];
         for (int j=1; j<p-1; ++j) {
             xor_val ^= in[i*(p-1) + j];
         }
-        const int a = const_arr::goods[((int)xor_val + 128) % std::ssize(const_arr::goods)];
+        const int a = const_arr::goods[((int)xor_val - std::numeric_limits<char>::min()) % std::ssize(const_arr::goods)];
+        int x = a;
         {
             int counter = 0;
             while (counter++ < (p-1)) {
@@ -295,31 +377,33 @@ static void insert_hash128_128padd(QByteArray& bytes) {
             }
         }
     }
-    for (int i=0; i<8; ++i) {
+    const int num_of_bytes = sizeof(hash.first);
+    for (int i=0; i<num_of_bytes; ++i) {
         bytes.append(char(hash.first));
-        hash.first >>= 8;
+        hash.first >>= CHAR_BIT;
     }
-    for (int i=0; i<8; ++i) {
+    for (int i=0; i<num_of_bytes; ++i) {
         bytes.append(char(hash.second));
-        hash.second >>= 8;
+        hash.second >>= CHAR_BIT;
     }
 }
 
 static bool extract_and_check_hash128_128padd(QByteArray& bytes) {
-    if (bytes.size() < 16) {
+    lfsr_hash::u128 extracted_hash = {0, 0};
+    const int num_of_bytes = sizeof(extracted_hash.first);
+    if (bytes.size() < 2*num_of_bytes) {
         qDebug() << "Small size while hash128 extracting: " << bytes.size();
         return false;
     }
-    lfsr_hash::u128 extracted_hash = {0, 0};
-    for (int i=0; i<8; ++i) {
-        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+    for (int i=0; i<num_of_bytes; ++i) {
+        extracted_hash.second |= lfsr8::u64(uint8_t(bytes.back())) << (num_of_bytes-1-i)*CHAR_BIT;
         bytes.removeLast();
     }
-    for (int i=0; i<8; ++i) {
-        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (7-i)*8;
+    for (int i=0; i<num_of_bytes; ++i) {
+        extracted_hash.first |= lfsr8::u64(uint8_t(bytes.back())) << (num_of_bytes-1-i)*CHAR_BIT;
         bytes.removeLast();
     }
-    lfsr_hash::u128 hash = {0, 0};
+    lfsr_hash::u128 calculated_hash = {0, 0};
     constexpr size_t blockSize = 128;
     {
         const auto bytesRead = bytes.size();
@@ -330,15 +414,15 @@ static bool extract_and_check_hash128_128padd(QByteArray& bytes) {
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(password::hash_gen,
                                                      reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
+                calculated_hash.first ^= inner_hash.first;
+                calculated_hash.second ^= inner_hash.second;
             }
         }
     }
     while (!bytes.isEmpty() && bytes.back() == '\0') {
         bytes.removeLast();
     }
-    return extracted_hash == hash;
+    return extracted_hash == calculated_hash;
 }
 }
 
@@ -350,14 +434,19 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     QByteArray out;
     #define my_encode \
     init_encryption(enc); \
-    encode_crc(encoded_string); \
+    QByteArray crc; \
+    crc = encode_crc(encoded_string); \
+    init_encryption(enc_inner, crc); \
     padd_256(encoded_string); \
     QByteArray encrypted_inner; \
     encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
+    encrypted_inner.append(crc); \
+    padd_256(encrypted_inner); \
     QByteArray permuted; \
     encode_dlog256(encrypted_inner, permuted); \
     encrypt(permuted, out, enc); \
     finalize_encryption(enc); \
+    finalize_encryption(enc_inner); \
     insert_hash128_128padd(out);
 
     if constexpr (version == 1) {
@@ -383,10 +472,16 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     decrypt(data, decrypted, dec); \
     QByteArray depermuted; \
     decode_dlog256(decrypted, depermuted); \
+    dpadd_256(depermuted); \
+    QByteArray crc; \
+    for (int i=0; i<7; ++i) {crc.push_back(depermuted.back()); depermuted.removeLast();}; \
+    std::reverse(crc.begin(), crc.end()); \
+    init_decryption(dec_inner, crc); \
     decrypt256_inner(depermuted, decoded_data, dec_inner); \
     dpadd_256(decoded_data); \
     finalize_decryption(dec); \
-    if (!decode_crc(decoded_data)) { \
+    finalize_decryption(dec_inner); \
+    if (!decode_crc(decoded_data, crc)) { \
         qDebug() << "CRC: storage data failure: " << storage_name; \
         QMessageBox mb; \
         mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"), \
