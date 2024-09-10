@@ -151,6 +151,25 @@ inline static void clear_lfsr_rng_state(lfsr_rng::STATE& st) {
     #pragma optimize( "", on )
 }
 
+template <int N>
+inline static void padd(QByteArray& data) {
+    const int n = data.size();
+    const int r =  n % N != 0 ? N - n % N : 0;
+    int counter = 0;
+    while (counter++ < r) {
+        data.push_back('\0');
+    }
+}
+
+inline static void dpadd(QByteArray& data) {
+    if (data.isEmpty()) {
+        return;
+    }
+    while (!data.isEmpty() && data.back() == '\0') {
+        data.removeLast();
+    }
+}
+
 inline static uint8_t rotl8(uint8_t value, unsigned int count)
 {
     const unsigned int mask = CHAR_BIT*sizeof(value) - 1;
