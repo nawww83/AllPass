@@ -151,6 +151,14 @@ inline static void clear_lfsr_rng_state(lfsr_rng::STATE& st) {
     #pragma optimize( "", on )
 }
 
+inline static char xor_val(const QByteArray& data) {
+    char xor_val = data.isEmpty() ? '\0' : data[0];
+    for (int j=1; j<data.size(); ++j) {
+        xor_val ^= data[j];
+    }
+    return xor_val;
+}
+
 template <int N>
 inline static void padd(QByteArray& data) {
     const int n = data.size();

@@ -70,7 +70,7 @@ static QByteArray encode_503_crc_9(const QByteArray& data) {
             sequence = doit ? (sequence % 16) + 1 : sequence++;
             char mul = doit ? sequence : 0;
             crc16 = crc16 ^ mul*b;
-            swap ^= i % 256 == 0;
+            swap ^= i % 255 == 0;
             i++;
         }
         out_crc.push_back(crc16);
@@ -121,7 +121,7 @@ static QByteArray encode_503_crc_9(const QByteArray& data) {
             sequence = doit ? (sequence % 16) + 1 : sequence++;
             char mul = doit ? sequence : 0;
             crc16 = crc16 ^ mul*b;
-            swap ^= i % 256 == 0;
+            swap ^= i % 255 == 0;
             i++;
         }
         out_crc.push_back(crc16);
@@ -147,7 +147,7 @@ static bool decode_503_crc_9(const QByteArray& data, QByteArray& crc) {
             sequence = doit ? (sequence % 16) + 1 : sequence++;
             char mul = doit ? sequence : 0;
             crc16 = crc16 ^ mul*b;
-            swap ^= i % 256 == 0;
+            swap ^= i % 255 == 0;
             i++;
         }
         char crc8 = crc.back();
@@ -202,7 +202,7 @@ static bool decode_503_crc_9(const QByteArray& data, QByteArray& crc) {
             sequence = doit ? (sequence % 16) + 1 : sequence++;
             char mul = doit ? sequence : 0;
             crc16 = crc16 ^ mul*b;
-            swap ^= i % 256 == 0;
+            swap ^= i % 255 == 0;
             i++;
         }
         char crc8 = crc.back();
@@ -254,10 +254,11 @@ static bool decode_503_crc_9(const QByteArray& data, QByteArray& crc) {
     return true;
 }
 
-static void init_encryption(Encryption& enc) {
+static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
     enc.aligner64 = 0;
+    const int steps = 256 + (int)utils::xor_val(salt);
     #pragma optimize( "", off )
-        for (int i = 0; i < 128; ++i) {
+        for (int i = 0; i < steps; ++i) {
             enc.gamma_gen.next_u64();
         }
         enc.gamma = 0;
@@ -392,15 +393,14 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out) {
     }
 }
 
-static void insert_hash128_128padd(QByteArray& bytes) {
+static void insert_hash128(QByteArray& bytes) {
+    if (bytes.size() % 128 != 0) {
+        qDebug() << "Insert hash128 error: input size is not a 128*k bytes: " << bytes.size();
+        return;
+    }
     lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 128;
     {
-        {
-            const auto bytesRead = bytes.size();
-            const size_t r = bytesRead % blockSize;
-            bytes.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
@@ -425,7 +425,11 @@ static void insert_hash128_128padd(QByteArray& bytes) {
     }
 }
 
-static bool extract_and_check_hash128_128padd(QByteArray& bytes) {
+static bool extract_and_check_hash128(QByteArray& bytes) {
+    if (bytes.size() % 16 != 0) {
+        qDebug() << "Extract hash128 error: input size is not a 16*k bytes: " << bytes.size();
+        return false;
+    }
     lfsr_hash::u128 extracted_hash = {0, 0};
     const int num_of_bytes = sizeof(extracted_hash.first);
     if (bytes.size() < 2*num_of_bytes) {
@@ -456,9 +460,6 @@ static bool extract_and_check_hash128_128padd(QByteArray& bytes) {
             }
         }
     }
-    while (!bytes.isEmpty() && bytes.back() == '\0') {
-        bytes.removeLast();
-    }
     return extracted_hash == calculated_hash;
 }
 }
@@ -472,6 +473,7 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     #define my_encode \
     init_encryption(enc); \
     constexpr int K = 503; \
+    constexpr int R = 9; \
     utils::padd<K>(encoded_string); \
     const int N = encoded_string.length(); \
     const int Q = N / K; \
@@ -479,19 +481,20 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     const auto it = encoded_string.cbegin(); \
     for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(encode_503_crc_9(in)); } \
     encoded_string.append(crc); \
-    if (encoded_string.length() % 512 != 0) { \
+    if (encoded_string.length() % (K + R) != 0) { \
         qDebug() << "CRC encode failure: output size is not a 512*k: " << encoded_string.size(); \
         return {}; \
     } \
-    init_encryption(enc_inner); \
+    init_encryption(enc_inner, crc); \
     QByteArray encrypted_inner; \
     encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
     QByteArray permuted; \
     encode_dlog256(encrypted_inner, permuted); \
+    insert_hash128(permuted); \
+    permuted.append(crc); \
     encrypt(permuted, out, enc); \
     finalize_encryption(enc); \
-    finalize_encryption(enc_inner); \
-    insert_hash128_128padd(out);
+    finalize_encryption(enc_inner);
 
     if constexpr (version == 1) {
         using namespace api_v1;
@@ -504,37 +507,48 @@ template <int version>
 QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
     #define my_decode \
-    if (!extract_and_check_hash128_128padd(data)) { \
-        QMessageBox mb; \
-        mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"), \
-                    QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
-        storage_name.clear(); \
-        return {}; \
-    } \
     constexpr int K = 503; \
+    constexpr int R = 9; \
+    constexpr int hash_size = 16; \
     init_encryption(dec); \
     QByteArray decrypted; \
     decrypt(data, decrypted, dec); \
-    QByteArray depermuted; \
-    decode_dlog256(decrypted, depermuted); \
-    init_encryption(dec_inner); \
-    decrypt256_inner(depermuted, decoded_data, dec_inner); \
-    const int Q = decoded_data.size() / 512; \
-    const int R = decoded_data.size() % 512; \
-    if (R != 0) { \
-        qDebug() << "CRC decode failure: input size is not a 512*k: " << decoded_data.size(); \
+    const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
+    const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
+    if (Res != 0) { \
+        qDebug() << "CRC decode failure: input size is not a 521*k: " << decrypted.size(); \
         return {}; \
     } \
     QByteArray crc; \
     for (int q=0; q<Q; ++q) { \
-        for (int i=0; i<9; ++i) {crc.push_back(decoded_data.back()); decoded_data.removeLast();}; \
+        for (int i=0; i<R; ++i) {crc.push_back(decrypted.back()); decrypted.removeLast();}; \
     } \
     std::reverse(crc.begin(), crc.end()); \
+    if (!extract_and_check_hash128(decrypted)) { \
+        QMessageBox mb; \
+        mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"), \
+            QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
+        storage_name.clear(); \
+        return {}; \
+    } \
+    QByteArray depermuted; \
+    decode_dlog256(decrypted, depermuted); \
+    init_encryption(dec_inner, crc); \
+    decrypt256_inner(depermuted, decoded_data, dec_inner); \
+    QByteArray crc_copy; \
+    for (int q=0; q<Q; ++q) { \
+        for (int i=0; i<R; ++i) {crc_copy.push_back(decoded_data.back()); decoded_data.removeLast();}; \
+    } \
+    std::reverse(crc_copy.begin(), crc_copy.end()); \
+    if (crc != crc_copy) { \
+        qDebug() << "CRC decode failure: crc != crc_copy."; \
+        return {}; \
+    } \
     auto it = decoded_data.cbegin(); \
-    auto it_crc = crc.cbegin(); \
+    auto it_crc = crc_copy.cbegin(); \
     for (int q=0; q<Q; ++q) { \
         const QByteArray in(it + q*K, K); \
-        QByteArray crc_(it_crc + q*9, 9); \
+        QByteArray crc_(it_crc + q*R, R); \
         if (!decode_503_crc_9(in, crc_)) { \
             qDebug() << "CRC: storage data failure: " << storage_name << ", q: " << q; \
             QMessageBox mb; \
@@ -602,6 +616,7 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
         if (g_supported_as_version_1.contains(current_version)) {
             QByteArray encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
             encoded_data_bytes.append(VERSION_LABEL);
+            utils::padd<128>(encoded_data_bytes);
             file.write(encoded_data_bytes);
             file.close();
             qDebug() << "Table has been saved!";
@@ -635,6 +650,7 @@ void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
     {
         QByteArray raw_data = file.readAll();
         file.close();
+        utils::dpadd(raw_data);
         QString read_version;
         while (!raw_data.isEmpty() && raw_data.back() != g_version_prefix) {
             read_version.push_back(raw_data.back());

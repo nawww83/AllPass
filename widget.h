@@ -41,6 +41,8 @@ private slots:
 
     void set_master_key();
 
+    void insert_new_password();
+
     void copy_clipboard();
 
     void delete_row();
@@ -61,6 +63,8 @@ private slots:
 
 signals:
     void master_phrase_ready();
+
+    void ready_for_password_request();
 
 protected:
 

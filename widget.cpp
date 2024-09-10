@@ -48,6 +48,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
+    connect(this, &Widget::ready_for_password_request, this, &Widget::insert_new_password);
 
     ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
     g_current_password_len = ui->spbx_pass_len->value();
@@ -302,6 +303,25 @@ void Widget::set_master_key()
     utils::clear_lfsr_rng_state(state);
 }
 
+void Widget::insert_new_password()
+{
+    QString&& pswd = utils::try_to_get_password(g_current_password_len);
+    if (pswd.length() < g_current_password_len) {
+        utils::request_passwords(watcher_passwords, g_current_password_len);
+        pswd = utils::try_to_get_password(g_current_password_len);
+    }
+    ui->tableWidget->insertRow(ui->tableWidget->rowCount());
+    const int row = ui->tableWidget->rowCount() - 1;
+    QTableWidgetItem* item = new QTableWidgetItem();
+    item->setData(Qt::DisplayRole, g_asterics);
+    item->setData(Qt::UserRole, pswd);
+    ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
+    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
+    ui->btn_generate->setText(labels::gen_pass_txt);
+    ui->btn_generate->setEnabled(true);
+    ui->btn_generate->setFocus();
+}
+
 void Widget::on_btn_generate_clicked()
 {
     if (!watcher_seed_pass_gen.isFinished()) {
@@ -318,21 +338,7 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(labels::wait_txt);
     ui->btn_generate->setEnabled(false);
-    QString&& pswd = utils::try_to_get_password(g_current_password_len);
-    if (pswd.length() < g_current_password_len) {
-        utils::request_passwords(watcher_passwords, g_current_password_len);
-        pswd = utils::try_to_get_password(g_current_password_len);
-    }
-    ui->tableWidget->insertRow(ui->tableWidget->rowCount());
-    const int row = ui->tableWidget->rowCount() - 1;
-    QTableWidgetItem* item = new QTableWidgetItem();
-    item->setData(Qt::DisplayRole, g_asterics);
-    item->setData(Qt::UserRole, pswd);
-    ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
-    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
-    ui->btn_generate->setText(labels::gen_pass_txt);
-    ui->btn_generate->setEnabled(true);
-    ui->btn_generate->setFocus();
+    emit ready_for_password_request();
 }
 
 void Widget::on_spbx_pass_len_valueChanged(int arg1)
