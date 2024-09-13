@@ -14,239 +14,79 @@ static const QSet<QString> g_supported_as_version_1 {
 
 namespace api_v1 {
 
-static QByteArray encode_503_crc_9(const QByteArray& data) {
+template <int basic_modulo, int swap_modulo, bool initial_swap>
+static char core_crc(const QByteArray& data, int initial_crc='\0') {
+    char crc = initial_crc;
+    const int N = data.size() + 1;
+    bool current_swap = initial_swap;
+    int sequence = 0;
+    for (int i=1; i<N; i++) {
+        const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
+        sequence = doit ? (sequence % basic_modulo) + 1 : sequence++;
+        char mul = doit ? sequence : 0;
+        crc ^= mul * data.at(i-1);
+        if constexpr (swap_modulo > 0) {
+            current_swap ^= i % swap_modulo == 0;
+        }
+    }
+    return crc;
+};
+
+static QByteArray encode_249_crc_7(const QByteArray& data) {
     QByteArray out_crc;
-    int i;
-    char sequence;
-    bool swap;
     {
         char crc1 = '\0';
-        for (auto b : std::as_const(data)) {
+        for (const auto b : std::as_const(data)) {
             crc1 ^= b;
         }
         out_crc.push_back(crc1);
-        char crc2 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 2 != 0 : i % 2 == 0;
-            sequence = doit ? (sequence % 2) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc2 = crc2 ^ mul*b;
-            i++;
-        }
+        char crc2 = core_crc<2, 0, false>(data);
         out_crc.push_back(crc2);
-        char crc4 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 4 != 0 : i % 4 == 0;
-            sequence = doit ? (sequence % 4) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc4 = crc4 ^ mul*b;
-            i++;
-        }
-        out_crc.push_back(crc4);
-        char crc8 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 8 != 0 : i % 8 == 0;
-            sequence = doit ? (sequence % 8) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc8 = crc8 ^ mul*b;
-            i++;
-        }
+        char crc8 = core_crc<8, 0, false>(data);
         out_crc.push_back(crc8);
-        char crc16 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 16 != 0 : i % 16 == 0;
-            sequence = doit ? (sequence % 16) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc16 = crc16 ^ mul*b;
-            swap ^= i % 255 == 0;
-            i++;
-        }
+        char crc16 = core_crc<16, 255, false>(data);
         out_crc.push_back(crc16);
     }
     {
-        char crc2 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 2 != 0 : i % 2 == 0;
-            sequence = doit ? (sequence % 2) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc2 = crc2 ^ mul*b;
-            i++;
-        }
+        char crc2 = core_crc<2, 0, true>(data);
         out_crc.push_back(crc2);
-        char crc4 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 4 != 0 : i % 4 == 0;
-            sequence = doit ? (sequence % 4) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc4 = crc4 ^ mul*b;
-            i++;
-        }
-        out_crc.push_back(crc4);
-        char crc8 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 8 != 0 : i % 8 == 0;
-            sequence = doit ? (sequence % 8) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc8 = crc8 ^ mul*b;
-            i++;
-        }
+        char crc8 = core_crc<8, 0, true>(data);
         out_crc.push_back(crc8);
-        char crc16 = '\0';
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 16 != 0 : i % 16 == 0;
-            sequence = doit ? (sequence % 16) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc16 = crc16 ^ mul*b;
-            swap ^= i % 255 == 0;
-            i++;
-        }
+        char crc16 = core_crc<16, 255, true>(data);
         out_crc.push_back(crc16);
     }
     return out_crc;
 }
 
-static bool decode_503_crc_9(const QByteArray& data, QByteArray& crc) {
-    if (crc.size() != 9) {
+static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
+    if (crc.size() != 7) {
         return false;
     }
-    int i;
-    char sequence;
-    bool swap;
     {
-        char crc16 = crc.back();
+        char crc16 = core_crc<16, 255, true>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 16 != 0 : i % 16 == 0;
-            sequence = doit ? (sequence % 16) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc16 = crc16 ^ mul*b;
-            swap ^= i % 255 == 0;
-            i++;
-        }
-        char crc8 = crc.back();
+        char crc8 = core_crc<8, 0, true>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 8 != 0 : i % 8 == 0;
-            sequence = doit ? (sequence % 8) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc8 = crc8 ^ mul*b;
-            i++;
-        }
-        char crc4 = crc.back();
+        char crc2 = core_crc<2, 0, true>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 4 != 0 : i % 4 == 0;
-            sequence = doit ? (sequence % 4) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc4 = crc4 ^ mul*b;
-            i++;
-        }
-        char crc2 = crc.back();
-        crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = true;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 2 != 0 : i % 2 == 0;
-            sequence = doit ? (sequence % 2) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc2 = crc2 ^ mul*b;
-            i++;
-        }
-        if (crc16 != '\0' || crc8 != '\0' || crc4 != '\0' || crc2 != '\0')
+        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
         {
             return false;
         }
     }
     {
-        char crc16 = crc.back();
+        char crc16 = core_crc<16, 255, false>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 16 != 0 : i % 16 == 0;
-            sequence = doit ? (sequence % 16) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc16 = crc16 ^ mul*b;
-            swap ^= i % 255 == 0;
-            i++;
-        }
-        char crc8 = crc.back();
+        char crc8 = core_crc<8, 0, false>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 8 != 0 : i % 8 == 0;
-            sequence = doit ? (sequence % 8) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc8 = crc8 ^ mul*b;
-            i++;
-        }
-        char crc4 = crc.back();
+        char crc2 = core_crc<2, 0, false>(data, crc.back());
         crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 4 != 0 : i % 4 == 0;
-            sequence = doit ? (sequence % 4) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc4 = crc4 ^ mul*b;
-            i++;
-        }
-        char crc2 = crc.back();
-        crc.removeLast();
-        i = 1;
-        sequence = 0;
-        swap = false;
-        for (auto b : std::as_const(data)) {
-            bool doit = swap ? i % 2 != 0 : i % 2 == 0;
-            sequence = doit ? (sequence % 2) + 1 : sequence++;
-            char mul = doit ? sequence : 0;
-            crc2 = crc2 ^ mul*b;
-            i++;
-        }
         char crc1 = crc.back();
         crc.removeLast();
-        for (auto b : std::as_const(data)) {
+        for (const auto b : std::as_const(data)) {
             crc1 ^= b;
         }
-        if (crc16 != '\0' || crc8 != '\0' || crc4 != '\0' || crc2 != '\0' || crc1 != '\0')
+        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
         {
             return false;
         }
@@ -472,17 +312,17 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     QByteArray out;
     #define my_encode \
     init_encryption(enc); \
-    constexpr int K = 503; \
-    constexpr int R = 9; \
+    constexpr int K = 249; \
+    constexpr int R = 7; \
     utils::padd<K>(encoded_string); \
     const int N = encoded_string.length(); \
     const int Q = N / K; \
     QByteArray crc; \
     const auto it = encoded_string.cbegin(); \
-    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(encode_503_crc_9(in)); } \
+    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(encode_249_crc_7(in)); } \
     encoded_string.append(crc); \
     if (encoded_string.length() % (K + R) != 0) { \
-        qDebug() << "CRC encode failure: output size is not a 512*k: " << encoded_string.size(); \
+        qDebug() << "CRC encode failure: output size is not a 256*k: " << encoded_string.size(); \
         return {}; \
     } \
     init_encryption(enc_inner, crc); \
@@ -507,8 +347,8 @@ template <int version>
 QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
     #define my_decode \
-    constexpr int K = 503; \
-    constexpr int R = 9; \
+    constexpr int K = 249; \
+    constexpr int R = 7; \
     constexpr int hash_size = 16; \
     init_encryption(dec); \
     QByteArray decrypted; \
@@ -516,7 +356,7 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \
-        qDebug() << "CRC decode failure: input size is not a 521*k: " << decrypted.size(); \
+        qDebug() << "CRC decode failure: input size is not a 263*k: " << decrypted.size(); \
         return {}; \
     } \
     QByteArray crc; \
@@ -549,7 +389,7 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     for (int q=0; q<Q; ++q) { \
         const QByteArray in(it + q*K, K); \
         QByteArray crc_(it_crc + q*R, R); \
-        if (!decode_503_crc_9(in, crc_)) { \
+        if (!decode_249_crc_7(in, crc_)) { \
             qDebug() << "CRC: storage data failure: " << storage_name << ", q: " << q; \
             QMessageBox mb; \
             mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"), \
