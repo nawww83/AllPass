@@ -388,6 +388,7 @@ void Widget::load_storage()
     const Loading_Errors loading_status = storage_manager->LoadFromStorage(table);
     qDebug() << "Loading status: " << int(loading_status);
     bool try_load_from_backup = false;
+    bool was_failure = false;
     QMessageBox mb;
     switch (loading_status) {
         case Loading_Errors::OK:
@@ -404,6 +405,7 @@ void Widget::load_storage()
                        QString::fromUtf8("Не удалось загрузить/распознать основное хранилище: \
                                         данные будут загружены из резервной копии."));
             try_load_from_backup = true;
+            was_failure = true;
             break;
         case Loading_Errors::EMPTY_ENCRYPTION:
             mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
@@ -437,10 +439,18 @@ void Widget::load_storage()
             case Loading_Errors::OK:
             case Loading_Errors::EMPTY_TABLE:
             case Loading_Errors::TABLE_IS_NOT_EMPTY:
+                mb.warning(this, QString::fromUtf8("Загрузка из резервного хранилища."),
+                       QString::fromUtf8("Данные загружены из резервной копии."));
                 break;
             case Loading_Errors::NEW_STORAGE:
-                mb.information(this, QString::fromUtf8("Успех"),
+                if (!was_failure) {
+                    mb.information(this, QString::fromUtf8("Успех"),
                                QString::fromUtf8("Создано новое хранилище"));
+                } else {
+                    mb.critical(nullptr, QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                           QString::fromUtf8("Отсутствует файл резервной копии. \
+                            Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
+                }
                 break;
             case Loading_Errors::CANNOT_BE_OPENED:
             case Loading_Errors::CRC_FAILURE:
@@ -448,8 +458,6 @@ void Widget::load_storage()
                 mb.critical(nullptr, QString::fromUtf8("Ошибка загрузки резервного хранилища"),
                            QString::fromUtf8("Ошибка при загрузки файла из резервной копии. \
                             Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
-                storage_manager->SetName("");
-                return;
                 break;
             case Loading_Errors::EMPTY_ENCRYPTION:
                 mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
