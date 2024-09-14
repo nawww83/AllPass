@@ -19,7 +19,7 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
     const int N = data.size() + 1;
     bool current_swap = initial_swap;
-    int sequence = 3; // Нечетное, фаза. Влияет на кодовое расстояние.
+    int sequence = 13; // Нечетное, фаза. Влияет на кодовое расстояние.
     for (int i=1; i<N; i++) {
         const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
         sequence = doit ? (sequence % basic_modulo) + ((sequence % basic_modulo) % 2) + 1 : sequence + 2;
