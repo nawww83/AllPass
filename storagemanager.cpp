@@ -19,11 +19,11 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
     const int N = data.size() + 1;
     bool current_swap = initial_swap;
-    int sequence = 0;
+    int sequence = 3; // Нечетное, фаза. Влияет на кодовое расстояние.
     for (int i=1; i<N; i++) {
         const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
-        sequence = doit ? (sequence % basic_modulo) + 1 : sequence++;
-        char mul = doit ? sequence : 0;
+        sequence = doit ? (sequence % basic_modulo) + ((sequence % basic_modulo) % 2) + 1 : sequence + 2;
+        char mul = doit ? sequence : 0; // sequence в mul всегда нечетный: покрытие базиса.
         crc ^= mul * data.at(i-1);
         if constexpr (swap_modulo > 0) {
             current_swap ^= i % swap_modulo == 0;
@@ -40,19 +40,19 @@ static QByteArray encode_249_crc_7(const QByteArray& data) {
             crc1 ^= b;
         }
         out_crc.push_back(crc1);
-        char crc2 = core_crc<2, 0, false>(data);
+        char crc2 = core_crc<11, 16, false>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<8, 0, false>(data);
+        char crc8 = core_crc<41, 205, false>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<16, 255, false>(data);
+        char crc16 = core_crc<17, 7, false>(data);
         out_crc.push_back(crc16);
     }
     {
-        char crc2 = core_crc<2, 0, true>(data);
+        char crc2 = core_crc<11, 16, true>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<8, 0, true>(data);
+        char crc8 = core_crc<41, 205, true>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<16, 255, true>(data);
+        char crc16 = core_crc<17, 7, true>(data);
         out_crc.push_back(crc16);
     }
     return out_crc;
@@ -63,11 +63,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         return false;
     }
     {
-        char crc16 = core_crc<16, 255, true>(data, crc.back());
+        char crc16 = core_crc<17, 7, true>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<8, 0, true>(data, crc.back());
+        char crc8 = core_crc<41, 205, true>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<2, 0, true>(data, crc.back());
+        char crc2 = core_crc<11, 16, true>(data, crc.back());
         crc.removeLast();
         if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
         {
@@ -75,11 +75,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         }
     }
     {
-        char crc16 = core_crc<16, 255, false>(data, crc.back());
+        char crc16 = core_crc<17, 7, false>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<8, 0, false>(data, crc.back());
+        char crc8 = core_crc<41, 205, false>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<2, 0, false>(data, crc.back());
+        char crc2 = core_crc<11, 16, false>(data, crc.back());
         crc.removeLast();
         char crc1 = crc.back();
         crc.removeLast();
