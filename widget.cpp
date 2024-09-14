@@ -385,7 +385,98 @@ void Widget::save_to_store()
 void Widget::load_storage()
 {
     QTableWidget* const table = ui->tableWidget;
-    storage_manager->LoadFromStorage(table);
+    const Loading_Errors loading_status = storage_manager->LoadFromStorage(table);
+    qDebug() << "Loading status: " << int(loading_status);
+    bool try_load_from_backup = false;
+    QMessageBox mb;
+    switch (loading_status) {
+        case Loading_Errors::OK:
+        case Loading_Errors::EMPTY_TABLE:
+        case Loading_Errors::TABLE_IS_NOT_EMPTY:
+            break;
+        case Loading_Errors::NEW_STORAGE:
+            try_load_from_backup = true;
+            break;
+        case Loading_Errors::CANNOT_BE_OPENED:
+        case Loading_Errors::CRC_FAILURE:
+        case Loading_Errors::UNRECOGNIZED:
+            mb.warning(this, QString::fromUtf8("Ошибка загрузки из основного хранилища"),
+                       QString::fromUtf8("Не удалось загрузить/распознать основное хранилище: \
+                                        данные будут загружены из резервной копии."));
+            try_load_from_backup = true;
+            break;
+        case Loading_Errors::EMPTY_ENCRYPTION:
+            mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
+                        QString::fromUtf8("Неизвестная ошибка шифрования."));
+            storage_manager->SetName("");
+            return;
+            break;
+        case Loading_Errors::EMPTY_STORAGE:
+            mb.critical(nullptr, QString::fromUtf8("Ошибка имени хранилища."),
+                        QString::fromUtf8("Пустое хранилище: не удалось сформировать имя хранилища."));
+            storage_manager->SetName("");
+            return;
+            break;
+        case Loading_Errors::UNKNOWN_FORMAT:
+            mb.critical(nullptr, QString::fromUtf8("Ошибка формата."),
+                        QString::fromUtf8("Неизвестная версия формата."));
+            storage_manager->SetName("");
+            return;
+            break;
+        default:
+            mb.critical(nullptr, QString::fromUtf8("Ошибка обработки результата загрузки."),
+                        QString::fromUtf8("Неизвестный тип результата загрузки хранилища."));
+            storage_manager->SetName("");
+            return;
+            break;
+    }
+    if (try_load_from_backup) {
+        const Loading_Errors loading_status_backup = storage_manager->LoadFromStorage(table, true);
+        qDebug() << "Backup loading status: " << int(loading_status);
+        switch (loading_status_backup) {
+            case Loading_Errors::OK:
+            case Loading_Errors::EMPTY_TABLE:
+            case Loading_Errors::TABLE_IS_NOT_EMPTY:
+                break;
+            case Loading_Errors::NEW_STORAGE:
+                mb.information(this, QString::fromUtf8("Успех"),
+                               QString::fromUtf8("Создано новое хранилище"));
+                break;
+            case Loading_Errors::CANNOT_BE_OPENED:
+            case Loading_Errors::CRC_FAILURE:
+            case Loading_Errors::UNRECOGNIZED:
+                mb.critical(nullptr, QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                           QString::fromUtf8("Ошибка при загрузки файла из резервной копии. \
+                            Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
+                storage_manager->SetName("");
+                return;
+                break;
+            case Loading_Errors::EMPTY_ENCRYPTION:
+                mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
+                            QString::fromUtf8("Неизвестная ошибка шифрования."));
+                storage_manager->SetName("");
+                return;
+                break;
+            case Loading_Errors::EMPTY_STORAGE:
+                mb.critical(nullptr, QString::fromUtf8("Ошибка имени хранилища."),
+                            QString::fromUtf8("Пустое резервное хранилище: не удалось сформировать имя хранилища."));
+                storage_manager->SetName("");
+                return;
+                break;
+            case Loading_Errors::UNKNOWN_FORMAT:
+                mb.critical(nullptr, QString::fromUtf8("Ошибка формата."),
+                            QString::fromUtf8("Неизвестная версия формата в резервном хранилище."));
+                storage_manager->SetName("");
+                return;
+                break;
+            default:
+                mb.critical(nullptr, QString::fromUtf8("Ошибка обработки результата загрузки."),
+                            QString::fromUtf8("Неизвестный тип результата загрузки резервного хранилища."));
+                storage_manager->SetName("");
+                return;
+                break;
+        }
+    }
     table->resizeColumnToContents(constants::pswd_column_idx);
     table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
 }

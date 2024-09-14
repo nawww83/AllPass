@@ -19,7 +19,9 @@ int main(int argc, char *argv[])
     QString pin {dialog.get_pin()};
     dialog.clear_pin();
     if (pin.size() != 4) {
-        QMessageBox mb(QMessageBox::Critical, QString::fromUtf8("Ошибка PIN-кода"), QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
+        QMessageBox mb(QMessageBox::Critical,
+                       QString::fromUtf8("Ошибка PIN-кода"),
+                       QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
         mb.exec();
         return 1;
     }

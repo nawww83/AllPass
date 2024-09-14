@@ -2,6 +2,13 @@
 #include "utils.h"
 #include "constants.h"
 
+#ifdef __unix__                    /* __unix__ is usually defined by compilers targeting Unix systems */
+    #define OS_Windows 0
+#elif defined(_WIN32) || defined(WIN32)     /* _Win32 is usually defined by compilers targeting 32 or   64 bit Windows systems */
+    #define OS_Windows 1
+    #include <windows.h>
+#endif
+
 #include <QTableWidget>
 #include <QFile>
 #include <QMessageBox>
@@ -11,6 +18,15 @@
 static const QSet<QString> g_supported_as_version_1 {
                                                     QString("v1.00")
                             };
+
+#ifdef OS_Windows
+    static void do_hidden(wchar_t* fileLPCWSTR) {
+        int attr = GetFileAttributes(fileLPCWSTR);
+        if ((attr & FILE_ATTRIBUTE_HIDDEN) == 0) {
+            SetFileAttributes(fileLPCWSTR, attr | FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+#endif
 
 namespace api_v1 {
 
@@ -97,21 +113,20 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
 static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
     enc.aligner64 = 0;
     const int steps = 256 + (int)utils::xor_val(salt);
-    #pragma optimize( "", off )
-        for (int i = 0; i < steps; ++i) {
-            enc.gamma_gen.next_u64();
-        }
-        enc.gamma = 0;
-    #pragma optimize( "", on )
+    for (int i = 0; i < steps; ++i) {
+        enc.gamma_gen.next_u64();
+        enc.counter++;
+    }
+    enc.gamma = 0;
 }
 
 static void finalize_encryption(Encryption& enc) {
-    #pragma optimize( "", off )
-        if (enc.aligner64 % sizeof(lfsr_rng::u64) != 0) {
-            enc.gamma_gen.next_u64();
-        }
-        enc.gamma = 0;
-    #pragma optimize( "", on )
+    while (enc.counter != 0) {
+        enc.gamma_gen.back_u64();
+        enc.counter--;
+    }
+    enc.gamma = 0;
+    enc.aligner64 = 0;
 }
 
 static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
@@ -122,6 +137,7 @@ static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
     for (auto it = in.begin(); it != in.end(); it++) {
         if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
             enc.gamma = enc.gamma_gen.next_u64();
+            enc.counter++;
         }
         uint8_t b = *it;
         out.push_back(char(b) ^ char(enc.gamma));
@@ -138,6 +154,7 @@ static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
     for (auto it = in.begin(); it != in.end(); it++) {
         if (dec.aligner64 % sizeof(lfsr_rng::u64) == 0) {
             dec.gamma = dec.gamma_gen.next_u64();
+            dec.counter++;
         }
         uint8_t b = *it;
         out.push_back(char(b) ^ char(dec.gamma));
@@ -150,6 +167,7 @@ static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
     for (auto it = in.begin(); it != in.end(); it++) {
         if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
             enc.gamma = enc.gamma_gen.next_u64();
+            enc.counter++;
         }
         uint8_t b = *it;
         const int rot = enc.gamma % CHAR_BIT;
@@ -160,19 +178,11 @@ static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
     }
 }
 
-static void finalize_decryption(Encryption& dec) {
-    #pragma optimize( "", off )
-        if (dec.aligner64 % sizeof(lfsr_rng::u64) != 0) {
-            dec.gamma_gen.next_u64();
-        }
-        dec.gamma = 0;
-    #pragma optimize( "", on )
-}
-
 static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
     for (auto it = in.begin(); it != in.end(); it++) {
         if (dec.aligner64 % sizeof(lfsr_rng::u64) == 0) {
             dec.gamma = dec.gamma_gen.next_u64();
+            dec.counter++;
         }
         const int rot = dec.gamma % CHAR_BIT;
         uint8_t b = *it ^ char(dec.gamma);
@@ -323,6 +333,7 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     encoded_string.append(crc); \
     if (encoded_string.length() % (K + R) != 0) { \
         qDebug() << "CRC encode failure: output size is not a 256*k: " << encoded_string.size(); \
+        finalize_encryption(enc); \
         return {}; \
     } \
     init_encryption(enc_inner, crc); \
@@ -344,7 +355,7 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
 }
 
 template <int version>
-QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, Encryption& dec_inner) {
+QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
     #define my_decode \
     constexpr int K = 249; \
@@ -357,6 +368,7 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \
         qDebug() << "CRC decode failure: input size is not a 263*k: " << decrypted.size(); \
+        finalize_encryption(dec); \
         return {}; \
     } \
     QByteArray crc; \
@@ -365,10 +377,7 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     } \
     std::reverse(crc.begin(), crc.end()); \
     if (!extract_and_check_hash128(decrypted)) { \
-        QMessageBox mb; \
-        mb.critical(nullptr, QString::fromUtf8("LFSR hash128: хранилище повреждено"), \
-            QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
-        storage_name.clear(); \
+        finalize_encryption(dec); \
         return {}; \
     } \
     QByteArray depermuted; \
@@ -382,6 +391,8 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
     std::reverse(crc_copy.begin(), crc_copy.end()); \
     if (crc != crc_copy) { \
         qDebug() << "CRC decode failure: crc != crc_copy."; \
+        finalize_encryption(dec); \
+        finalize_encryption(dec_inner); \
         return {}; \
     } \
     auto it = decoded_data.cbegin(); \
@@ -390,17 +401,15 @@ QByteArray do_decode(QByteArray& data, QString& storage_name, Encryption& dec, E
         const QByteArray in(it + q*K, K); \
         QByteArray crc_(it_crc + q*R, R); \
         if (!decode_249_crc_7(in, crc_)) { \
-            qDebug() << "CRC: storage data failure: " << storage_name << ", q: " << q; \
-            QMessageBox mb; \
-            mb.critical(nullptr, QString::fromUtf8("CRC: хранилище повреждено"), \
-                        QString::fromUtf8("Попробуйте заменить файл: %1 из резервной копии.").arg(storage_name)); \
-            storage_name.clear(); \
+            qDebug() << "CRC: storage data failure, q: " << q; \
+            finalize_encryption(dec); \
+            finalize_encryption(dec_inner); \
             return {}; \
         } \
     } \
     utils::dpadd(decoded_data); \
-    finalize_decryption(dec); \
-    finalize_decryption(dec_inner);
+    finalize_encryption(dec); \
+    finalize_encryption(dec_inner);
 
     if constexpr (version == 1) {
         using namespace api_v1;
@@ -449,42 +458,67 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
         packed_data_str.append( (row < ro_table->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
         packed_data_bytes.append( fromUtf16( packed_data_str ) );
     }
+    QByteArray encoded_data_bytes;
     QFile file(mStorageName);
+    const QString& current_version = QString(VERSION_LABEL).remove(g_version_prefix);
+    if (g_supported_as_version_1.contains(current_version)) {
+        encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
+    }
+    if (encoded_data_bytes.isEmpty()) {
+        return;
+    }
+    encoded_data_bytes.append(VERSION_LABEL);
+    utils::padd<128>(encoded_data_bytes);
     if (file.open(QFile::WriteOnly))
     {
-        const QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
-        if (g_supported_as_version_1.contains(current_version)) {
-            QByteArray encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
-            encoded_data_bytes.append(VERSION_LABEL);
-            utils::padd<128>(encoded_data_bytes);
-            file.write(encoded_data_bytes);
-            file.close();
-            qDebug() << "Table has been saved!";
+        file.write(encoded_data_bytes);
+        file.close();
+        QFile file_backup(mStorageNameBackUp);
+        if (file_backup.open(QFile::WriteOnly)) {
+            file_backup.write(encoded_data_bytes);
+            file_backup.close();
+            #ifdef OS_Windows
+                do_hidden(file_backup.fileName().toStdWString().data());
+            #endif
+            qDebug() << "Make backup: " << mStorageNameBackUp;
         }
     } else {
-        ;
+        QFile file_backup(mStorageNameBackUp);
+        if (file_backup.open(QFile::WriteOnly)) {
+            file_backup.write(encoded_data_bytes);
+            file_backup.close();
+            #ifdef OS_Windows
+                do_hidden(file_backup.fileName().toStdWString().data());
+            #endif
+            qDebug() << "Make backup only: " << mStorageNameBackUp;
+        } else {
+            QMessageBox mb;
+            mb.critical(nullptr, QString::fromUtf8("Ошибка сохранения."),
+                        QString::fromUtf8("Файловая ошибка сохранения таблицы в хранилище."));
+        }
     }
 }
 
-void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
+Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bool from_backup)
 {
-    if (mStorageName.isEmpty()) {
+    const QString file_name = from_backup ? mStorageNameBackUp : mStorageName;
+    if (file_name.isEmpty()) {
         qDebug() << "Empty storage.";
-        return;
+        return Loading_Errors::EMPTY_STORAGE;
     }
     if (!mDec.gamma_gen.is_succes()) {
         qDebug() << "Empty decryption.";
-        return;
+        return Loading_Errors::EMPTY_ENCRYPTION;
     }
     if (!mDecInner.gamma_gen.is_succes()) {
         qDebug() << "Empty inner decryption.";
-        return;
+        return Loading_Errors::EMPTY_ENCRYPTION;
     }
     if (wr_table->rowCount() > 0) {
         qDebug() << "Table is not empty.";
-        return;
+        return Loading_Errors::TABLE_IS_NOT_EMPTY;
     }
-    QFile file(mStorageName);
+    QFile file(file_name);
     QByteArray decoded_data_bytes;
     if (file.open(QFile::ReadOnly))
     {
@@ -501,30 +535,33 @@ void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
         }
         std::reverse(read_version.begin(), read_version.end());
         if (g_supported_as_version_1.contains(read_version)) {
-            decoded_data_bytes = do_decode<1>(raw_data, mStorageName, mDec, mDecInner);
+            decoded_data_bytes = do_decode<1>(raw_data, mDec, mDecInner);
+            if (decoded_data_bytes.isEmpty()) {
+                return Loading_Errors::CRC_FAILURE;
+            }
         } else {
-            mStorageName.clear();
-            QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("Ошибка формата."),
-                                QString::fromUtf8("Неизвестная версия формата."));
-            return;
+            return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
         // qDebug() << "Storage cannot be opened.";
-        return;
+        if (file.exists()) {
+            return Loading_Errors::CANNOT_BE_OPENED;
+        } else {
+            return Loading_Errors::NEW_STORAGE;
+        }
     }
     auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
     QString decoded_data_str = toUtf16(decoded_data_bytes);
     if (decoded_data_str.isEmpty()) {
         qDebug() << "Unrecognized error while loading.";
-        return;
+        return Loading_Errors::UNRECOGNIZED;
     }
     decoded_data_str.removeLast();
     QStringList data_rows;
     data_rows = decoded_data_str.split(symbols::col_delimiter);
     if (data_rows.isEmpty()) {
         qDebug() << "Empty row data.";
-        return;
+        return Loading_Errors::EMPTY_TABLE;
     }
     QStringList data_items;
     for (int row = 0; row < data_rows.size(); row++)
@@ -534,7 +571,7 @@ void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
             wr_table->insertRow(row);
         } else {
             qDebug() << "Unrecognized column size: " << wr_table->columnCount() << " vs " << data_items.size();
-            break;
+            return Loading_Errors::UNRECOGNIZED;
         }
         for (int col = 0; col < data_items.size(); col++)
         {
@@ -550,11 +587,13 @@ void StorageManager::LoadFromStorage(QTableWidget * const wr_table)
         }
     }
     qDebug() << "Table has been loaded!";
+    return Loading_Errors::OK;
 }
 
 void StorageManager::SetName(const QString &name)
 {
     mStorageName = name;
+    mStorageNameBackUp = QString::fromUtf8(".") + name;
 }
 
 QString StorageManager::Name() const
