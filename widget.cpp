@@ -57,6 +57,8 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
+    ui->tableWidget->setTabKeyNavigation(false);
+    ui->tableWidget->setFocusPolicy(Qt::StrongFocus);
     ui->tableWidget->setSortingEnabled(false);
     QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии")};
     ui->tableWidget->setHorizontalHeaderLabels(table_header);
@@ -104,6 +106,21 @@ static bool question_message_box(const QString& title, const QString& question) 
     mb.setDefaultButton(no_button);
     mb.exec();
     return mb.clickedButton() == yes_button;
+}
+
+static void information_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Information, title, message);
+    mb.exec();
+}
+
+static void warning_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Warning, title, message);
+    mb.exec();
+}
+
+static void critical_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Critical, title, message);
+    mb.exec();
 }
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
@@ -195,9 +212,8 @@ void Widget::update_pass() {
         }
         pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
-        QMessageBox mb;
-        mb.information(this, QString::fromUtf8("Успех"),
-                       QString::fromUtf8("Пароль был обновлен"));
+        information_message_box(QString::fromUtf8("Успех"),
+                                QString::fromUtf8("Пароль был обновлен"));
     } else {
         ;
     }
@@ -207,16 +223,15 @@ void Widget::update_pass() {
 void Widget::seed_pass_has_been_set()
 {
     password::pass_gen = watcher_seed_pass_gen.result();
-    QMessageBox mb;
     if (!password::pass_gen.is_succes())
     {
-        mb.warning(this, QString::fromUtf8("Неудача"),
+        warning_message_box(QString::fromUtf8("Неудача"),
                    QString::fromUtf8("Ключ не был установлен: попробуйте ввести другую мастер-фразу."));
     } else {
         QString&& storage_name = storage_manager->Name();
         if (!storage_name.isEmpty()) {
-            mb.information(this, QString::fromUtf8("Успех"),
-                           QString::fromUtf8("Ключ был установлен"));
+            information_message_box(QString::fromUtf8("Успех"),
+                                    QString::fromUtf8("Ключ был установлен"));
             ui->tableWidget->clearContents();
             while (ui->tableWidget->rowCount() > 0) {
                 ui->tableWidget->removeRow(0);
@@ -354,17 +369,23 @@ void Widget::on_spbx_pass_len_editingFinished()
 
 void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 {
+    if (!ui->tableWidget->currentItem()) {
+        return;
+    }
     pointers::selected_context_table_item = ui->tableWidget->itemAt(pos);
     if (!pointers::selected_context_table_item) {
-        QMenu menu;
-        menu.addAction(removeAct);
-        menu.exec(ui->tableWidget->mapToGlobal(pos));
+        if (ui->tableWidget->currentItem()->isSelected()) {
+            QMenu menu;
+            menu.addAction(removeAct);
+            menu.exec(ui->tableWidget->mapToGlobal(pos));
+        }
         return;
     }
     QMenu menu;
     menu.addAction(copyAct);
     menu.addAction(removeAct);
-    if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
+    if (pointers::selected_context_table_item &&
+            pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
         menu.addAction(updatePassAct);
     }
     menu.exec(ui->tableWidget->mapToGlobal(pos));
@@ -389,7 +410,6 @@ void Widget::load_storage()
     qDebug() << "Loading status: " << int(loading_status);
     bool try_load_from_backup = false;
     bool was_failure = false;
-    QMessageBox mb;
     switch (loading_status) {
         case Loading_Errors::OK:
         case Loading_Errors::EMPTY_TABLE:
@@ -401,32 +421,32 @@ void Widget::load_storage()
         case Loading_Errors::CANNOT_BE_OPENED:
         case Loading_Errors::CRC_FAILURE:
         case Loading_Errors::UNRECOGNIZED:
-            mb.warning(this, QString::fromUtf8("Ошибка загрузки из основного хранилища"),
+            warning_message_box(QString::fromUtf8("Ошибка загрузки из основного хранилища"),
                        QString::fromUtf8("Не удалось загрузить/распознать основное хранилище: \
                                         данные будут загружены из резервной копии."));
             try_load_from_backup = true;
             was_failure = true;
             break;
         case Loading_Errors::EMPTY_ENCRYPTION:
-            mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
+            critical_message_box(QString::fromUtf8("Ошибка шифрования."),
                         QString::fromUtf8("Неизвестная ошибка шифрования."));
             storage_manager->SetName("");
             return;
             break;
         case Loading_Errors::EMPTY_STORAGE:
-            mb.critical(nullptr, QString::fromUtf8("Ошибка имени хранилища."),
+            critical_message_box(QString::fromUtf8("Ошибка имени хранилища."),
                         QString::fromUtf8("Пустое хранилище: не удалось сформировать имя хранилища."));
             storage_manager->SetName("");
             return;
             break;
         case Loading_Errors::UNKNOWN_FORMAT:
-            mb.critical(nullptr, QString::fromUtf8("Ошибка формата."),
+            critical_message_box(QString::fromUtf8("Ошибка формата."),
                         QString::fromUtf8("Неизвестная версия формата."));
             storage_manager->SetName("");
             return;
             break;
         default:
-            mb.critical(nullptr, QString::fromUtf8("Ошибка обработки результата загрузки."),
+            critical_message_box(QString::fromUtf8("Ошибка обработки результата загрузки."),
                         QString::fromUtf8("Неизвестный тип результата загрузки хранилища."));
             storage_manager->SetName("");
             return;
@@ -439,15 +459,15 @@ void Widget::load_storage()
             case Loading_Errors::OK:
             case Loading_Errors::EMPTY_TABLE:
             case Loading_Errors::TABLE_IS_NOT_EMPTY:
-                mb.warning(this, QString::fromUtf8("Загрузка из резервного хранилища."),
+                warning_message_box(QString::fromUtf8("Загрузка из резервного хранилища."),
                        QString::fromUtf8("Данные загружены из резервной копии."));
                 break;
             case Loading_Errors::NEW_STORAGE:
                 if (!was_failure) {
-                    mb.information(this, QString::fromUtf8("Успех"),
+                    information_message_box(QString::fromUtf8("Успех"),
                                QString::fromUtf8("Создано новое хранилище"));
                 } else {
-                    mb.critical(nullptr, QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                    critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища"),
                            QString::fromUtf8("Отсутствует файл резервной копии. \
                             Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
                 }
@@ -455,30 +475,30 @@ void Widget::load_storage()
             case Loading_Errors::CANNOT_BE_OPENED:
             case Loading_Errors::CRC_FAILURE:
             case Loading_Errors::UNRECOGNIZED:
-                mb.critical(nullptr, QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища"),
                            QString::fromUtf8("Ошибка при загрузки файла из резервной копии. \
                             Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
                 break;
             case Loading_Errors::EMPTY_ENCRYPTION:
-                mb.critical(nullptr, QString::fromUtf8("Ошибка шифрования."),
+                critical_message_box(QString::fromUtf8("Ошибка шифрования."),
                             QString::fromUtf8("Неизвестная ошибка шифрования."));
                 storage_manager->SetName("");
                 return;
                 break;
             case Loading_Errors::EMPTY_STORAGE:
-                mb.critical(nullptr, QString::fromUtf8("Ошибка имени хранилища."),
+                critical_message_box(QString::fromUtf8("Ошибка имени хранилища."),
                             QString::fromUtf8("Пустое резервное хранилище: не удалось сформировать имя хранилища."));
                 storage_manager->SetName("");
                 return;
                 break;
             case Loading_Errors::UNKNOWN_FORMAT:
-                mb.critical(nullptr, QString::fromUtf8("Ошибка формата."),
+                critical_message_box(QString::fromUtf8("Ошибка формата."),
                             QString::fromUtf8("Неизвестная версия формата в резервном хранилище."));
                 storage_manager->SetName("");
                 return;
                 break;
             default:
-                mb.critical(nullptr, QString::fromUtf8("Ошибка обработки результата загрузки."),
+                critical_message_box(QString::fromUtf8("Ошибка обработки результата загрузки."),
                             QString::fromUtf8("Неизвестный тип результата загрузки резервного хранилища."));
                 storage_manager->SetName("");
                 return;

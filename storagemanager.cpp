@@ -16,8 +16,9 @@
 #include <QSet>
 
 static const QSet<QString> g_supported_as_version_1 {
-                                                    QString("v1.00")
-                            };
+                        QString("v1.00"),
+                        QString("v1.01")
+                    };
 
 #ifdef OS_Windows
     static void do_hidden(wchar_t* fileLPCWSTR) {

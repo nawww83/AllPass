@@ -23,6 +23,9 @@
          <pointsize>12</pointsize>
         </font>
        </property>
+       <property name="focusPolicy">
+        <enum>Qt::FocusPolicy::ClickFocus</enum>
+       </property>
        <property name="sortingEnabled">
         <bool>true</bool>
        </property>
