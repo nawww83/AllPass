@@ -32,9 +32,13 @@ class StorageManager
 public:
     StorageManager();
 
-    void SaveToStorage(const QTableWidget * const ro_table);
+    void SaveToStorage(const QTableWidget * const ro_table, bool save_to_tmp = false);
 
     Loading_Errors LoadFromStorage(QTableWidget * const wr_table, bool from_backup = false);
+
+    void RemoveTmpFile();
+
+    bool BackupFileIsExist() const;
 
     void SetName(const QString& name);
 
@@ -52,6 +56,8 @@ private:
     QString mStorageName;
 
     QString mStorageNameBackUp;
+
+    QString mStorageNameTmp;
 
     Encryption mEnc;
     Encryption mDec;

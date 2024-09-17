@@ -57,6 +57,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
+    ui->btn_recover_from_backup->setText(labels::recover_txt);
+    ui->btn_recover_from_backup->setEnabled(false);
+
     ui->tableWidget->setTabKeyNavigation(false);
     ui->tableWidget->setFocusPolicy(Qt::StrongFocus);
     ui->tableWidget->setSortingEnabled(false);
@@ -421,7 +424,7 @@ void Widget::load_storage()
         case Loading_Errors::CANNOT_BE_OPENED:
         case Loading_Errors::CRC_FAILURE:
         case Loading_Errors::UNRECOGNIZED:
-            warning_message_box(QString::fromUtf8("Ошибка загрузки из основного хранилища"),
+            warning_message_box(QString::fromUtf8("Ошибка загрузки из основного хранилища."),
                        QString::fromUtf8("Не удалось загрузить/распознать основное хранилище: \
                                         данные будут загружены из резервной копии."));
             try_load_from_backup = true;
@@ -454,7 +457,7 @@ void Widget::load_storage()
     }
     if (try_load_from_backup) {
         const Loading_Errors loading_status_backup = storage_manager->LoadFromStorage(table, true);
-        qDebug() << "Backup loading status: " << int(loading_status);
+        qDebug() << "Backup loading status: " << int(loading_status_backup);
         switch (loading_status_backup) {
             case Loading_Errors::OK:
             case Loading_Errors::EMPTY_TABLE:
@@ -464,10 +467,10 @@ void Widget::load_storage()
                 break;
             case Loading_Errors::NEW_STORAGE:
                 if (!was_failure) {
-                    information_message_box(QString::fromUtf8("Успех"),
-                               QString::fromUtf8("Создано новое хранилище"));
+                    information_message_box(QString::fromUtf8("Успех."),
+                               QString::fromUtf8("Создано новое хранилище."));
                 } else {
-                    critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                    critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
                            QString::fromUtf8("Отсутствует файл резервной копии. \
                             Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
                 }
@@ -475,7 +478,7 @@ void Widget::load_storage()
             case Loading_Errors::CANNOT_BE_OPENED:
             case Loading_Errors::CRC_FAILURE:
             case Loading_Errors::UNRECOGNIZED:
-                critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища"),
+                critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
                            QString::fromUtf8("Ошибка при загрузки файла из резервной копии. \
                             Заполните новую таблицу или вручную восстановите хранилище из собственной копии."));
                 break;
@@ -507,4 +510,83 @@ void Widget::load_storage()
     }
     table->resizeColumnToContents(constants::pswd_column_idx);
     table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
+    ui->btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
 }
+
+void Widget::on_btn_recover_from_backup_clicked()
+{
+    if (!question_message_box(
+            tr("Замена текущей таблицы резервной копией."),
+            tr("Вы действительно хотите заменить текущую таблицу таблицей из резервного хранилища?")))
+    {
+        return;
+    }
+    if (!question_message_box(
+            tr("Замена текущей таблицы резервной копией."),
+            tr("Вы действительно хотите заменить текущую таблицу таблицей из резервного хранилища?")))
+    {
+        return;
+    }
+    const QTableWidget* const ro_table = ui->tableWidget;
+    const bool save_to_tmp = true;
+    storage_manager->SaveToStorage(ro_table, save_to_tmp);
+
+    QTableWidget* const table = ui->tableWidget;
+    table->clearContents();
+    while (table->rowCount() > 0) {
+        table->removeRow(0);
+    }
+    const bool load_from_backup = true;
+    const Loading_Errors loading_status_backup = storage_manager->LoadFromStorage(table, load_from_backup);
+    qDebug() << "Recovering from backup: loading status: " << int(loading_status_backup);
+    switch (loading_status_backup) {
+        case Loading_Errors::OK:
+            table->resizeColumnToContents(constants::pswd_column_idx);
+            table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
+            warning_message_box(QString::fromUtf8("Успех."),
+                   QString::fromUtf8("Данные загружены из резервной копии."));
+            storage_manager->RemoveTmpFile();
+            return;
+            break;
+        case Loading_Errors::EMPTY_TABLE:
+            warning_message_box(QString::fromUtf8("Пустое резервное хранилище."),
+                                QString::fromUtf8("Пропуск загрузки резервной копии из-за пустых данных."));
+            break;
+        case Loading_Errors::TABLE_IS_NOT_EMPTY:
+            critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
+                                 QString::fromUtf8("Ошибочный пропуск загрузки из резервного хранилища из-за непустой таблицы."));
+            break;
+        case Loading_Errors::NEW_STORAGE:
+            warning_message_box(QString::fromUtf8("Отсутствие резервного хранилища."),
+                                QString::fromUtf8("Пропуск загрузки резервной копии из-за отсутствия резервного хранилища."));
+            break;
+        case Loading_Errors::CANNOT_BE_OPENED:
+        case Loading_Errors::CRC_FAILURE:
+        case Loading_Errors::UNRECOGNIZED:
+            warning_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
+                       QString::fromUtf8("Ошибка при загрузки файла из резервной копии."));
+            break;
+        case Loading_Errors::EMPTY_ENCRYPTION:
+            critical_message_box(QString::fromUtf8("Ошибка шифрования."),
+                        QString::fromUtf8("Неизвестная ошибка шифрования."));
+            storage_manager->SetName("");
+            break;
+        case Loading_Errors::EMPTY_STORAGE:
+            critical_message_box(QString::fromUtf8("Ошибка имени хранилища."),
+                        QString::fromUtf8("Пустое резервное хранилище: не удалось сформировать имя хранилища."));
+            storage_manager->SetName("");
+            break;
+        case Loading_Errors::UNKNOWN_FORMAT:
+            critical_message_box(QString::fromUtf8("Ошибка формата."),
+                        QString::fromUtf8("Неизвестная версия формата в резервном хранилище."));
+            break;
+        default:
+            critical_message_box(QString::fromUtf8("Ошибка обработки результата загрузки."),
+                        QString::fromUtf8("Неизвестный тип результата загрузки резервного хранилища."));
+            storage_manager->SetName("");
+            break;
+    }
+    storage_manager->LoadFromStorage(table);
+    storage_manager->RemoveTmpFile();
+}
+

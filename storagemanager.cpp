@@ -419,9 +419,10 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     return decoded_data;
 }
 
-void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
+void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save_to_tmp )
 {
-    if (mStorageName.isEmpty()) {
+    const QString& file_name = save_to_tmp ? mStorageNameTmp : mStorageName;
+    if (file_name.isEmpty()) {
         qDebug() << "Empty storage.";
         return;
     }
@@ -460,7 +461,7 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
         packed_data_bytes.append( fromUtf16( packed_data_str ) );
     }
     QByteArray encoded_data_bytes;
-    QFile file(mStorageName);
+    QFile file(file_name);
     const QString& current_version = QString(VERSION_LABEL).remove(g_version_prefix);
     if (g_supported_as_version_1.contains(current_version)) {
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
@@ -474,6 +475,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
     {
         file.write(encoded_data_bytes);
         file.close();
+        if (save_to_tmp) {
+            return;
+        }
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
@@ -484,6 +488,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table )
             qDebug() << "Make backup: " << mStorageNameBackUp;
         }
     } else {
+        if (save_to_tmp) {
+            return;
+        }
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
@@ -591,10 +598,25 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bo
     return Loading_Errors::OK;
 }
 
+void StorageManager::RemoveTmpFile()
+{
+    QFile tmp_file(mStorageNameTmp);
+    if (tmp_file.exists()) {
+        tmp_file.remove();
+    }
+}
+
+bool StorageManager::BackupFileIsExist() const
+{
+    const QFile backup_file(mStorageNameBackUp);
+    return backup_file.exists();
+}
+
 void StorageManager::SetName(const QString &name)
 {
     mStorageName = name;
     mStorageNameBackUp = QString::fromUtf8(".") + name;
+    mStorageNameTmp = name + QString::fromUtf8(".tmp");
 }
 
 QString StorageManager::Name() const

@@ -61,6 +61,8 @@ private slots:
 
     void load_storage();
 
+    void on_btn_recover_from_backup_clicked();
+
 signals:
     void master_phrase_ready();
 

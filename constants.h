@@ -9,6 +9,7 @@ namespace {
     static inline const char* g_asterics {"*************"};
     namespace labels {
         static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись с паролем");
+        static inline const auto recover_txt = QString::fromUtf8("Восстановить");
         static inline const auto wait_txt = QString::fromUtf8("Подождите...");
     }
     namespace constants {
