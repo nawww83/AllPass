@@ -20,6 +20,10 @@ static const QSet<QString> g_supported_as_version_1 {
                         QString("v1.01")
                     };
 
+static const QSet<QString> g_supported_as_version_2 {
+    QString("v1.02")
+};
+
 #ifdef OS_Windows
     static void do_hidden(wchar_t* fileLPCWSTR) {
         int attr = GetFileAttributes(fileLPCWSTR);
@@ -29,14 +33,12 @@ static const QSet<QString> g_supported_as_version_1 {
     }
 #endif
 
-namespace api_v1 {
-
-template <int basic_modulo, int swap_modulo, bool initial_swap>
+template <int basic_modulo, int swap_modulo, bool initial_swap, int initial_s0>
 static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
     const int N = data.size() + 1;
     bool current_swap = initial_swap;
-    int sequence = 13; // Нечетное, фаза. Влияет на кодовое расстояние.
+    int sequence = initial_s0; // Нечетное, фаза. Влияет на кодовое расстояние.
     for (int i=1; i<N; i++) {
         const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
         sequence = doit ? (sequence % basic_modulo) + ((sequence % basic_modulo) % 2) + 1 : sequence + 2;
@@ -49,6 +51,9 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     return crc;
 };
 
+namespace api_v1 {
+
+// code distance = 3
 static QByteArray encode_249_crc_7(const QByteArray& data) {
     QByteArray out_crc;
     {
@@ -57,19 +62,19 @@ static QByteArray encode_249_crc_7(const QByteArray& data) {
             crc1 ^= b;
         }
         out_crc.push_back(crc1);
-        char crc2 = core_crc<11, 16, false>(data);
+        char crc2 = core_crc<11, 16, false, 13>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<41, 205, false>(data);
+        char crc8 = core_crc<41, 205, false, 13>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<17, 7, false>(data);
+        char crc16 = core_crc<17, 7, false, 13>(data);
         out_crc.push_back(crc16);
     }
     {
-        char crc2 = core_crc<11, 16, true>(data);
+        char crc2 = core_crc<11, 16, true, 13>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<41, 205, true>(data);
+        char crc8 = core_crc<41, 205, true, 13>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<17, 7, true>(data);
+        char crc16 = core_crc<17, 7, true, 13>(data);
         out_crc.push_back(crc16);
     }
     return out_crc;
@@ -80,11 +85,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         return false;
     }
     {
-        char crc16 = core_crc<17, 7, true>(data, crc.back());
+        char crc16 = core_crc<17, 7, true, 13>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<41, 205, true>(data, crc.back());
+        char crc8 = core_crc<41, 205, true, 13>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<11, 16, true>(data, crc.back());
+        char crc2 = core_crc<11, 16, true, 13>(data, crc.back());
         crc.removeLast();
         if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
         {
@@ -92,11 +97,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         }
     }
     {
-        char crc16 = core_crc<17, 7, false>(data, crc.back());
+        char crc16 = core_crc<17, 7, false, 13>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<41, 205, false>(data, crc.back());
+        char crc8 = core_crc<41, 205, false, 13>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<11, 16, false>(data, crc.back());
+        char crc2 = core_crc<11, 16, false, 13>(data, crc.back());
         crc.removeLast();
         char crc1 = crc.back();
         crc.removeLast();
@@ -313,6 +318,114 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
     }
     return extracted_hash == calculated_hash;
 }
+
+}
+
+namespace api_v2 {
+
+// code distance = 5
+static QByteArray encode_249_crc_7(const QByteArray& data) {
+    QByteArray out_crc;
+    {
+        char crc1 = '\0';
+        for (const auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        out_crc.push_back(crc1);
+        char crc2 = core_crc<242, 70, false, 125>(data);
+        out_crc.push_back(crc2);
+        char crc8 = core_crc<251, 124, false, 125>(data);
+        out_crc.push_back(crc8);
+        char crc16 = core_crc<227, 194, false, 125>(data);
+        out_crc.push_back(crc16);
+    }
+    {
+        char crc2 = core_crc<242, 70, true, 125>(data);
+        out_crc.push_back(crc2);
+        char crc8 = core_crc<251, 124, true, 125>(data);
+        out_crc.push_back(crc8);
+        char crc16 = core_crc<227, 194, true, 125>(data);
+        out_crc.push_back(crc16);
+    }
+    return out_crc;
+}
+
+static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
+    if (crc.size() != 7) {
+        return false;
+    }
+    {
+        char crc16 = core_crc<227, 194, true, 125>(data, crc.back());
+        crc.removeLast();
+        char crc8 = core_crc<251, 124, true, 125>(data, crc.back());
+        crc.removeLast();
+        char crc2 = core_crc<242, 70, true, 125>(data, crc.back());
+        crc.removeLast();
+        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
+        {
+            return false;
+        }
+    }
+    {
+        char crc16 = core_crc<227, 194, false, 125>(data, crc.back());
+        crc.removeLast();
+        char crc8 = core_crc<251, 124, false, 125>(data, crc.back());
+        crc.removeLast();
+        char crc2 = core_crc<242, 70, false, 125>(data, crc.back());
+        crc.removeLast();
+        char crc1 = crc.back();
+        crc.removeLast();
+        for (const auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
+    return api_v1::init_encryption(enc, salt);
+}
+
+static void finalize_encryption(Encryption& enc) {
+    return api_v1::finalize_encryption(enc);
+}
+
+static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
+    return api_v1::encrypt256_inner(in, out, enc);
+}
+
+static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& dec) {
+    return api_v1::decrypt256_inner(in, out, dec);
+}
+
+static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
+    return api_v1::encrypt(in, out, enc);
+}
+
+static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
+    return api_v1::decrypt(in, out, dec);
+}
+
+static void encode_dlog256(const QByteArray& in, QByteArray& out) {
+    return api_v1::encode_dlog256(in, out);
+}
+
+static void decode_dlog256(const QByteArray& in, QByteArray& out) {
+    return api_v1::decode_dlog256(in, out);
+}
+
+static void insert_hash128(QByteArray& bytes) {
+    return api_v1::insert_hash128(bytes);
+}
+
+static bool extract_and_check_hash128(QByteArray& bytes) {
+    return api_v1::extract_and_check_hash128(bytes);
+}
+
 }
 
 
@@ -350,6 +463,10 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
 
     if constexpr (version == 1) {
         using namespace api_v1;
+        my_encode;
+    }
+    if constexpr (version == 2) {
+        using namespace api_v2;
         my_encode;
     }
     return out;
@@ -416,6 +533,10 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
         using namespace api_v1;
         my_decode;
     }
+    if constexpr (version == 2) {
+        using namespace api_v2;
+        my_decode;
+    }
     return decoded_data;
 }
 
@@ -465,6 +586,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     const QString& current_version = QString(VERSION_LABEL).remove(g_version_prefix);
     if (g_supported_as_version_1.contains(current_version)) {
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
+    }
+    else if (g_supported_as_version_2.contains(current_version)) {
+        encoded_data_bytes = do_encode<2>(packed_data_bytes, mEnc, mEncInner);
     }
     if (encoded_data_bytes.isEmpty()) {
         return;
@@ -547,7 +671,14 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bo
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }
-        } else {
+        }
+        else if (g_supported_as_version_2.contains(read_version)) {
+            decoded_data_bytes = do_decode<2>(raw_data, mDec, mDecInner);
+            if (decoded_data_bytes.isEmpty()) {
+                return Loading_Errors::CRC_FAILURE;
+            }
+        }
+        else {
             return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
