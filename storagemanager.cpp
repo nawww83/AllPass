@@ -33,6 +33,8 @@ static const QSet<QString> g_supported_as_version_2 {
     }
 #endif
 
+namespace api_v1 {
+
 template <int basic_modulo, int swap_modulo, bool initial_swap, int initial_s0>
 static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
@@ -51,9 +53,6 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     return crc;
 };
 
-namespace api_v1 {
-
-// code distance = 3
 static QByteArray encode_249_crc_7(const QByteArray& data) {
     QByteArray out_crc;
     {
@@ -323,7 +322,26 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
 
 namespace api_v2 {
 
-// code distance = 5
+template <int basic_modulo, int swap_modulo, bool initial_swap>
+static char core_crc(const QByteArray& data, int initial_crc='\0') {
+    char crc = initial_crc;
+    const int N = data.size() + 1;
+    bool current_swap = initial_swap;
+    int sequence = 0;
+    for (int i=1; i<N; i++) {
+        const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
+        sequence = doit ? (sequence % basic_modulo) + 1 : sequence + 1;
+        char mul = doit ? sequence : 0;
+        crc ^= mul * data.at(i-1);
+        if constexpr (swap_modulo > 0) {
+            current_swap ^= i % swap_modulo == 0;
+        }
+    }
+    return crc;
+};
+
+// average code distance = 5
+// const std::array<int, 6> params {74, 236, 41, 205, 186, 171};
 static QByteArray encode_249_crc_7(const QByteArray& data) {
     QByteArray out_crc;
     {
@@ -332,19 +350,19 @@ static QByteArray encode_249_crc_7(const QByteArray& data) {
             crc1 ^= b;
         }
         out_crc.push_back(crc1);
-        char crc2 = core_crc<242, 70, false, 125>(data);
+        char crc2 = core_crc<74, 205, false>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<251, 124, false, 125>(data);
+        char crc8 = core_crc<236, 186, false>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<227, 194, false, 125>(data);
+        char crc16 = core_crc<41, 171, false>(data);
         out_crc.push_back(crc16);
     }
     {
-        char crc2 = core_crc<242, 70, true, 125>(data);
+        char crc2 = core_crc<74, 205, true>(data);
         out_crc.push_back(crc2);
-        char crc8 = core_crc<251, 124, true, 125>(data);
+        char crc8 = core_crc<236, 186, true>(data);
         out_crc.push_back(crc8);
-        char crc16 = core_crc<227, 194, true, 125>(data);
+        char crc16 = core_crc<41, 171, true>(data);
         out_crc.push_back(crc16);
     }
     return out_crc;
@@ -355,11 +373,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         return false;
     }
     {
-        char crc16 = core_crc<227, 194, true, 125>(data, crc.back());
+        char crc16 = core_crc<41, 171, true>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<251, 124, true, 125>(data, crc.back());
+        char crc8 = core_crc<236, 186, true>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<242, 70, true, 125>(data, crc.back());
+        char crc2 = core_crc<74, 205, true>(data, crc.back());
         crc.removeLast();
         if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
         {
@@ -367,11 +385,11 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
         }
     }
     {
-        char crc16 = core_crc<227, 194, false, 125>(data, crc.back());
+        char crc16 = core_crc<41, 171, false>(data, crc.back());
         crc.removeLast();
-        char crc8 = core_crc<251, 124, false, 125>(data, crc.back());
+        char crc8 = core_crc<236, 186, false>(data, crc.back());
         crc.removeLast();
-        char crc2 = core_crc<242, 70, false, 125>(data, crc.back());
+        char crc2 = core_crc<74, 205, false>(data, crc.back());
         crc.removeLast();
         char crc1 = crc.back();
         crc.removeLast();
