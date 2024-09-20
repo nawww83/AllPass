@@ -177,6 +177,15 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
     return QWidget::eventFilter(object, event);
 }
 
+void Widget::closeEvent(QCloseEvent *event)
+{
+    event->ignore();
+    if (question_message_box(tr("Подтверждение выхода"),
+                             tr("Закрыть приложение?"))) {
+        event->accept();
+    }
+}
+
 void Widget::copy_clipboard() {
     if (!pointers::selected_context_table_item) {
         return;

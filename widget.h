@@ -30,6 +30,8 @@ public:
 
     bool eventFilter(QObject *object, QEvent *event) override;
 
+    void closeEvent(QCloseEvent* event) override;
+
 private slots:
     void seed_pass_has_been_set();
 

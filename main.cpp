@@ -1,11 +1,21 @@
 #include "widget.h"
 
 #include <QApplication>
+#include <QSplashScreen>
 #include <qmessagebox.h>
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+    QSplashScreen splash;
+    QFont splashFont;
+    splashFont.setFamily("Arial");
+    splashFont.setBold(true);
+    splashFont.setPixelSize(16);
+    splash.setFont(splashFont);
+    splash.showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, QColor::fromString("blue"));
+    a.processEvents();
 
     MyDialog dialog;
     int result = dialog.exec();
@@ -26,7 +36,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    splash.show();
+    a.processEvents();
+
     Widget w(std::move(pin));
     w.show();
+    splash.finish(&w);
     return a.exec();
 }
