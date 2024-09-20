@@ -5,11 +5,11 @@
 
 namespace {
     static inline constexpr auto g_version_prefix = '#';
-    static inline constexpr auto VERSION_LABEL = "#v1.02"; // ASCII.
+    static inline constexpr auto VERSION_LABEL = "#v1.03"; // ASCII.
     static inline const char* g_asterics {"*************"};
     namespace labels {
         static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись с паролем");
-        static inline const auto recover_txt = QString::fromUtf8("\xF0\x9F\x94\xA7");
+        static inline const auto recover_txt = QString::fromUtf8("\xE2\x86\xB6");
         static inline const auto wait_txt = QString::fromUtf8("Подождите...");
     }
     namespace constants {

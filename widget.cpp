@@ -91,8 +91,8 @@ Widget::Widget(QString&& pin, QWidget *parent)
                        QString::fromUtf8("Нулевой указатель QPushButton."));
     } else {
         btn_recover_from_backup->setEnabled(false);
+        btn_recover_from_backup->setStyleSheet("QPushButton{font-size: 16px; font-weight: bold}");
         btn_recover_from_backup->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        btn_recover_from_backup->setStyleSheet("QPushButton{font-size: 12px; font-weight: bold}");
         btn_recover_from_backup->setToolTip(\
             QString::fromUtf8("Восстановить данные из встроенного резервного хранилища."));
         ui->horizontalLayout->addWidget(btn_recover_from_backup);
