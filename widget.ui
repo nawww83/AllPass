@@ -132,30 +132,6 @@
           </property>
          </widget>
         </item>
-        <item>
-         <widget class="QPushButton" name="btn_recover_from_backup">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="font">
-           <font>
-            <pointsize>12</pointsize>
-            <bold>true</bold>
-            <underline>false</underline>
-            <strikeout>false</strikeout>
-           </font>
-          </property>
-          <property name="toolTip">
-           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; color:#ff0000;&quot;&gt;Восстановить данные из &lt;/span&gt;&lt;span style=&quot; font-size:10pt; text-decoration: underline; color:#ff0000;&quot;&gt;встроенного&lt;/span&gt;&lt;span style=&quot; color:#ff0000;&quot;&gt; резервного хранилища.&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-          </property>
-          <property name="text">
-           <string>Recover</string>
-          </property>
-         </widget>
-        </item>
        </layout>
       </widget>
      </item>

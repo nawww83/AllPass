@@ -29,6 +29,33 @@ namespace {
     }
 }
 
+static bool question_message_box(const QString& title, const QString& question) {
+    QMessageBox mb(QMessageBox::Question,
+                   title,
+                   question);
+    QPushButton* yes_button = mb.addButton(QObject::tr("Да"), QMessageBox::YesRole);
+    QPushButton* no_button = mb.addButton(QObject::tr("Нет"), QMessageBox::NoRole);
+    mb.setDefaultButton(no_button);
+    mb.exec();
+    return mb.clickedButton() == yes_button;
+}
+
+static void information_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Information, title, message);
+    mb.exec();
+}
+
+static void warning_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Warning, title, message);
+    mb.exec();
+}
+
+static void critical_message_box(const QString& title, const QString& message) {
+    QMessageBox mb(QMessageBox::Critical, title, message);
+    mb.exec();
+}
+
+
 Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
@@ -57,8 +84,20 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
-    ui->btn_recover_from_backup->setText(labels::recover_txt);
-    ui->btn_recover_from_backup->setEnabled(false);
+    btn_recover_from_backup = new QPushButton(labels::recover_txt);
+    if (!btn_recover_from_backup) {
+        critical_message_box(
+                       QString::fromUtf8("Ошибка создания кнопки"),
+                       QString::fromUtf8("Нулевой указатель QPushButton."));
+    } else {
+        btn_recover_from_backup->setEnabled(false);
+        btn_recover_from_backup->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        btn_recover_from_backup->setStyleSheet("QPushButton{font-size: 12px; font-weight: bold}");
+        btn_recover_from_backup->setToolTip(\
+            QString::fromUtf8("Восстановить данные из встроенного резервного хранилища."));
+        ui->horizontalLayout->addWidget(btn_recover_from_backup);
+        connect(btn_recover_from_backup, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked);
+    }
 
     ui->tableWidget->setTabKeyNavigation(false);
     ui->tableWidget->setFocusPolicy(Qt::StrongFocus);
@@ -88,9 +127,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     updatePassAct = new QAction(QIcon(),
                                 tr("&Обновить пароль"), this);
     connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
-
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
-
     ui->btn_input_master_phrase->setFocus();
 }
 
@@ -98,32 +135,6 @@ Widget::~Widget()
 {
     save_to_store();
     delete ui;
-}
-
-static bool question_message_box(const QString& title, const QString& question) {
-    QMessageBox mb(QMessageBox::Question,
-                   title,
-                   question);
-    QPushButton* yes_button = mb.addButton(QObject::tr("Да"), QMessageBox::YesRole);
-    QPushButton* no_button = mb.addButton(QObject::tr("Нет"), QMessageBox::NoRole);
-    mb.setDefaultButton(no_button);
-    mb.exec();
-    return mb.clickedButton() == yes_button;
-}
-
-static void information_message_box(const QString& title, const QString& message) {
-    QMessageBox mb(QMessageBox::Information, title, message);
-    mb.exec();
-}
-
-static void warning_message_box(const QString& title, const QString& message) {
-    QMessageBox mb(QMessageBox::Warning, title, message);
-    mb.exec();
-}
-
-static void critical_message_box(const QString& title, const QString& message) {
-    QMessageBox mb(QMessageBox::Critical, title, message);
-    mb.exec();
 }
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
@@ -510,10 +521,10 @@ void Widget::load_storage()
     }
     table->resizeColumnToContents(constants::pswd_column_idx);
     table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
-    ui->btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
+    btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
 }
 
-void Widget::on_btn_recover_from_backup_clicked()
+void Widget::btn_recover_from_backup_clicked()
 {
     if (!question_message_box(
             tr("Замена текущей таблицы резервной копией."),
@@ -521,12 +532,20 @@ void Widget::on_btn_recover_from_backup_clicked()
     {
         return;
     }
-    if (!question_message_box(
-            tr("Замена текущей таблицы резервной копией."),
-            tr("Вы действительно хотите заменить текущую таблицу таблицей из встроенного резервного хранилища?")))
-    {
+
+    MyDialog dialog;
+    int result = dialog.exec();
+    if (result == QDialog::Accepted) {
+        ;
+    } else {
         return;
     }
+    QString pin {dialog.get_pin()};
+    dialog.clear_pin();
+    if (!utils::check_pin(std::move(pin))) {
+        return;
+    }
+
     const QTableWidget* const ro_table = ui->tableWidget;
     const bool save_to_tmp = true;
     storage_manager->SaveToStorage(ro_table, save_to_tmp);

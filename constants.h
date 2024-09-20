@@ -9,13 +9,14 @@ namespace {
     static inline const char* g_asterics {"*************"};
     namespace labels {
         static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись с паролем");
-        static inline const auto recover_txt = QString::fromUtf8("Восстановить");
+        static inline const auto recover_txt = QString::fromUtf8("\xF0\x9F\x94\xA7");
         static inline const auto wait_txt = QString::fromUtf8("Подождите...");
     }
     namespace constants {
         static inline const int pass_len_step = 5;
         static inline const int num_of_passwords = 10;          // in pswd_buff.
-        static inline const int password_len_per_request = 2*pass_len_step; // 64 bit = 2*32 = 2*5 ascii94 symbols.
+        static inline const int password_len_per_request = \
+                                        2*pass_len_step; // 64 bit = 2*32 = 2*5 ascii94 symbols.
 
         static inline const int login_column_idx = 0;
         static inline const int pswd_column_idx = 1;

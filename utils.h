@@ -64,6 +64,17 @@ inline static void fill_pin(QString&& pin) {
     #pragma optimize( "", on )
 }
 
+inline static bool check_pin(QString&& pin) {
+    QString mPin {pin};
+    using namespace password;
+    bool ok = true;
+    ok &= pin_code->mPinCode[0] == mPin[0].digitValue() &&
+    pin_code->mPinCode[1] == mPin[1].digitValue() &&
+    pin_code->mPinCode[2] == mPin[2].digitValue() &&
+    pin_code->mPinCode[3] == mPin[3].digitValue();
+    return ok;
+}
+
 inline static void fill_key_by_hash128(lfsr_hash::u128 hash) {
     auto x = hash.first;
     auto y = hash.second;

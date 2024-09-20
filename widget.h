@@ -61,7 +61,7 @@ private slots:
 
     void load_storage();
 
-    void on_btn_recover_from_backup_clicked();
+    void btn_recover_from_backup_clicked();
 
 signals:
     void master_phrase_ready();
@@ -81,6 +81,7 @@ private:
     QAction *copyAct;
     QAction *removeAct;
     QAction *updatePassAct;
+    QPushButton *btn_recover_from_backup;
 };
 
 class MyTextEdit : public QTextEdit
