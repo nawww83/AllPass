@@ -68,6 +68,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     app_title.append(current_version);
     app_title.append(QString::fromUtf8(" - Менеджер паролей"));
     this->setWindowTitle( app_title );
+    this->setWindowIcon(QIcon(":/favicon.ico"));
 
     pointers::txt_edit_master_phrase = new MyTextEdit();
     pointers::txt_edit_master_phrase->setWindowTitle(QString::fromUtf8("Ввод мастер-фразы"));
@@ -544,8 +545,8 @@ void Widget::btn_recover_from_backup_clicked()
     {
         return;
     }
-
     MyDialog dialog;
+    dialog.setWindowIcon(QIcon(":/favicon.ico"));
     int result = dialog.exec();
     if (result == QDialog::Accepted) {
         ;

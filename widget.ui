@@ -57,7 +57,7 @@
         <enum>Qt::ContextMenuPolicy::NoContextMenu</enum>
        </property>
        <property name="text">
-        <string>Ввести мастер-фразу</string>
+        <string>Мастер-фраза...</string>
        </property>
       </widget>
      </item>

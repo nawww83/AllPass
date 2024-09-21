@@ -17,6 +17,7 @@ int main(int argc, char *argv[])
     a.processEvents();
 
     MyDialog dialog;
+    dialog.setWindowIcon(QIcon(":/favicon.ico"));
     int result = dialog.exec();
 
     if (result == QDialog::Accepted) {
