@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QContextMenuEvent>
+#include <QPixmap>
 #include <QIcon>
 #include <QClipboard>
 
@@ -84,14 +85,16 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
-    btn_recover_from_backup = new QPushButton(labels::recover_txt);
+    btn_recover_from_backup = new QPushButton();
+    QPixmap icon_map(":/icons8-restore-page-24.png");
+    btn_recover_from_backup->setIcon(QIcon(icon_map));
+    btn_recover_from_backup->setIconSize(icon_map.rect().size());
     if (!btn_recover_from_backup) {
         critical_message_box(
                        QString::fromUtf8("Ошибка создания кнопки"),
                        QString::fromUtf8("Нулевой указатель QPushButton."));
     } else {
         btn_recover_from_backup->setEnabled(false);
-        btn_recover_from_backup->setStyleSheet("QPushButton{font-size: 16px; font-weight: bold}");
         btn_recover_from_backup->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         btn_recover_from_backup->setToolTip(\
             QString::fromUtf8("Восстановить данные из встроенного резервного хранилища."));
@@ -105,7 +108,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии")};
     ui->tableWidget->setHorizontalHeaderLabels(table_header);
     ui->tableWidget->verticalHeader()->setVisible(false);
-    ui->tableWidget->setColumnWidth(0, 200);
+    ui->tableWidget->setColumnWidth(0, 210);
     ui->tableWidget->setColumnWidth(1, 200);
     ui->tableWidget->setColumnWidth(2, 370);
     PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this);

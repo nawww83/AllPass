@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>796</width>
-    <height>450</height>
+    <width>848</width>
+    <height>465</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -50,7 +50,7 @@
       <widget class="QPushButton" name="btn_input_master_phrase">
        <property name="font">
         <font>
-         <pointsize>12</pointsize>
+         <pointsize>13</pointsize>
         </font>
        </property>
        <property name="contextMenuPolicy">
@@ -74,7 +74,7 @@
          <widget class="QPushButton" name="btn_generate">
           <property name="font">
            <font>
-            <pointsize>12</pointsize>
+            <pointsize>13</pointsize>
             <bold>true</bold>
            </font>
           </property>
@@ -87,7 +87,7 @@
          <widget class="QSpinBox" name="spbx_pass_len">
           <property name="font">
            <font>
-            <pointsize>12</pointsize>
+            <pointsize>13</pointsize>
            </font>
           </property>
           <property name="suffix">
@@ -120,7 +120,7 @@
           </property>
           <property name="font">
            <font>
-            <pointsize>12</pointsize>
+            <pointsize>13</pointsize>
             <bold>true</bold>
            </font>
           </property>

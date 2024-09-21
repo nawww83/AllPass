@@ -10,9 +10,8 @@ int main(int argc, char *argv[])
 
     QSplashScreen splash;
     QFont splashFont;
-    splashFont.setFamily("Arial");
     splashFont.setBold(true);
-    splashFont.setPixelSize(16);
+    splashFont.setPixelSize(18);
     splash.setFont(splashFont);
     splash.showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, QColor::fromString("blue"));
     a.processEvents();
