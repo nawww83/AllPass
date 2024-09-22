@@ -25,6 +25,8 @@ set(PROJECT_SOURCES
         lfsr_hash/io_utils.h
 )
 
+set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
+
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(AllPass
         MANUAL_FINALIZATION
@@ -37,7 +39,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         storagemanager.h storagemanager.cpp
         constants.h
         images.qrc
-
+        ${app_icon_resource_windows}
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET AllPass APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
