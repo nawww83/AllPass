@@ -22,7 +22,8 @@ static const QSet<QString> g_supported_as_version_1 {
 
 static const QSet<QString> g_supported_as_version_2 {
     QString("v1.02"),
-    QString("v1.03")
+    QString("v1.03"),
+    QString("v1.04")
 };
 
 #ifdef OS_Windows
@@ -319,7 +320,7 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
     return extracted_hash == calculated_hash;
 }
 
-}
+} // api_v1.
 
 namespace api_v2 {
 
@@ -407,47 +408,9 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
     return true;
 }
 
-static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
-    return api_v1::init_encryption(enc, salt);
-}
+using namespace api_v1;
 
-static void finalize_encryption(Encryption& enc) {
-    return api_v1::finalize_encryption(enc);
-}
-
-static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    return api_v1::encrypt256_inner(in, out, enc);
-}
-
-static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& dec) {
-    return api_v1::decrypt256_inner(in, out, dec);
-}
-
-static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
-    return api_v1::encrypt(in, out, enc);
-}
-
-static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
-    return api_v1::decrypt(in, out, dec);
-}
-
-static void encode_dlog256(const QByteArray& in, QByteArray& out) {
-    return api_v1::encode_dlog256(in, out);
-}
-
-static void decode_dlog256(const QByteArray& in, QByteArray& out) {
-    return api_v1::decode_dlog256(in, out);
-}
-
-static void insert_hash128(QByteArray& bytes) {
-    return api_v1::insert_hash128(bytes);
-}
-
-static bool extract_and_check_hash128(QByteArray& bytes) {
-    return api_v1::extract_and_check_hash128(bytes);
-}
-
-}
+} // api_v2.
 
 
 StorageManager::StorageManager() {}
@@ -455,8 +418,8 @@ StorageManager::StorageManager() {}
 template <int version>
 QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& enc_inner) {
     QByteArray out;
-    #define my_encode \
-    init_encryption(enc); \
+    #define my_encode(ns) \
+    ns::init_encryption(enc); \
     constexpr int K = 249; \
     constexpr int R = 7; \
     utils::padd<K>(encoded_string); \
@@ -464,31 +427,29 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     const int Q = N / K; \
     QByteArray crc; \
     const auto it = encoded_string.cbegin(); \
-    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(encode_249_crc_7(in)); } \
+    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(ns::encode_249_crc_7(in)); } \
     encoded_string.append(crc); \
     if (encoded_string.length() % (K + R) != 0) { \
         qDebug() << "CRC encode failure: output size is not a 256*k: " << encoded_string.size(); \
-        finalize_encryption(enc); \
+        ns::finalize_encryption(enc); \
         return {}; \
     } \
-    init_encryption(enc_inner, crc); \
+    ns::init_encryption(enc_inner, crc); \
     QByteArray encrypted_inner; \
-    encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
+    ns::encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
     QByteArray permuted; \
-    encode_dlog256(encrypted_inner, permuted); \
-    insert_hash128(permuted); \
+    ns::encode_dlog256(encrypted_inner, permuted); \
+    ns::insert_hash128(permuted); \
     permuted.append(crc); \
-    encrypt(permuted, out, enc); \
-    finalize_encryption(enc); \
-    finalize_encryption(enc_inner);
+    ns::encrypt(permuted, out, enc); \
+    ns::finalize_encryption(enc); \
+    ns::finalize_encryption(enc_inner);
 
     if constexpr (version == 1) {
-        using namespace api_v1;
-        my_encode;
+        my_encode(api_v1);
     }
     if constexpr (version == 2) {
-        using namespace api_v2;
-        my_encode;
+        my_encode(api_v2);
     }
     return out;
 }
@@ -496,18 +457,18 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
 template <int version>
 QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
-    #define my_decode \
+    #define my_decode(ns) \
     constexpr int K = 249; \
     constexpr int R = 7; \
     constexpr int hash_size = 16; \
-    init_encryption(dec); \
+    ns::init_encryption(dec); \
     QByteArray decrypted; \
-    decrypt(data, decrypted, dec); \
+    ns::decrypt(data, decrypted, dec); \
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \
         qDebug() << "CRC decode failure: input size is not a 263*k: " << decrypted.size(); \
-        finalize_encryption(dec); \
+        ns::finalize_encryption(dec); \
         return {}; \
     } \
     QByteArray crc; \
@@ -515,14 +476,14 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
         for (int i=0; i<R; ++i) {crc.push_back(decrypted.back()); decrypted.removeLast();}; \
     } \
     std::reverse(crc.begin(), crc.end()); \
-    if (!extract_and_check_hash128(decrypted)) { \
-        finalize_encryption(dec); \
+    if (!ns::extract_and_check_hash128(decrypted)) { \
+        ns::finalize_encryption(dec); \
         return {}; \
     } \
     QByteArray depermuted; \
-    decode_dlog256(decrypted, depermuted); \
-    init_encryption(dec_inner, crc); \
-    decrypt256_inner(depermuted, decoded_data, dec_inner); \
+    ns::decode_dlog256(decrypted, depermuted); \
+    ns::init_encryption(dec_inner, crc); \
+    ns::decrypt256_inner(depermuted, decoded_data, dec_inner); \
     QByteArray crc_copy; \
     for (int q=0; q<Q; ++q) { \
         for (int i=0; i<R; ++i) {crc_copy.push_back(decoded_data.back()); decoded_data.removeLast();}; \
@@ -530,8 +491,8 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     std::reverse(crc_copy.begin(), crc_copy.end()); \
     if (crc != crc_copy) { \
         qDebug() << "CRC decode failure: crc != crc_copy."; \
-        finalize_encryption(dec); \
-        finalize_encryption(dec_inner); \
+        ns::finalize_encryption(dec); \
+        ns::finalize_encryption(dec_inner); \
         return {}; \
     } \
     auto it = decoded_data.cbegin(); \
@@ -539,24 +500,22 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     for (int q=0; q<Q; ++q) { \
         const QByteArray in(it + q*K, K); \
         QByteArray crc_(it_crc + q*R, R); \
-        if (!decode_249_crc_7(in, crc_)) { \
+        if (!ns::decode_249_crc_7(in, crc_)) { \
             qDebug() << "CRC: storage data failure, q: " << q; \
-            finalize_encryption(dec); \
-            finalize_encryption(dec_inner); \
+            ns::finalize_encryption(dec); \
+            ns::finalize_encryption(dec_inner); \
             return {}; \
         } \
     } \
     utils::dpadd(decoded_data); \
-    finalize_encryption(dec); \
-    finalize_encryption(dec_inner);
+    ns::finalize_encryption(dec); \
+    ns::finalize_encryption(dec_inner);
 
     if constexpr (version == 1) {
-        using namespace api_v1;
-        my_decode;
+        my_decode(api_v1);
     }
     if constexpr (version == 2) {
-        using namespace api_v2;
-        my_decode;
+        my_decode(api_v2);
     }
     return decoded_data;
 }
