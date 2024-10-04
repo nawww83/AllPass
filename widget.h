@@ -45,7 +45,7 @@ private slots:
 
     void insert_new_password();
 
-    void copy_clipboard();
+    void copy_to_clipboard();
 
     void delete_row();
 

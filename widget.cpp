@@ -56,6 +56,65 @@ static void critical_message_box(const QString& title, const QString& message) {
     mb.exec();
 }
 
+// Очистить содержимое таблицы, сохраняя ее структуру.
+static void clear_table(QTableWidget* widget) {
+    widget->clearContents();
+    while (widget->rowCount() > 0) {
+        widget->removeRow(0);
+    }
+}
+
+#define construct_recover_button(button) \
+    button = new QPushButton(); \
+    if (!button) { \
+        critical_message_box( \
+            QString::fromUtf8("Ошибка создания кнопки"), \
+            QString::fromUtf8("Нулевой указатель QPushButton.")); \
+    } else { \
+        const QPixmap icon_map(":/icons8-restore-page-24.png"); \
+        button->setIcon(QIcon(icon_map)); \
+        button->setIconSize(icon_map.rect().size()); \
+        button->setEnabled(false); \
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+        button->setToolTip( \
+            QString::fromUtf8("Восстановить данные из встроенного резервного хранилища.")); \
+        ui->horizontalLayout->addWidget(button); \
+        connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
+    }
+
+#define configure_table(widget) \
+    widget->setTabKeyNavigation(false); \
+    widget->setFocusPolicy(Qt::StrongFocus); \
+    widget->setSortingEnabled(false); \
+    QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии")}; \
+    widget->setHorizontalHeaderLabels(table_header); \
+    widget->verticalHeader()->setVisible(false); \
+    widget->setColumnWidth(0, 210); \
+    widget->setColumnWidth(1, 200); \
+    widget->setColumnWidth(2, 370); \
+    PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this); \
+    widget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate); \
+    widget->installEventFilter(this); \
+    widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
+    widget->setContextMenuPolicy(Qt::CustomContextMenu); \
+    widget->setSelectionMode(QAbstractItemView::SingleSelection); \
+    widget->horizontalHeader()->setStretchLastSection(true); \
+    connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
+
+#define configure_actions \
+    copyAct = new QAction(QIcon(), \
+                          tr("&Копировать ячейку"), this); \
+    copyAct->setShortcuts(QKeySequence::Copy); \
+    connect(copyAct, &QAction::triggered, this, &Widget::copy_to_clipboard); \
+    removeAct = new QAction(QIcon(), \
+                            tr("&Удалить строку"), this); \
+    removeAct->setShortcuts(QKeySequence::Delete); \
+    connect(removeAct, &QAction::triggered, this, &Widget::delete_row); \
+    updatePassAct = new QAction(QIcon(), \
+                                tr("&Обновить пароль"), this); \
+    connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
+
+
 
 Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
@@ -85,52 +144,14 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_generate->setEnabled(false);
     ui->btn_add_empty_row->setEnabled(false);
 
-    btn_recover_from_backup = new QPushButton();
-    const QPixmap icon_map(":/icons8-restore-page-24.png");
-    btn_recover_from_backup->setIcon(QIcon(icon_map));
-    btn_recover_from_backup->setIconSize(icon_map.rect().size());
-    if (!btn_recover_from_backup) {
-        critical_message_box(
-                       QString::fromUtf8("Ошибка создания кнопки"),
-                       QString::fromUtf8("Нулевой указатель QPushButton."));
-    } else {
-        btn_recover_from_backup->setEnabled(false);
-        btn_recover_from_backup->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        btn_recover_from_backup->setToolTip(\
-            QString::fromUtf8("Восстановить данные из встроенного резервного хранилища."));
-        ui->horizontalLayout->addWidget(btn_recover_from_backup);
-        connect(btn_recover_from_backup, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked);
-    }
+    construct_recover_button(btn_recover_from_backup);
 
-    ui->tableWidget->setTabKeyNavigation(false);
-    ui->tableWidget->setFocusPolicy(Qt::StrongFocus);
-    ui->tableWidget->setSortingEnabled(false);
-    QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии")};
-    ui->tableWidget->setHorizontalHeaderLabels(table_header);
-    ui->tableWidget->verticalHeader()->setVisible(false);
-    ui->tableWidget->setColumnWidth(0, 210);
-    ui->tableWidget->setColumnWidth(1, 200);
-    ui->tableWidget->setColumnWidth(2, 370);
-    PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this);
-    ui->tableWidget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate);
-    ui->tableWidget->installEventFilter(this);
-    ui->tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked);
-    ui->tableWidget->setContextMenuPolicy(Qt::CustomContextMenu);
-    ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    ui->tableWidget->horizontalHeader()->setStretchLastSection(true);
-    connect(ui->tableWidget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
-    copyAct = new QAction(QIcon(),
-                         tr("&Копировать ячейку"), this);
-    copyAct->setShortcuts(QKeySequence::Copy);
-    connect(copyAct, &QAction::triggered, this, &Widget::copy_clipboard);
-    removeAct = new QAction(QIcon(),
-                          tr("&Удалить строку"), this);
-    removeAct->setShortcuts(QKeySequence::Delete);
-    connect(removeAct, &QAction::triggered, this, &Widget::delete_row);
-    updatePassAct = new QAction(QIcon(),
-                                tr("&Обновить пароль"), this);
-    connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
+    configure_table(ui->tableWidget);
+
+    configure_actions;
+
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
+
     ui->btn_input_master_phrase->setFocus();
 }
 
@@ -142,18 +163,18 @@ Widget::~Widget()
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
 {
-    static bool foundCopy = false;
+    static bool found_copy = false;
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
         if (pKeyEvent->matches(QKeySequence::Copy))
         {
-            foundCopy = true;
+            found_copy = true;
             return true;
         }
         else
         {
-            foundCopy = false;
+            found_copy = false;
         }
         if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus())
         {
@@ -165,11 +186,11 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
     if (event->type() == QEvent::KeyRelease)
     {
         QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
-        if (foundCopy)
+        if (found_copy)
         {
             pointers::selected_context_table_item = ui->tableWidget->currentItem();
-            copy_clipboard();
-            foundCopy = false;
+            copy_to_clipboard();
+            found_copy = false;
             return true;
         }
         if (pKeyEvent->matches(QKeySequence::Copy))
@@ -189,7 +210,7 @@ void Widget::closeEvent(QCloseEvent *event)
     }
 }
 
-void Widget::copy_clipboard() {
+void Widget::copy_to_clipboard() {
     if (!pointers::selected_context_table_item) {
         return;
     }
@@ -258,10 +279,7 @@ void Widget::seed_pass_has_been_set()
         if (!storage_name.isEmpty()) {
             information_message_box(QString::fromUtf8("Успех"),
                                     QString::fromUtf8("Ключ был установлен"));
-            ui->tableWidget->clearContents();
-            while (ui->tableWidget->rowCount() > 0) {
-                ui->tableWidget->removeRow(0);
-            }
+            clear_table(ui->tableWidget);
             load_storage();
             storage_name = storage_manager->Name();
             if (!storage_name.isEmpty()) {
@@ -562,10 +580,7 @@ void Widget::btn_recover_from_backup_clicked()
     storage_manager->SaveToStorage(ro_table, save_to_tmp);
 
     QTableWidget* const table = ui->tableWidget;
-    table->clearContents();
-    while (table->rowCount() > 0) {
-        table->removeRow(0);
-    }
+    clear_table(table);
     const bool load_from_backup = true;
     const Loading_Errors loading_status_backup = storage_manager->LoadFromStorage(table, load_from_backup);
     qDebug() << "Recovering from backup: loading status: " << int(loading_status_backup);
