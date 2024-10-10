@@ -237,6 +237,52 @@ public:
 #endif
     }
     void back(u16 inp1, u16 inp2) {
+#ifdef USE_SSE
+        __m128i mask1 = _mm_slli_si128(_mm_set1_epi16(-1), 2);
+        const __m128i mask2 = _mm_set_epi16(-1, -1, -1, 0, -1, -1, -1, -1);
+
+        __m128i input = _mm_andnot_si128( mask1, _mm_set1_epi16(inp1) );
+        input = _mm_or_si128( input, _mm_andnot_si128( mask2, _mm_set1_epi16(inp2) ) );
+
+        __m128i state = _mm_andnot_si128( mask1, _mm_set1_epi16(m_state[0]) );
+        state = _mm_or_si128( state, _mm_andnot_si128( mask2, _mm_set1_epi16(m_state[4]) ) );
+
+        __m128i a = _mm_sub_epi16(state, input);
+
+        __m128i prime = _mm_andnot_si128( mask1, _mm_set1_epi16(p) );
+        prime = _mm_or_si128( prime, _mm_andnot_si128( mask2, _mm_set1_epi16(p) ) );
+
+        a = _mm_add_epi16(a, prime);
+
+        __m128i i_coeffs = _mm_load_si128((const __m128i*)&m_inv_K[0]);
+        a = _mm_mullo_epi16(a, i_coeffs);
+        a = _mm_add_epi16(a, _mm_slli_si128(a, 2));
+        a = _mm_add_epi16(a, _mm_slli_si128(a, 4));
+        {
+            alignas(16) u16x8 tmp;
+            _mm_store_si128((__m128i*)&tmp[0], a);
+            for (int i=0; i<8; ++i) {
+                tmp[i] %= p;
+            }
+            a = _mm_load_si128((const __m128i*)&tmp[0]);
+            // a = _mm_set_epi16(m_v_2, m_v_2, m_v_2, m_v_2, m_v_1, m_v_1, m_v_1, m_v_1)
+        }
+
+        const __m128i mask = _mm_set_epi16(0, -1, -1, -1, 0, -1, -1, -1);
+        __m128i d = _mm_load_si128((const __m128i*)&m_state[0]);
+        d = _mm_and_si128(mask, _mm_srli_si128(d, 2));
+
+        __m128i coeffs = _mm_load_si128((const __m128i*)&m_K[0]);
+        coeffs = _mm_and_si128(mask, _mm_srli_si128(coeffs, 2));
+        coeffs = _mm_add_epi16(coeffs, _mm_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0));
+
+        a = _mm_sub_epi16(d, _mm_mullo_epi16(a, coeffs));
+        a = _mm_add_epi16(a, _mm_and_si128(mask, _mm_set1_epi16(p*p)));
+        _mm_store_si128((__m128i*)&m_state[0], a);
+        for (int i=0; i<8; ++i) {
+            m_state[i] %= p;
+        }
+#else
         const u16 m_v_1 = (m_inv_K[0]*(m_state[0] - inp1 + p)) % p;
         const u16 m_v_2 = (m_inv_K[4]*(m_state[4] - inp2 + p)) % p;
         for (int i=0; i<3; i++) {
@@ -245,6 +291,7 @@ public:
         }
         m_state[3] = m_v_1;
         m_state[7] = m_v_2;
+#endif
     }
     auto get_state() const {
         return m_state;
