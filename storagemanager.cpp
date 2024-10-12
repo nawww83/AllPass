@@ -15,6 +15,8 @@
 #include <QStringEncoder>
 #include <QSet>
 
+#include <random> // std::random_device
+
 static const QSet<QString> g_supported_as_version_1 {
                         QString("v1.00"),
                         QString("v1.01")
@@ -24,6 +26,10 @@ static const QSet<QString> g_supported_as_version_2 {
     QString("v1.02"),
     QString("v1.03"),
     QString("v1.04")
+};
+
+static const QSet<QString> g_supported_as_version_3 {
+    QString("v1.05")
 };
 
 #ifdef OS_Windows
@@ -42,11 +48,11 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
     const int N = data.size() + 1;
     bool current_swap = initial_swap;
-    int sequence = initial_s0; // Нечетное, фаза. Влияет на кодовое расстояние.
+    int sequence = initial_s0;
     for (int i=1; i<N; i++) {
         const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
         sequence = doit ? (sequence % basic_modulo) + ((sequence % basic_modulo) % 2) + 1 : sequence + 2;
-        char mul = doit ? sequence : 0; // sequence в mul всегда нечетный: покрытие базиса.
+        char mul = doit ? sequence : 0;
         crc ^= mul * data.at(i-1);
         if constexpr (swap_modulo > 0) {
             current_swap ^= i % swap_modulo == 0;
@@ -55,7 +61,7 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     return crc;
 };
 
-static QByteArray encode_249_crc_7(const QByteArray& data) {
+static QByteArray encode_crc(const QByteArray& data) {
     QByteArray out_crc;
     {
         char crc1 = '\0';
@@ -81,7 +87,7 @@ static QByteArray encode_249_crc_7(const QByteArray& data) {
     return out_crc;
 }
 
-static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
+static bool decode_crc(const QByteArray& data, QByteArray& crc) {
     if (crc.size() != 7) {
         return false;
     }
@@ -117,9 +123,9 @@ static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
     return true;
 }
 
-static void init_encryption(Encryption& enc, const QByteArray& salt = {}) {
+static void init_encryption(Encryption& enc, const QByteArray& salt1 = {}, uint salt2 = 0) {
     enc.aligner64 = 0;
-    const int steps = 256 + (int)utils::xor_val(salt);
+    const int steps = 256 + (int)utils::xor_val(salt1) + (salt2 % 65536);
     for (int i = 0; i < steps; ++i) {
         enc.gamma_gen.next_u64();
         enc.counter++;
@@ -324,12 +330,12 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
 
 namespace api_v2 {
 
-template <int basic_modulo, int swap_modulo, bool initial_swap>
+template <int basic_modulo, int swap_modulo, bool initial_swap, int initial_s0=0>
 static char core_crc(const QByteArray& data, int initial_crc='\0') {
     char crc = initial_crc;
     const int N = data.size() + 1;
     bool current_swap = initial_swap;
-    int sequence = 0;
+    int sequence = initial_s0;
     for (int i=1; i<N; i++) {
         const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
         sequence = doit ? (sequence % basic_modulo) + 1 : sequence + 1;
@@ -342,11 +348,8 @@ static char core_crc(const QByteArray& data, int initial_crc='\0') {
     return crc;
 };
 
-// Best average 2-column linear combinations of Q-matrix Hamming weight: 5.44332.
-// H = [Q, I] - check matrix.
-// Average code distance ~7.
 static constexpr std::array<int, 6> params {237, 234, 55, 1, 124, 75};
-static QByteArray encode_249_crc_7(const QByteArray& data) {
+static QByteArray encode_crc(const QByteArray& data) {
     QByteArray out_crc;
     {
         char crc1 = '\0';
@@ -372,7 +375,7 @@ static QByteArray encode_249_crc_7(const QByteArray& data) {
     return out_crc;
 }
 
-static bool decode_249_crc_7(const QByteArray& data, QByteArray& crc) {
+static bool decode_crc(const QByteArray& data, QByteArray& crc) {
     if (crc.size() != 7) {
         return false;
     }
@@ -412,44 +415,167 @@ using namespace api_v1;
 
 } // api_v2.
 
+namespace api_v3 {
+
+static constexpr std::array<int, 16> params {119, 15, 20, 65, 140, 106, 74, 41, 208, 1, 119, 20, 201, 109, 26, 203};
+static QByteArray encode_crc(const QByteArray& data) {
+    QByteArray out_crc;
+    {
+        char crc1 = '\0';
+        for (const auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        out_crc.push_back(crc1);
+        char crc2 = api_v2::core_crc<params[0], params[4], false, 10>(data);
+        out_crc.push_back(crc2);
+        char crc8 = api_v2::core_crc<params[1], params[5], false, 10>(data);
+        out_crc.push_back(crc8);
+        char crc16 = api_v2::core_crc<params[2], params[6], false, 10>(data);
+        out_crc.push_back(crc16);
+        char crc32 = api_v2::core_crc<params[3], params[7], false, 10>(data);
+        out_crc.push_back(crc32);
+        char crc64 = api_v2::core_crc<params[0], params[4], true, 10>(data);
+        out_crc.push_back(crc64);
+        char crc128 = api_v2::core_crc<params[1], params[5], true, 10>(data);
+        out_crc.push_back(crc128);
+        char crc256 = api_v2::core_crc<params[2], params[6], true, 10>(data);
+        out_crc.push_back(crc256);
+        char crc512 = api_v2::core_crc<params[3], params[7], true, 10>(data);
+        out_crc.push_back(crc512);
+    }
+    {
+        char crc2 = api_v2::core_crc<params[8], params[12], false, 61>(data);
+        out_crc.push_back(crc2);
+        char crc8 = api_v2::core_crc<params[9], params[13], false, 61>(data);
+        out_crc.push_back(crc8);
+        char crc16 = api_v2::core_crc<params[10], params[14], false, 61>(data);
+        out_crc.push_back(crc16);
+        char crc32 = api_v2::core_crc<params[11], params[15], false, 61>(data);
+        out_crc.push_back(crc32);
+        char crc64 = api_v2::core_crc<params[8], params[12], true, 61>(data);
+        out_crc.push_back(crc64);
+        char crc128 = api_v2::core_crc<params[9], params[13], true, 61>(data);
+        out_crc.push_back(crc128);
+        char crc256 = api_v2::core_crc<params[10], params[14], true, 61>(data);
+        out_crc.push_back(crc256);
+        char crc512 = api_v2::core_crc<params[11], params[15], true, 61>(data);
+        out_crc.push_back(crc512);
+    }
+    return out_crc;
+}
+
+static bool decode_crc(const QByteArray& data, QByteArray& crc) {
+    if (crc.size() != 17) {
+        return false;
+    }
+    {
+        char crc512 = api_v2::core_crc<params[11], params[15], true, 61>(data, crc.back());
+        crc.removeLast();
+        char crc256 = api_v2::core_crc<params[10], params[14], true, 61>(data, crc.back());
+        crc.removeLast();
+        char crc128 = api_v2::core_crc<params[9], params[13], true, 61>(data, crc.back());
+        crc.removeLast();
+        char crc64 = api_v2::core_crc<params[8], params[12], true, 61>(data, crc.back());
+        crc.removeLast();
+        char crc32 = api_v2::core_crc<params[11], params[15], false, 61>(data, crc.back());
+        crc.removeLast();
+        char crc16 = api_v2::core_crc<params[10], params[14], false, 61>(data, crc.back());
+        crc.removeLast();
+        char crc8 = api_v2::core_crc<params[9], params[13], false, 61>(data, crc.back());
+        crc.removeLast();
+        char crc2 = api_v2::core_crc<params[8], params[12], false, 61>(data, crc.back());
+        crc.removeLast();
+        if (crc512 != '\0' || crc256 != '\0' || crc128 != '\0' || crc64 != '\0' \
+            || crc32 != '\0' || crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
+        {
+            return false;
+        }
+    }
+    {
+        char crc512 = api_v2::core_crc<params[3], params[7], true, 10>(data, crc.back());
+        crc.removeLast();
+        char crc256 = api_v2::core_crc<params[2], params[6], true, 10>(data, crc.back());
+        crc.removeLast();
+        char crc128 = api_v2::core_crc<params[1], params[5], true, 10>(data, crc.back());
+        crc.removeLast();
+        char crc64 = api_v2::core_crc<params[0], params[4], true, 10>(data, crc.back());
+        crc.removeLast();
+        char crc32 = api_v2::core_crc<params[3], params[7], false, 10>(data, crc.back());
+        crc.removeLast();
+        char crc16 = api_v2::core_crc<params[2], params[6], false, 10>(data, crc.back());
+        crc.removeLast();
+        char crc8 = api_v2::core_crc<params[1], params[5], false, 10>(data, crc.back());
+        crc.removeLast();
+        char crc2 = api_v2::core_crc<params[0], params[4], false, 10>(data, crc.back());
+        crc.removeLast();
+        char crc1 = crc.back();
+        crc.removeLast();
+        for (const auto b : std::as_const(data)) {
+            crc1 ^= b;
+        }
+        if (crc512 != '\0' || crc256 != '\0' || crc128 != '\0' || crc64 != '\0' || crc32 != '\0' || \
+            crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+using namespace api_v2;
+} // api_v3.
+
 
 StorageManager::StorageManager() {}
 
 template <int version>
 QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& enc_inner) {
     QByteArray out;
-    #define my_encode(ns) \
+    #define my_encode(ns, K, R) \
     ns::init_encryption(enc); \
-    constexpr int K = 249; \
-    constexpr int R = 7; \
     utils::padd<K>(encoded_string); \
     const int N = encoded_string.length(); \
     const int Q = N / K; \
     QByteArray crc; \
     const auto it = encoded_string.cbegin(); \
-    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(ns::encode_249_crc_7(in)); } \
+    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(ns::encode_crc(in)); } \
     encoded_string.append(crc); \
     if (encoded_string.length() % (K + R) != 0) { \
-        qDebug() << "CRC encode failure: output size is not a 256*k: " << encoded_string.size(); \
+        qDebug() << "CRC encode failure: output size is not a multpile of " << \
+            (K+R) << " : " << encoded_string.size() << \
+            ", Q: " << Q; \
         ns::finalize_encryption(enc); \
         return {}; \
     } \
-    ns::init_encryption(enc_inner, crc); \
+    uint32_t seed2 = 0; \
+    if constexpr (version >= 3) { \
+        seed2 = std::random_device{}(); \
+        qDebug() << "save: session seed: " << seed2; \
+    } \
+    ns::init_encryption(enc_inner, crc, seed2); \
     QByteArray encrypted_inner; \
     ns::encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
     QByteArray permuted; \
     ns::encode_dlog256(encrypted_inner, permuted); \
     ns::insert_hash128(permuted); \
+    crc = utils::xor_data_by_seed(crc, seed2); \
     permuted.append(crc); \
+    if constexpr (version >= 3) { \
+        QByteArray seed_b = utils::seed_to_bytes(seed2); \
+        permuted.append(seed_b); \
+    } \
     ns::encrypt(permuted, out, enc); \
     ns::finalize_encryption(enc); \
     ns::finalize_encryption(enc_inner);
 
     if constexpr (version == 1) {
-        my_encode(api_v1);
+        my_encode(api_v1, (256-7), 7);
     }
     if constexpr (version == 2) {
-        my_encode(api_v2);
+        my_encode(api_v2, (256-7), 7);
+    }
+    if constexpr (version == 3) {
+        my_encode(api_v3, (256-17), 17);
     }
     return out;
 }
@@ -457,17 +583,28 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
 template <int version>
 QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
-    #define my_decode(ns) \
-    constexpr int K = 249; \
-    constexpr int R = 7; \
+    #define my_decode(ns, K, R) \
     constexpr int hash_size = 16; \
     ns::init_encryption(dec); \
     QByteArray decrypted; \
     ns::decrypt(data, decrypted, dec); \
+    uint32_t seed2 = 0; \
+    if constexpr (version >= 3) { \
+        if (decrypted.size() < sizeof(seed2)) { \
+            qDebug() << "Decode failure: input size is too small: " << \
+                                                              decrypted.size(); \
+            ns::finalize_encryption(dec); \
+            return {}; \
+        } \
+        seed2 = utils::seed_from_bytes_pop_back(decrypted); \
+        qDebug() << "load: session seed: " << seed2; \
+    } \
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \
-        qDebug() << "CRC decode failure: input size is not a 263*k: " << decrypted.size(); \
+        qDebug() << "CRC decode failure: input size is not a multiple of " << \
+            (K + 2*R) << " : " << decrypted.size() << \
+            ", Q: " << Q; \
         ns::finalize_encryption(dec); \
         return {}; \
     } \
@@ -480,9 +617,10 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
         ns::finalize_encryption(dec); \
         return {}; \
     } \
+    crc = utils::xor_data_by_seed(crc, seed2); \
     QByteArray depermuted; \
     ns::decode_dlog256(decrypted, depermuted); \
-    ns::init_encryption(dec_inner, crc); \
+    ns::init_encryption(dec_inner, crc, seed2); \
     ns::decrypt256_inner(depermuted, decoded_data, dec_inner); \
     QByteArray crc_copy; \
     for (int q=0; q<Q; ++q) { \
@@ -500,7 +638,7 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     for (int q=0; q<Q; ++q) { \
         const QByteArray in(it + q*K, K); \
         QByteArray crc_(it_crc + q*R, R); \
-        if (!ns::decode_249_crc_7(in, crc_)) { \
+        if (!ns::decode_crc(in, crc_)) { \
             qDebug() << "CRC: storage data failure, q: " << q; \
             ns::finalize_encryption(dec); \
             ns::finalize_encryption(dec_inner); \
@@ -512,10 +650,13 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     ns::finalize_encryption(dec_inner);
 
     if constexpr (version == 1) {
-        my_decode(api_v1);
+        my_decode(api_v1, (256-7), 7);
     }
     if constexpr (version == 2) {
-        my_decode(api_v2);
+        my_decode(api_v2, (256-7), 7);
+    }
+    if constexpr (version == 3) {
+        my_decode(api_v3, (256-17), 17);
     }
     return decoded_data;
 }
@@ -569,6 +710,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     }
     else if (g_supported_as_version_2.contains(current_version)) {
         encoded_data_bytes = do_encode<2>(packed_data_bytes, mEnc, mEncInner);
+    }
+    else if (g_supported_as_version_3.contains(current_version)) {
+        encoded_data_bytes = do_encode<3>(packed_data_bytes, mEnc, mEncInner);
     }
     if (encoded_data_bytes.isEmpty()) {
         return;
@@ -654,6 +798,12 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bo
         }
         else if (g_supported_as_version_2.contains(read_version)) {
             decoded_data_bytes = do_decode<2>(raw_data, mDec, mDecInner);
+            if (decoded_data_bytes.isEmpty()) {
+                return Loading_Errors::CRC_FAILURE;
+            }
+        }
+        else if (g_supported_as_version_3.contains(read_version)) {
+            decoded_data_bytes = do_decode<3>(raw_data, mDec, mDecInner);
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }

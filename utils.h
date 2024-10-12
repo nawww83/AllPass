@@ -170,6 +170,51 @@ inline static char xor_val(const QByteArray& data) {
     return xor_val;
 }
 
+inline static QByteArray xor_bytes(const QByteArray& data_1, const QByteArrayView data_2) {
+    QByteArray result;
+    for (int j=0; j<qMin(data_1.size(), data_2.size()); ++j) {
+        result.push_back(data_1.at(j) ^ data_2.at(j));
+    }
+    return result;
+}
+
+inline QByteArray seed_to_bytes(uint32_t seed) {
+    QByteArray result;
+    for (int i=0; i<sizeof(uint32_t); ++i) {
+        result.append( static_cast<char>(seed % 256) );
+        seed >>= 8;
+    }
+    return result;
+}
+
+inline uint32_t seed_from_bytes_pop_back(QByteArray& data) {
+    uint32_t seed = 0;
+    if (data.size() < sizeof(uint32_t)) {
+        return seed;
+    }
+    for (int i=0; i<sizeof(uint32_t); ++i) {
+        const auto b = static_cast<uint8_t>(data.back());
+        data.removeLast();
+        seed |= (uint32_t(b) << (8*sizeof(uint32_t) - 8 - 8*i));
+    }
+    return seed;
+}
+
+inline static QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed) {
+    QByteArray result;
+    const int r = data.size() % sizeof(uint32_t);
+    const int k = data.size() / sizeof(uint32_t);
+    const QByteArray seed_b = seed_to_bytes(seed);
+    for (int j=0; j<k; ++j) {
+        result.push_back(xor_bytes(seed_b, QByteArrayView(data.begin() +  sizeof(uint32_t)*j, \
+                                                        data.begin() + sizeof(uint32_t)*(j + 1))));
+    }
+    for (int j=0; j<r; ++j) {
+        result.push_back(data.at(k*sizeof(uint32_t) + j));
+    }
+    return result;
+}
+
 template <int N>
 inline static void padd(QByteArray& data) {
     const int n = data.size();
