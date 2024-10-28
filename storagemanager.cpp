@@ -676,12 +676,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         qDebug() << "Empty inner encryption.";
         return;
     }
-    if (ro_table->rowCount() < 1) {
-        qDebug() << "Empty table.";
-        return;
-    }
     QByteArray packed_data_bytes;
     auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+    QString packed_data_str;
     for( int row = 0; row < ro_table->rowCount(); ++row )
     {
         QStringList data_rows;
@@ -698,8 +695,14 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
                 data_rows << symbols::empty_item;
             }
         }
-        QString packed_data_str = data_rows.join( symbols::row_delimiter );
-        packed_data_str.append( (row < ro_table->rowCount() - 1 ? symbols::col_delimiter : symbols::end_message) );
+        packed_data_str = data_rows.join( symbols::row_delimiter );
+        if (row < ro_table->rowCount() - 1) {
+            packed_data_str.append( symbols::col_delimiter );
+            packed_data_bytes.append( fromUtf16( packed_data_str ) );
+        }
+    }
+    { // Конец сообщения.
+        packed_data_str.append( symbols::end_message );
         packed_data_bytes.append( fromUtf16( packed_data_str ) );
     }
     QByteArray encoded_data_bytes;
@@ -828,7 +831,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bo
     decoded_data_str.removeLast();
     QStringList data_rows;
     data_rows = decoded_data_str.split(symbols::col_delimiter);
-    if (data_rows.isEmpty()) {
+    if (data_rows.isEmpty() || (!data_rows.isEmpty() && data_rows[0].isEmpty())) {
         qDebug() << "Empty row data.";
         return Loading_Errors::EMPTY_TABLE;
     }

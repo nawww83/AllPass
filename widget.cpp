@@ -376,6 +376,7 @@ void Widget::insert_new_password()
     item->setData(Qt::UserRole, pswd);
     ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
+    ui->tableWidget->scrollToBottom();
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
@@ -439,6 +440,7 @@ void Widget::on_btn_add_empty_row_clicked()
 {
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     ui->tableWidget->setItem(ui->tableWidget->rowCount()-1, constants::pswd_column_idx, new QTableWidgetItem(""));
+    ui->tableWidget->scrollToBottom();
 }
 
 void Widget::save_to_store()
