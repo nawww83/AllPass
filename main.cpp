@@ -4,6 +4,8 @@
 #include <QSplashScreen>
 #include <qmessagebox.h>
 
+#include "constants.h"
+
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
@@ -26,7 +28,7 @@ int main(int argc, char *argv[])
 
     QString pin {dialog.get_pin()};
     dialog.clear_pin();
-    if (pin.size() != 4) {
+    if (pin.size() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
                        QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));

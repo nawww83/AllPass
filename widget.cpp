@@ -5,6 +5,7 @@
 #include "widget.h"
 #include "./ui_widget.h"
 
+#include <qtimer.h>
 #include <random> // std::random_device
 
 #include <QMessageBox>
@@ -162,7 +163,6 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(false);
-    ui->btn_add_empty_row->setEnabled(false);
 
     construct_recover_button(btn_recover_from_backup);
 
@@ -174,7 +174,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
 
-    ui->btn_input_master_phrase->setFocus();
+    QTimer::singleShot(0, this, [&]{ input_master_phrase(); });
 }
 
 Widget::~Widget()
@@ -305,19 +305,18 @@ void Widget::seed_pass_has_been_set()
             load_storage();
             storage_name = storage_manager->Name();
             if (!storage_name.isEmpty()) {
-                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: %1").arg(storage_name));
+                ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: %1").arg(storage_name));
             } else {
-                ui->btn_input_master_phrase->setText(QString::fromUtf8("Активное хранилище: недоступно."));
+                ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: недоступно."));
             }
             ui->btn_generate->setEnabled(!storage_name.isEmpty());
-            ui->btn_add_empty_row->setEnabled(!storage_name.isEmpty());
             ui->btn_generate->setFocus();
             ui->btn_generate->setText(labels::gen_pass_txt);
         }
     }
 }
 
-void Widget::on_btn_input_master_phrase_clicked()
+void Widget::input_master_phrase()
 {
     pointers::txt_edit_master_phrase->setVisible(true);
     pointers::txt_edit_master_phrase->resize(400, 250);
@@ -332,7 +331,6 @@ void Widget::update_master_phrase()
         emit master_phrase_discarded();
         return;
     }
-    ui->btn_input_master_phrase->setEnabled(false);
     storage_manager->BeforeUpdate();
     {
         lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
@@ -474,13 +472,6 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
         menu.addAction(updatePassAct);
     }
     menu.exec(ui->tableWidget->mapToGlobal(pos));
-}
-
-void Widget::on_btn_add_empty_row_clicked()
-{
-    ui->tableWidget->insertRow(ui->tableWidget->rowCount());
-    ui->tableWidget->setItem(ui->tableWidget->rowCount()-1, constants::pswd_column_idx, new QTableWidgetItem(""));
-    ui->tableWidget->scrollToBottom();
 }
 
 void Widget::save_to_store()
@@ -697,7 +688,7 @@ void Widget::btn_new_storage_with_transfer_clicked() {
     }
     QString pin {dialog.get_pin()};
     dialog.clear_pin();
-    if (pin.size() != 4) {
+    if (pin.size() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
                        QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
@@ -714,5 +705,5 @@ void Widget::btn_new_storage_with_transfer_clicked() {
                                               Однако, старое при этом будет доступно. Вы можете его удалить вручную. \
                                             Если фраза введена не будет, то изменений не произойдет."));
 
-    on_btn_input_master_phrase_clicked();
+    input_master_phrase();
 }

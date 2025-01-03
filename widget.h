@@ -35,7 +35,7 @@ public:
 private slots:
     void seed_pass_has_been_set();
 
-    void on_btn_input_master_phrase_clicked();
+    void input_master_phrase();
 
     void on_btn_generate_clicked();
 
@@ -58,8 +58,6 @@ private slots:
     void on_spbx_pass_len_valueChanged(int arg1);
 
     void on_spbx_pass_len_editingFinished();
-
-    void on_btn_add_empty_row_clicked();
 
     void save_to_store();
 

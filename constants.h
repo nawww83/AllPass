@@ -13,6 +13,7 @@ namespace {
         static inline const auto wait_txt = QString::fromUtf8("Подождите...");
     }
     namespace constants {
+        static inline const int pin_code_len = 4;
         static inline const int pass_len_step = 5;
         static inline const int num_of_passwords = 10;          // in pswd_buff.
         static inline const int password_len_per_request = \
