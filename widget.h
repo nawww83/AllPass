@@ -43,6 +43,8 @@ private slots:
 
     void set_master_key();
 
+    void discard_master_key();
+
     void insert_new_password();
 
     void copy_to_clipboard();
@@ -65,8 +67,12 @@ private slots:
 
     void btn_recover_from_backup_clicked();
 
+    void btn_new_storage_with_transfer_clicked();
+
 signals:
     void master_phrase_ready();
+
+    void master_phrase_discarded();
 
     void ready_for_password_request();
 
@@ -84,6 +90,7 @@ private:
     QAction *removeAct;
     QAction *updatePassAct;
     QPushButton *btn_recover_from_backup;
+    QPushButton *btn_new_storage_with_transfer;
 };
 
 class MyTextEdit : public QTextEdit
@@ -114,9 +121,9 @@ class MyDialog : public QDialog
 {
     Q_OBJECT
 public:
-    MyDialog(QWidget *parent = nullptr) : QDialog(parent)
+    MyDialog(const QString& title = QString::fromUtf8("Введите PIN-код"), QWidget *parent = nullptr) : QDialog(parent)
     {
-        setWindowTitle(QString::fromUtf8("Введите PIN-код"));
+        setWindowTitle(title);
         QVBoxLayout *layout = new QVBoxLayout;
 
         le_pin = new QLineEdit(this);

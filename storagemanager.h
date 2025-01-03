@@ -40,6 +40,12 @@ public:
 
     bool BackupFileIsExist() const;
 
+    bool WasUpdated() const;
+
+    void BeforeUpdate();
+
+    void AfterUpdate();
+
     void SetName(const QString& name);
 
     QString Name() const;
@@ -63,6 +69,9 @@ private:
     Encryption mDec;
     Encryption mEncInner;
     Encryption mDecInner;
+
+    int mSetCounter;
+    bool mWasUpdated;
 };
 
 #endif // STORAGEMANAGER_H

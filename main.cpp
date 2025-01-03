@@ -17,8 +17,7 @@ int main(int argc, char *argv[])
     a.processEvents();
 
     MyDialog dialog;
-    int result = dialog.exec();
-
+    const int result = dialog.exec();
     if (result == QDialog::Accepted) {
         ;
     } else {

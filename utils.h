@@ -37,6 +37,7 @@ namespace password {
     Q_GLOBAL_STATIC( key::Key, key );
     Q_GLOBAL_STATIC(PasswordBuffer, pswd_buff);
     Q_GLOBAL_STATIC(PinCode, pin_code);
+    Q_GLOBAL_STATIC(PinCode, old_pin_code);
     static inline bool needToGeneratePasswords = true;
 }
 
@@ -51,7 +52,7 @@ inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watche
 }
 
 inline static void fill_pin(QString&& pin) {
-    QString mPin {pin};
+    QString mPin = std::move(pin);
     using namespace password;
     pin_code->mPinCode[0] = mPin[0].digitValue();
     pin_code->mPinCode[1] = mPin[1].digitValue();
@@ -64,8 +65,18 @@ inline static void fill_pin(QString&& pin) {
     #pragma optimize( "", on )
 }
 
+inline static void back_up_pin() {
+    using namespace password;
+    old_pin_code->mPinCode = pin_code->mPinCode;
+}
+
+inline static void restore_pin() {
+    using namespace password;
+    pin_code->mPinCode = old_pin_code->mPinCode;
+}
+
 inline static bool check_pin(QString&& pin) {
-    QString mPin {pin};
+    const QString& mPin = std::move(pin);
     using namespace password;
     bool ok = true;
     ok &= pin_code->mPinCode[0] == mPin[0].digitValue() &&

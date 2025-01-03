@@ -21,6 +21,7 @@
 
 
 static int g_current_password_len;
+static int g_new_storage_with_transfer_mode = false;
 Q_GLOBAL_STATIC( StorageManager, storage_manager);
 
 namespace {
@@ -82,6 +83,24 @@ static void clear_table(QTableWidget* widget) {
         connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
     }
 
+#define construct_create_new_storage_button(button) \
+button = new QPushButton(); \
+    if (!button) { \
+        critical_message_box( \
+                              QString::fromUtf8("Ошибка создания кнопки"), \
+                              QString::fromUtf8("Нулевой указатель QPushButton.")); \
+} else { \
+        const QPixmap icon_map(":/icons8-key-24.png"); \
+        button->setIcon(QIcon(icon_map)); \
+        button->setIconSize(icon_map.rect().size()); \
+        button->setEnabled(false); \
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+        button->setToolTip( \
+            QString::fromUtf8("Создать новое хранилище и скопировать текущие данные.")); \
+        ui->horizontalLayout->addWidget(button); \
+        connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
+}
+
 #define configure_table(widget) \
     widget->setTabKeyNavigation(false); \
     widget->setFocusPolicy(Qt::StrongFocus); \
@@ -135,6 +154,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
+    connect(this, &Widget::master_phrase_discarded, this, &Widget::discard_master_key);
     connect(this, &Widget::ready_for_password_request, this, &Widget::insert_new_password);
 
     ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
@@ -145,6 +165,8 @@ Widget::Widget(QString&& pin, QWidget *parent)
     ui->btn_add_empty_row->setEnabled(false);
 
     construct_recover_button(btn_recover_from_backup);
+
+    construct_create_new_storage_button(btn_new_storage_with_transfer);
 
     configure_table(ui->tableWidget);
 
@@ -275,7 +297,7 @@ void Widget::seed_pass_has_been_set()
         warning_message_box(QString::fromUtf8("Неудача"),
                    QString::fromUtf8("Ключ не был установлен: попробуйте ввести другую мастер-фразу."));
     } else {
-        QString&& storage_name = storage_manager->Name();
+        QString storage_name = storage_manager->Name();
         if (!storage_name.isEmpty()) {
             information_message_box(QString::fromUtf8("Успех"),
                                     QString::fromUtf8("Ключ был установлен"));
@@ -307,9 +329,11 @@ void Widget::update_master_phrase()
     QString text {pointers::txt_edit_master_phrase->toPlainText()};
     pointers::txt_edit_master_phrase->clear();
     if (text.isEmpty()) {
+        emit master_phrase_discarded();
         return;
     }
     ui->btn_input_master_phrase->setEnabled(false);
+    storage_manager->BeforeUpdate();
     {
         lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}());
         utils::fill_key_by_hash128(hash);
@@ -346,6 +370,12 @@ void Widget::update_master_phrase()
         storage_manager->SetEncInnerGammaGenerator(watcher_seed_enc_inner_gen.result());
         storage_manager->SetDecInnerGammaGenerator(watcher_seed_dec_inner_gen.result());
     }
+    storage_manager->AfterUpdate();
+    if (g_new_storage_with_transfer_mode && storage_manager->WasUpdated()) {
+        const QTableWidget* const table = ui->tableWidget;
+        storage_manager->SaveToStorage(table);
+        g_new_storage_with_transfer_mode = false;
+    }
 
     utils::erase_string(text);
     emit master_phrase_ready();
@@ -360,6 +390,16 @@ void Widget::set_master_key()
     watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
     utils::clear_main_key();
     utils::clear_lfsr_rng_state(state);
+}
+
+void Widget::discard_master_key()
+{
+    if (g_new_storage_with_transfer_mode) {
+        warning_message_box(QString::fromUtf8(""),
+                            QString::fromUtf8("Ввод мастер-фразы был отменен. Изменений не будет."));
+        utils::restore_pin();
+    }
+    g_new_storage_with_transfer_mode = false;
 }
 
 void Widget::insert_new_password()
@@ -554,6 +594,7 @@ void Widget::load_storage()
     table->resizeColumnToContents(constants::pswd_column_idx);
     table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
     btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
+    btn_new_storage_with_transfer->setEnabled(true);
 }
 
 void Widget::btn_recover_from_backup_clicked()
@@ -637,3 +678,41 @@ void Widget::btn_recover_from_backup_clicked()
     storage_manager->RemoveTmpFile();
 }
 
+void Widget::btn_new_storage_with_transfer_clicked() {
+    if (!question_message_box(
+            tr("Создание нового хранилища с переносом данных."),
+            tr("Вы действительно хотите создать новое хранилище и скопировать туда текущую таблицу?")))
+    {
+        return;
+    }
+
+    MyDialog dialog(QString::fromUtf8("Введите новый PIN-код"));
+    int result = dialog.exec();
+    if (result == QDialog::Accepted) {
+        ;
+    } else {
+        warning_message_box(QString::fromUtf8(""),
+                            QString::fromUtf8("Ввод пин-кода был отменен. Изменений не будет."));
+        return;
+    }
+    QString pin {dialog.get_pin()};
+    dialog.clear_pin();
+    if (pin.size() != 4) {
+        QMessageBox mb(QMessageBox::Critical,
+                       QString::fromUtf8("Ошибка PIN-кода"),
+                       QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
+        mb.exec();
+        return;
+    }
+
+    g_new_storage_with_transfer_mode = true;
+    utils::back_up_pin();
+    utils::fill_pin(std::move(pin));
+
+    warning_message_box(QString::fromUtf8(""),
+                            QString::fromUtf8("После ввода новой мастер-фразы будет активировано новое хранилище. \
+                                              Однако, старое при этом будет доступно. Вы можете его удалить вручную. \
+                                            Если фраза введена не будет, то изменений не произойдет."));
+
+    on_btn_input_master_phrase_clicked();
+}

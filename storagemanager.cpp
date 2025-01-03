@@ -29,7 +29,8 @@ static const QSet<QString> g_supported_as_version_2 {
 };
 
 static const QSet<QString> g_supported_as_version_3 {
-    QString("v1.05")
+    QString("v1.05"),
+    QString("v1.06")
 };
 
 #ifdef OS_Windows
@@ -876,8 +877,25 @@ bool StorageManager::BackupFileIsExist() const
     return backup_file.exists();
 }
 
+bool StorageManager::WasUpdated() const
+{
+    return mWasUpdated;
+}
+
+void StorageManager::BeforeUpdate()
+{
+    mSetCounter = 0;
+    mWasUpdated = false;
+}
+
+void StorageManager::AfterUpdate()
+{
+    mWasUpdated = mSetCounter == 5; // Ожидаемое количество сеттеров.
+}
+
 void StorageManager::SetName(const QString &name)
 {
+    if (!name.isEmpty()) mSetCounter++;
     mStorageName = name;
     mStorageNameBackUp = QString::fromUtf8(".") + name;
     mStorageNameTmp = name + QString::fromUtf8(".tmp");
@@ -890,20 +908,24 @@ QString StorageManager::Name() const
 
 void StorageManager::SetEncGammaGenerator(const lfsr_rng::Generators &generator)
 {
+    mSetCounter++;
     mEnc.gamma_gen = generator;
 }
 
 void StorageManager::SetDecGammaGenerator(const lfsr_rng::Generators &generator)
 {
+    mSetCounter++;
     mDec.gamma_gen = generator;
 }
 
 void StorageManager::SetEncInnerGammaGenerator(const lfsr_rng::Generators &generator)
 {
+    mSetCounter++;
     mEncInner.gamma_gen = generator;
 }
 
 void StorageManager::SetDecInnerGammaGenerator(const lfsr_rng::Generators &generator)
 {
+    mSetCounter++;
     mDecInner.gamma_gen = generator;
 }
