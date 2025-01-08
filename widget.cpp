@@ -79,7 +79,7 @@ static void clear_table(QTableWidget* widget) {
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Восстановить данные из встроенного резервного хранилища.")); \
+            QString::fromUtf8("Восстановить данные из активного хранилища.")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
     }
@@ -97,7 +97,7 @@ button = new QPushButton(); \
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Создать новое хранилище и скопировать текущие данные.")); \
+            QString::fromUtf8("Создать новое хранилище с переносом данных.")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
 }
@@ -601,8 +601,9 @@ void Widget::load_storage()
 void Widget::btn_recover_from_backup_clicked()
 {
     if (!question_message_box(
-            tr("Замена текущей таблицы резервной копией."),
-            tr("Вы действительно хотите заменить текущую таблицу таблицей из встроенного резервного хранилища?")))
+            tr("Восстановление текущей таблицы."),
+            tr("Вы действительно хотите восстановить таблицу из текущего хранилища? \
+                    После успешного ввода пин-кода текущая таблица будет перезаписана.")))
     {
         return;
     }
@@ -616,6 +617,8 @@ void Widget::btn_recover_from_backup_clicked()
     QString pin {dialog.get_pin()};
     dialog.clear_pin();
     if (!utils::check_pin(std::move(pin))) {
+        warning_message_box(QString::fromUtf8(""),
+                            QString::fromUtf8("Введен неверный пин-код. Изменений не будет."));
         return;
     }
 
@@ -632,28 +635,28 @@ void Widget::btn_recover_from_backup_clicked()
         case Loading_Errors::OK:
             table->resizeColumnToContents(constants::pswd_column_idx);
             table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
-            warning_message_box(QString::fromUtf8("Успех."),
-                   QString::fromUtf8("Данные загружены из резервной копии."));
+            information_message_box(QString::fromUtf8("Успех."),
+                   QString::fromUtf8("Данные загружены из текущего хранилища."));
             storage_manager->RemoveTmpFile();
             return;
             break;
         case Loading_Errors::EMPTY_TABLE:
-            warning_message_box(QString::fromUtf8("Пустое резервное хранилище."),
-                                QString::fromUtf8("Пропуск загрузки резервной копии из-за пустых данных."));
+            warning_message_box(QString::fromUtf8("Пустое ранилище."),
+                                QString::fromUtf8("Пропуск загрузки копии из-за пустых данных."));
             break;
         case Loading_Errors::TABLE_IS_NOT_EMPTY:
-            critical_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
-                                 QString::fromUtf8("Ошибочный пропуск загрузки из резервного хранилища из-за непустой таблицы."));
+            critical_message_box(QString::fromUtf8("Ошибка загрузки хранилища."),
+                                 QString::fromUtf8("Ошибочный пропуск загрузки хранилища из-за непустой таблицы."));
             break;
         case Loading_Errors::NEW_STORAGE:
-            warning_message_box(QString::fromUtf8("Отсутствие резервного хранилища."),
-                                QString::fromUtf8("Пропуск загрузки резервной копии из-за отсутствия резервного хранилища."));
+            warning_message_box(QString::fromUtf8("Отсутствие активного хранилища."),
+                                QString::fromUtf8("Пропуск загрузки из-за отсутствия хранилища."));
             break;
         case Loading_Errors::CANNOT_BE_OPENED:
         case Loading_Errors::CRC_FAILURE:
         case Loading_Errors::UNRECOGNIZED:
-            warning_message_box(QString::fromUtf8("Ошибка загрузки резервного хранилища."),
-                       QString::fromUtf8("Ошибка при загрузки файла из резервной копии."));
+            critical_message_box(QString::fromUtf8("Ошибка загрузки хранилища."),
+                       QString::fromUtf8("Ошибка при загрузки файла текущего хранилища."));
             break;
         case Loading_Errors::EMPTY_ENCRYPTION:
             critical_message_box(QString::fromUtf8("Ошибка шифрования."),
@@ -662,16 +665,16 @@ void Widget::btn_recover_from_backup_clicked()
             break;
         case Loading_Errors::EMPTY_STORAGE:
             critical_message_box(QString::fromUtf8("Ошибка имени хранилища."),
-                        QString::fromUtf8("Пустое резервное хранилище: не удалось сформировать имя хранилища."));
+                        QString::fromUtf8("Пустое хранилище: не удалось сформировать имя хранилища."));
             storage_manager->SetName("");
             break;
         case Loading_Errors::UNKNOWN_FORMAT:
             critical_message_box(QString::fromUtf8("Ошибка формата."),
-                        QString::fromUtf8("Неизвестная версия формата в резервном хранилище."));
+                        QString::fromUtf8("Неизвестная версия формата хранилища."));
             break;
         default:
             critical_message_box(QString::fromUtf8("Ошибка обработки результата загрузки."),
-                        QString::fromUtf8("Неизвестный тип результата загрузки резервного хранилища."));
+                        QString::fromUtf8("Неизвестный тип результата загрузки хранилища."));
             storage_manager->SetName("");
             break;
     }
