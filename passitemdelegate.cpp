@@ -1,6 +1,6 @@
+#include <QLineEdit>
 #include "passitemdelegate.h"
 
-#include <QLineEdit>
 
 void PassEditDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {

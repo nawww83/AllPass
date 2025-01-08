@@ -2,6 +2,7 @@
 #define WIDGET_H
 
 #include <QWidget>
+#include <QTableWidget>
 #include <QTextEdit>
 #include <QFutureWatcher>
 #include <QAction>
@@ -46,6 +47,8 @@ private slots:
     void btn_clear_table_clicked();
 
     void tableWidget_customContextMenuRequested(const QPoint &pos);
+
+    void tableWidget_itemChanged(QTableWidgetItem *item);
 
     void finish_password_generator();
 

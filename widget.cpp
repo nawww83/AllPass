@@ -24,6 +24,7 @@
 
 static int g_current_password_len;
 static int g_new_storage_with_transfer_mode = false;
+static int g_table_is_loading = false;
 Q_GLOBAL_STATIC( StorageManager, storage_manager);
 
 namespace {
@@ -61,6 +62,7 @@ static void critical_message_box(const QString& title, const QString& message) {
 
 // Очистить содержимое таблицы, сохраняя ее структуру.
 static void clear_table(QTableWidget* widget) {
+    g_table_is_loading = true;
     widget->clearContents();
     while (widget->rowCount() > 0) {
         widget->removeRow(0);
@@ -139,7 +141,8 @@ button = new QPushButton(); \
     widget->setContextMenuPolicy(Qt::CustomContextMenu); \
     widget->setSelectionMode(QAbstractItemView::SingleSelection); \
     widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, QHeaderView::Stretch); \
-    connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
+    connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested); \
+    connect(widget, &QTableWidget::itemChanged, this, &Widget::tableWidget_itemChanged);
 
 #define configure_actions \
     copyAct = new QAction(QIcon(), \
@@ -309,15 +312,6 @@ void Widget::update_pass() {
         }
         pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
-        {
-            const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
-            const int row = pointers::selected_context_table_item->row();
-            auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
-            if (date_item) {
-                date_item->setText(date);
-                qDebug() << "Set date: " << date;
-            }
-        }
         information_message_box(QString::fromUtf8("Успех"),
                                 QString::fromUtf8("Пароль был обновлен"));
     } else {
@@ -355,8 +349,10 @@ void Widget::finish_master_key()
     if (!storage_name.isEmpty() && storage_manager->IsSuccess()) {
         information_message_box(QString::fromUtf8("Успех"),
                                 QString::fromUtf8("Ключ был установлен"));
-        clear_table(ui->tableWidget);
+
         load_storage();
+        emit table_changed();
+
         storage_name = storage_manager->Name();
         if (!storage_name.isEmpty()) {
             ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: %1").arg(storage_name));
@@ -556,6 +552,22 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     menu.exec(ui->tableWidget->mapToGlobal(pos));
 }
 
+void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
+{
+    if (!item || g_table_is_loading) {
+        return;
+    }
+    if (item->column() == constants::pswd_column_idx) {
+        const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
+        const int row = item->row();
+        auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
+        if (date_item) {
+            date_item->setText(date);
+            qDebug() << "Set date: " << date;
+        }
+    }
+}
+
 void Widget::save_to_store()
 {
     const QTableWidget* const table = ui->tableWidget;
@@ -565,6 +577,7 @@ void Widget::save_to_store()
 void Widget::load_storage()
 {
     QTableWidget* const table = ui->tableWidget;
+    clear_table(table);
     const Loading_Errors loading_status = storage_manager->LoadFromStorage(table);
     qDebug() << "Loading status: " << int(loading_status);
     bool try_load_from_backup = false;
@@ -664,7 +677,6 @@ void Widget::load_storage()
                 break;
         }
     }
-    emit table_changed();
 }
 
 void Widget::btn_recover_from_backup_clicked()
@@ -749,6 +761,7 @@ void Widget::btn_recover_from_backup_clicked()
     // Отмена восстановления.
     storage_manager->LoadFromStorage(table);
     storage_manager->RemoveTmpFile();
+    emit table_changed();
 }
 
 void Widget::btn_new_storage_with_transfer_clicked() {
@@ -815,7 +828,6 @@ void Widget::btn_clear_table_clicked()
         return;
     }
     clear_table(ui->tableWidget);
-
     emit table_changed();
 }
 
@@ -831,6 +843,8 @@ void Widget::update_table_info()
     btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
     btn_new_storage_with_transfer->setEnabled(true);
     btn_clear_table->setEnabled(true);
+
+    g_table_is_loading = false;
 
     update_number_of_rows();
 }
