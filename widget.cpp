@@ -256,9 +256,11 @@ void Widget::delete_row() {
     if (!pointers::selected_context_table_item) {
         const int row = ui->tableWidget->currentRow();
         ui->tableWidget->removeRow(row);
+        update_number_of_rows();
         return;
     }
     ui->tableWidget->removeRow(pointers::selected_context_table_item->row());
+    update_number_of_rows();
     pointers::selected_context_table_item = nullptr;
 }
 
@@ -428,6 +430,7 @@ void Widget::insert_new_password()
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
+    update_number_of_rows();
 }
 
 void Widget::on_btn_generate_clicked()
@@ -596,6 +599,7 @@ void Widget::load_storage()
     table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
     btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
     btn_new_storage_with_transfer->setEnabled(true);
+    update_number_of_rows();
 }
 
 void Widget::btn_recover_from_backup_clicked()
@@ -719,4 +723,9 @@ void Widget::btn_new_storage_with_transfer_clicked() {
                                             Если фраза введена не будет, то изменений не произойдет."));
 
     input_master_phrase();
+}
+
+void Widget::update_number_of_rows()
+{
+    ui->lbl_number_of_rows->setText(QString::fromUtf8("Количество записей: %1").arg(ui->tableWidget->rowCount()));
 }

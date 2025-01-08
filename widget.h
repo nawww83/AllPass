@@ -69,6 +69,8 @@ private slots:
 
     void btn_new_storage_with_transfer_clicked();
 
+    void update_number_of_rows();
+
 signals:
     void master_phrase_ready();
 
