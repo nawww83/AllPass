@@ -29,6 +29,9 @@
        <property name="sortingEnabled">
         <bool>true</bool>
        </property>
+       <property name="columnCount">
+        <number>4</number>
+       </property>
        <column>
         <property name="text">
          <string>Login</string>
@@ -42,6 +45,11 @@
        <column>
         <property name="text">
          <string>Comments</string>
+        </property>
+       </column>
+       <column>
+        <property name="text">
+         <string>Date</string>
         </property>
        </column>
       </widget>

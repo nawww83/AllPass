@@ -22,6 +22,7 @@ namespace {
         static inline const int login_column_idx = 0;
         static inline const int pswd_column_idx = 1;
         static inline const int comments_column_idx = 2;
+        static inline const int date_column_idx = 3;
     }
     namespace symbols {
         static inline const auto end_message = QChar(0x0003);

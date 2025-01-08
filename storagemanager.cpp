@@ -840,10 +840,10 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bo
     for (int row = 0; row < data_rows.size(); row++)
     {
         data_items = data_rows.at(row).split(symbols::row_delimiter);
-        if (data_items.size() == wr_table->columnCount()) {
+        if (data_items.size() <= wr_table->columnCount()) {
             wr_table->insertRow(row);
         } else {
-            qDebug() << "Unrecognized column size: " << wr_table->columnCount() << " vs " << data_items.size();
+            qDebug() << "Small column size in table: table: " << wr_table->columnCount() << " vs loaded data: " << data_items.size();
             return Loading_Errors::UNRECOGNIZED;
         }
         for (int col = 0; col < data_items.size(); col++)

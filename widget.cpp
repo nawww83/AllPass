@@ -14,6 +14,7 @@
 #include <QPixmap>
 #include <QIcon>
 #include <QClipboard>
+#include <QDate>
 
 #include "passitemdelegate.h"
 #include "utils.h"
@@ -124,19 +125,20 @@ button = new QPushButton(); \
     widget->setTabKeyNavigation(false); \
     widget->setFocusPolicy(Qt::StrongFocus); \
     widget->setSortingEnabled(false); \
-    QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии")}; \
+    QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии"), QString::fromUtf8("Дата")}; \
     widget->setHorizontalHeaderLabels(table_header); \
     widget->verticalHeader()->setVisible(false); \
     widget->setColumnWidth(0, 210); \
     widget->setColumnWidth(1, 200); \
     widget->setColumnWidth(2, 370); \
+    widget->setColumnHidden(constants::date_column_idx, true); \
     PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this); \
     widget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate); \
     widget->installEventFilter(this); \
     widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
     widget->setContextMenuPolicy(Qt::CustomContextMenu); \
     widget->setSelectionMode(QAbstractItemView::SingleSelection); \
-    widget->horizontalHeader()->setStretchLastSection(true); \
+    widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, QHeaderView::Stretch); \
     connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested);
 
 #define configure_actions \
@@ -150,7 +152,10 @@ button = new QPushButton(); \
     connect(removeAct, &QAction::triggered, this, &Widget::delete_row); \
     updatePassAct = new QAction(QIcon(), \
                                 tr("&Обновить пароль"), this); \
-    connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass);
+    connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass); \
+    showPassDateAct = new QAction(QIcon(), \
+                                tr("&Показать дату изменения пароля"), this); \
+    connect(showPassDateAct, &QAction::triggered, this, &Widget::show_pass_date);
 
 
 
@@ -304,8 +309,40 @@ void Widget::update_pass() {
         }
         pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
+        {
+            const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
+            const int row = pointers::selected_context_table_item->row();
+            auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
+            if (date_item) {
+                date_item->setText(date);
+                qDebug() << "Set date: " << date;
+            }
+        }
         information_message_box(QString::fromUtf8("Успех"),
                                 QString::fromUtf8("Пароль был обновлен"));
+    } else {
+        ;
+    }
+    pointers::selected_context_table_item = nullptr;
+}
+
+void Widget::show_pass_date()
+{
+    if (!pointers::selected_context_table_item) {
+        return;
+    }
+    QString date{};
+    if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
+        const int row = pointers::selected_context_table_item->row();
+        auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
+        if (date_item) {
+            date = date_item->text();
+        }
+        if (!date.isEmpty()) {
+            information_message_box(QString::fromUtf8(""), QString::fromUtf8("Дата обновления пароля: %1").arg(date));
+        } else {
+            information_message_box(QString::fromUtf8(""), QString::fromUtf8("Нет информации по дате."));
+        }
     } else {
         ;
     }
@@ -441,15 +478,26 @@ void Widget::insert_new_password()
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
-    QTableWidgetItem* item = new QTableWidgetItem();
-    item->setData(Qt::DisplayRole, g_asterics);
-    item->setData(Qt::UserRole, pswd);
-    ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
+    {
+        QTableWidgetItem* item = new QTableWidgetItem();
+        item->setData(Qt::DisplayRole, g_asterics);
+        item->setData(Qt::UserRole, pswd);
+        ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
+    }
+    {
+        const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
+        QTableWidgetItem* item = new QTableWidgetItem();
+        item->setText(date);
+        ui->tableWidget->setItem(row, constants::date_column_idx, item);
+        qDebug() << "Set date: " << date;
+    }
+
     ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
     ui->tableWidget->scrollToBottom();
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
+
     emit row_inserted();
 }
 
@@ -503,6 +551,7 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     if (pointers::selected_context_table_item &&
             pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
         menu.addAction(updatePassAct);
+        menu.addAction(showPassDateAct);
     }
     menu.exec(ui->tableWidget->mapToGlobal(pos));
 }

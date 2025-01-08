@@ -67,6 +67,8 @@ private slots:
 
     void update_pass();
 
+    void show_pass_date();
+
     void save_to_store();
 
     void load_storage();
@@ -103,6 +105,7 @@ private:
     QAction *copyAct;
     QAction *removeAct;
     QAction *updatePassAct;
+    QAction *showPassDateAct;
     QPushButton *btn_recover_from_backup;
     QPushButton *btn_new_storage_with_transfer;
     QPushButton *btn_clear_table;
