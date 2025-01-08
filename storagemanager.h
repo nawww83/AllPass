@@ -42,6 +42,8 @@ public:
 
     bool WasUpdated() const;
 
+    bool IsSuccess() const;
+
     void BeforeUpdate();
 
     void AfterUpdate();

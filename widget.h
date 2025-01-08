@@ -33,15 +33,23 @@ public:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void seed_pass_has_been_set();
+    void on_btn_generate_clicked();
+
+    void on_spbx_pass_len_valueChanged(int arg1);
+
+    void on_spbx_pass_len_editingFinished();
+
+    void tableWidget_customContextMenuRequested(const QPoint &pos);
+
+    void finish_password_generator();
 
     void input_master_phrase();
-
-    void on_btn_generate_clicked();
 
     void update_master_phrase();
 
     void set_master_key();
+
+    void finish_master_key();
 
     void discard_master_key();
 
@@ -52,12 +60,6 @@ private slots:
     void delete_row();
 
     void update_pass();
-
-    void tableWidget_customContextMenuRequested(const QPoint &pos);
-
-    void on_spbx_pass_len_valueChanged(int arg1);
-
-    void on_spbx_pass_len_editingFinished();
 
     void save_to_store();
 
@@ -72,7 +74,9 @@ signals:
 
     void master_phrase_discarded();
 
-    void ready_for_password_request();
+    void passwords_ready();
+
+    void master_key_set();
 
 protected:
 

@@ -882,6 +882,11 @@ bool StorageManager::WasUpdated() const
     return mWasUpdated;
 }
 
+bool StorageManager::IsSuccess() const {
+    return mEnc.gamma_gen.is_succes() && mDec.gamma_gen.is_succes() &&
+        mEncInner.gamma_gen.is_succes() && mDecInner.gamma_gen.is_succes();
+}
+
 void StorageManager::BeforeUpdate()
 {
     mSetCounter = 0;

@@ -155,8 +155,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
+    connect(this, &Widget::master_key_set, this, &Widget::finish_master_key);
     connect(this, &Widget::master_phrase_discarded, this, &Widget::discard_master_key);
-    connect(this, &Widget::ready_for_password_request, this, &Widget::insert_new_password);
+    connect(this, &Widget::passwords_ready, this, &Widget::insert_new_password);
 
     ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
     g_current_password_len = ui->spbx_pass_len->value();
@@ -172,7 +173,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
 
     configure_actions;
 
-    connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::seed_pass_has_been_set);
+    connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::finish_password_generator);
 
     QTimer::singleShot(0, this, [&]{ input_master_phrase(); });
 }
@@ -289,30 +290,38 @@ void Widget::update_pass() {
     pointers::selected_context_table_item = nullptr;
 }
 
-void Widget::seed_pass_has_been_set()
+void Widget::finish_master_key()
+{
+    QString storage_name = storage_manager->Name();
+    if (!storage_name.isEmpty() && storage_manager->IsSuccess()) {
+        information_message_box(QString::fromUtf8("Успех"),
+                                QString::fromUtf8("Ключ был установлен"));
+        clear_table(ui->tableWidget);
+        load_storage();
+        storage_name = storage_manager->Name();
+        if (!storage_name.isEmpty()) {
+            ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: %1").arg(storage_name));
+        } else {
+            ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: недоступно."));
+        }
+    } else {
+        warning_message_box(QString::fromUtf8("Неудача"),
+                            QString::fromUtf8("Ключ не был установлен."));
+    }
+}
+
+void Widget::finish_password_generator()
 {
     password::pass_gen = watcher_seed_pass_gen.result();
-    if (!password::pass_gen.is_succes())
+    if (password::pass_gen.is_succes())
     {
-        warning_message_box(QString::fromUtf8("Неудача"),
-                   QString::fromUtf8("Ключ не был установлен: попробуйте ввести другую мастер-фразу."));
+        ui->btn_generate->setEnabled(true);
+        ui->btn_generate->setFocus();
+        ui->btn_generate->setText(labels::gen_pass_txt);
     } else {
-        QString storage_name = storage_manager->Name();
-        if (!storage_name.isEmpty()) {
-            information_message_box(QString::fromUtf8("Успех"),
-                                    QString::fromUtf8("Ключ был установлен"));
-            clear_table(ui->tableWidget);
-            load_storage();
-            storage_name = storage_manager->Name();
-            if (!storage_name.isEmpty()) {
-                ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: %1").arg(storage_name));
-            } else {
-                ui->lbl_active_storage->setText(QString::fromUtf8(" Активное хранилище: недоступно."));
-            }
-            ui->btn_generate->setEnabled(!storage_name.isEmpty());
-            ui->btn_generate->setFocus();
-            ui->btn_generate->setText(labels::gen_pass_txt);
-        }
+        ui->btn_generate->setEnabled(false);
+        warning_message_box(QString::fromUtf8("Неудача"),
+                   QString::fromUtf8("Генератор паролей не был установлен."));
     }
 }
 
@@ -388,6 +397,7 @@ void Widget::set_master_key()
     watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
     utils::clear_main_key();
     utils::clear_lfsr_rng_state(state);
+    emit master_key_set();
 }
 
 void Widget::discard_master_key()
@@ -402,7 +412,7 @@ void Widget::discard_master_key()
 
 void Widget::insert_new_password()
 {
-    QString&& pswd = utils::try_to_get_password(g_current_password_len);
+    QString pswd = utils::try_to_get_password(g_current_password_len);
     if (pswd.length() < g_current_password_len) {
         utils::request_passwords(watcher_passwords, g_current_password_len);
         pswd = utils::try_to_get_password(g_current_password_len);
@@ -436,7 +446,7 @@ void Widget::on_btn_generate_clicked()
     }
     ui->btn_generate->setText(labels::wait_txt);
     ui->btn_generate->setEnabled(false);
-    emit ready_for_password_request();
+    emit passwords_ready();
 }
 
 void Widget::on_spbx_pass_len_valueChanged(int arg1)
