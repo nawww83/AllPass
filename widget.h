@@ -39,6 +39,12 @@ private slots:
 
     void on_spbx_pass_len_editingFinished();
 
+    void btn_recover_from_backup_clicked();
+
+    void btn_new_storage_with_transfer_clicked();
+
+    void btn_clear_table_clicked();
+
     void tableWidget_customContextMenuRequested(const QPoint &pos);
 
     void finish_password_generator();
@@ -65,11 +71,9 @@ private slots:
 
     void load_storage();
 
-    void btn_recover_from_backup_clicked();
-
-    void btn_new_storage_with_transfer_clicked();
-
     void update_number_of_rows();
+
+    void update_table_info();
 
 signals:
     void master_phrase_ready();
@@ -79,6 +83,12 @@ signals:
     void passwords_ready();
 
     void master_key_set();
+
+    void row_deleted();
+
+    void row_inserted();
+
+    void table_changed();
 
 protected:
 
@@ -95,6 +105,7 @@ private:
     QAction *updatePassAct;
     QPushButton *btn_recover_from_backup;
     QPushButton *btn_new_storage_with_transfer;
+    QPushButton *btn_clear_table;
 };
 
 class MyTextEdit : public QTextEdit

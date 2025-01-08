@@ -79,7 +79,7 @@ static void clear_table(QTableWidget* widget) {
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Восстановить данные из активного хранилища.")); \
+            QString::fromUtf8("Восстановить данные из активного хранилища, icons8.com")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
     }
@@ -97,9 +97,27 @@ button = new QPushButton(); \
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Создать новое хранилище с переносом данных.")); \
+            QString::fromUtf8("Создать новое хранилище с переносом данных, icons8.com")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
+}
+
+#define construct_clear_table_button(button) \
+button = new QPushButton(); \
+    if (!button) { \
+        critical_message_box( \
+                              QString::fromUtf8("Ошибка создания кнопки"), \
+                              QString::fromUtf8("Нулевой указатель QPushButton.")); \
+} else { \
+        const QPixmap icon_map(":/icons8-clear-24.png"); \
+        button->setIcon(QIcon(icon_map)); \
+        button->setIconSize(icon_map.rect().size()); \
+        button->setEnabled(false); \
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+        button->setToolTip( \
+            QString::fromUtf8("Очистить текущую таблицу, icons8.com")); \
+        ui->horizontalLayout->addWidget(button); \
+        connect(button, &QPushButton::clicked, this, &Widget::btn_clear_table_clicked); \
 }
 
 #define configure_table(widget) \
@@ -158,6 +176,9 @@ Widget::Widget(QString&& pin, QWidget *parent)
     connect(this, &Widget::master_key_set, this, &Widget::finish_master_key);
     connect(this, &Widget::master_phrase_discarded, this, &Widget::discard_master_key);
     connect(this, &Widget::passwords_ready, this, &Widget::insert_new_password);
+    connect(this, &Widget::row_deleted, this, &Widget::update_number_of_rows);
+    connect(this, &Widget::row_inserted, this, &Widget::update_number_of_rows);
+    connect(this, &Widget::table_changed, this, &Widget::update_table_info);
 
     ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
     g_current_password_len = ui->spbx_pass_len->value();
@@ -168,6 +189,8 @@ Widget::Widget(QString&& pin, QWidget *parent)
     construct_recover_button(btn_recover_from_backup);
 
     construct_create_new_storage_button(btn_new_storage_with_transfer);
+
+    construct_clear_table_button(btn_clear_table);
 
     configure_table(ui->tableWidget);
 
@@ -228,7 +251,8 @@ void Widget::closeEvent(QCloseEvent *event)
 {
     event->ignore();
     if (question_message_box(tr("Подтверждение выхода"),
-                             tr("Закрыть приложение?"))) {
+                             tr("Закрыть приложение? Текущие данные в таблице при этом будут\
+                                сохранены на диск."))) {
         event->accept();
     }
 }
@@ -253,15 +277,11 @@ void Widget::delete_row() {
     {
         return;
     }
-    if (!pointers::selected_context_table_item) {
-        const int row = ui->tableWidget->currentRow();
-        ui->tableWidget->removeRow(row);
-        update_number_of_rows();
-        return;
-    }
-    ui->tableWidget->removeRow(pointers::selected_context_table_item->row());
-    update_number_of_rows();
+    const int row = !pointers::selected_context_table_item ? ui->tableWidget->currentRow() :
+                        pointers::selected_context_table_item->row();
+    ui->tableWidget->removeRow(row);
     pointers::selected_context_table_item = nullptr;
+    emit row_deleted();
 }
 
 void Widget::update_pass() {
@@ -430,7 +450,7 @@ void Widget::insert_new_password()
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
     ui->btn_generate->setFocus();
-    update_number_of_rows();
+    emit row_inserted();
 }
 
 void Widget::on_btn_generate_clicked()
@@ -595,11 +615,7 @@ void Widget::load_storage()
                 break;
         }
     }
-    table->resizeColumnToContents(constants::pswd_column_idx);
-    table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
-    btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
-    btn_new_storage_with_transfer->setEnabled(true);
-    update_number_of_rows();
+    emit table_changed();
 }
 
 void Widget::btn_recover_from_backup_clicked()
@@ -627,8 +643,8 @@ void Widget::btn_recover_from_backup_clicked()
     }
 
     const QTableWidget* const ro_table = ui->tableWidget;
-    const bool save_to_tmp = true;
-    storage_manager->SaveToStorage(ro_table, save_to_tmp);
+    const bool save_to_temporary_file = true;
+    storage_manager->SaveToStorage(ro_table, save_to_temporary_file);
 
     QTableWidget* const table = ui->tableWidget;
     clear_table(table);
@@ -637,8 +653,7 @@ void Widget::btn_recover_from_backup_clicked()
     qDebug() << "Recovering from backup: loading status: " << int(loading_status_backup);
     switch (loading_status_backup) {
         case Loading_Errors::OK:
-            table->resizeColumnToContents(constants::pswd_column_idx);
-            table->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
+            emit table_changed();
             information_message_box(QString::fromUtf8("Успех."),
                    QString::fromUtf8("Данные загружены из текущего хранилища."));
             storage_manager->RemoveTmpFile();
@@ -682,6 +697,7 @@ void Widget::btn_recover_from_backup_clicked()
             storage_manager->SetName("");
             break;
     }
+    // Отмена восстановления.
     storage_manager->LoadFromStorage(table);
     storage_manager->RemoveTmpFile();
 }
@@ -725,7 +741,47 @@ void Widget::btn_new_storage_with_transfer_clicked() {
     input_master_phrase();
 }
 
+void Widget::btn_clear_table_clicked()
+{
+    if (!question_message_box(
+            tr("Очистка текущей таблицы."),
+            tr("Вы действительно хотите очистить текущую таблицу? После успешного\
+                    ввода пин-кода текущая таблица будет очищена. В случае необходимости\
+                     ее можно восстановить из текущего хранилища, не закрывая приложения.")))
+    {
+        return;
+    }
+    MyDialog dialog;
+    int result = dialog.exec();
+    if (result == QDialog::Accepted) {
+        ;
+    } else {
+        return;
+    }
+    QString pin {dialog.get_pin()};
+    dialog.clear_pin();
+    if (!utils::check_pin(std::move(pin))) {
+        warning_message_box(QString::fromUtf8(""),
+                            QString::fromUtf8("Введен неверный пин-код. Изменений не будет."));
+        return;
+    }
+    clear_table(ui->tableWidget);
+
+    emit table_changed();
+}
+
 void Widget::update_number_of_rows()
 {
     ui->lbl_number_of_rows->setText(QString::fromUtf8("Количество записей: %1").arg(ui->tableWidget->rowCount()));
+}
+
+void Widget::update_table_info()
+{
+    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
+    ui->tableWidget->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
+    btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist());
+    btn_new_storage_with_transfer->setEnabled(true);
+    btn_clear_table->setEnabled(true);
+
+    update_number_of_rows();
 }
