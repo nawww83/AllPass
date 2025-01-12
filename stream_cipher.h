@@ -156,6 +156,11 @@ private:
     std::array<u16, 8> ii0_saw{};
 
     /**
+     * @brief Состояния генераторов "пилы" для возможности возврата назад, см. back().
+     */
+    std::array<u16, 8> ii_back_saw{};
+
+    /**
      * @brief Признак того, что итоговый генератор инициализирован заданным seed.
      */
     int is_finded;
@@ -289,10 +294,16 @@ public:
                 sawtooth(i, primes);
                 // Но ключевой момент рандомизации периодоы:
                 // мы будем проходить почти все i, кроме одного => устанавливаем ограничение на суммарный период T[j] = sum_of(All i except last one) < q*T0.
-                for (int j=0; j<4; ++j)
-                    Tref[2*j] = !(is_state_low(refs[j], j)) ? Tref[2*j] : (Tc[2*j] < primes_duplicates[2*j]*Tmax[j] ? Tc[2*j] : Tref[2*j]);
-                for (int j=0; j<4; ++j)
-                    Tref[2*j+1] = !(is_state_high(refs[j], j)) ? Tref[2*j+1] : (Tc[2*j+1] < primes_duplicates[2*j+1]*Tmax[j] ? Tc[2*j+1] : Tref[2*j+1]);
+                for (int j=0; j<4; ++j) {
+                    const bool is_matched = is_state_low(refs[j], j);
+                    Tref[2*j] = !is_matched ? Tref[2*j] : (Tc[2*j] < primes_duplicates[2*j]*Tmax[j] ? Tc[2*j] : Tref[2*j]);
+                    ii_back_saw[2*j] = !is_matched ? ii_back_saw[2*j] : i[j];
+                }
+                for (int j=0; j<4; ++j) {
+                    const bool is_matched = is_state_high(refs[j], j);
+                    Tref[2*j+1] = !is_matched ? Tref[2*j+1] : (Tc[2*j+1] < primes_duplicates[2*j+1]*Tmax[j] ? Tc[2*j+1] : Tref[2*j+1]);
+                    ii_back_saw[2*j + 1] = !is_matched ? ii_back_saw[2*j + 1] : i[j];
+                }
                 increment(Tc);
                 // Проверяем не вышли ли все счетчики за грани допустимого диапазона.
                 bool is_enough = true;
@@ -372,17 +383,16 @@ public:
                 Tc[j] = (Tc[j] != Tref[j]) ? Tc[j] : 0;
             }
             increment(Tc);
-            //
-
         }
         return x;
     }
+
     u64 back_u64() {
         u64 x = 0;
         for (int i=0; i<4; ++i) {
             decrement(Tc);
             for (int j=0; j<8; ++j) {
-                ii_saw[j] = (Tc[j] == 0) ? ii0_saw[j] : ii_saw[j];
+                ii_saw[j] = (Tc[j] == 0) ? ii_back_saw[j] + 1 : ii_saw[j];
                 Tc[j] = (Tc[j] == 0) ? Tref[j] : Tc[j];
             }
             undo_sawtooth(ii_saw, primes_duplicates);
@@ -399,6 +409,12 @@ public:
                 x |= static_cast<u64>(mSt[j] ^ mSt[j+4]) << (12 - 4*j + 16*i);
             }
         }
+        return x;
+    }
+
+    u64 peek_u64() {
+        u64 x = next_u64();
+        back_u64();
         return x;
     }
 };

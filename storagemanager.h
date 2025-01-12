@@ -14,6 +14,12 @@ struct Encryption
     lfsr_rng::u64 gamma = 0;
 };
 
+enum class FileTypes {
+    NORMAL = 0,
+    BACKUP,
+    TEMPORARY
+};
+
 enum class Loading_Errors {
     OK = 0,
     UNRECOGNIZED,
@@ -34,15 +40,21 @@ public:
 
     void SaveToStorage(const QTableWidget * const ro_table, bool save_to_tmp = false);
 
-    Loading_Errors LoadFromStorage(QTableWidget * const wr_table, bool from_backup = false);
+    Loading_Errors LoadFromStorage(QTableWidget * const wr_table, FileTypes type = FileTypes::NORMAL);
 
     void RemoveTmpFile();
 
+    bool FileIsExist() const;
+
     bool BackupFileIsExist() const;
+
+    bool TmpFileIsExist() const;
 
     bool WasUpdated() const;
 
     bool IsSuccess() const;
+
+    bool IsTryToLoadFromTmp() const;
 
     void BeforeUpdate();
 
@@ -50,7 +62,13 @@ public:
 
     void SetName(const QString& name);
 
+    void SetTmpName(const QString& name);
+
     QString Name() const;
+
+    QString NameTmp() const;
+
+    void SetTryToLoadFromTmp(bool value = true);
 
     void SetEncGammaGenerator(const lfsr_rng::Generators& generator);
 
@@ -74,6 +92,8 @@ private:
 
     int mSetCounter;
     bool mWasUpdated;
+
+    bool mTryToLoadFromTmp = false;
 };
 
 #endif // STORAGEMANAGER_H

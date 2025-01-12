@@ -30,7 +30,8 @@ static const QSet<QString> g_supported_as_version_2 {
 
 static const QSet<QString> g_supported_as_version_3 {
     QString("v1.05"),
-    QString("v1.06")
+    QString("v1.06"),
+    QString("v1.07")
 };
 
 #ifdef OS_Windows
@@ -126,6 +127,7 @@ static bool decode_crc(const QByteArray& data, QByteArray& crc) {
 
 static void init_encryption(Encryption& enc, const QByteArray& salt1 = {}, uint salt2 = 0) {
     enc.aligner64 = 0;
+    assert(enc.counter == 0);
     const int steps = 256 + (int)utils::xor_val(salt1) + (salt2 % 65536);
     for (int i = 0; i < steps; ++i) {
         enc.gamma_gen.next_u64();
@@ -140,7 +142,6 @@ static void finalize_encryption(Encryption& enc) {
         enc.counter--;
     }
     enc.gamma = 0;
-    enc.aligner64 = 0;
 }
 
 static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& enc) {
@@ -759,9 +760,21 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     }
 }
 
-Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, bool from_backup)
+Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, FileTypes type)
 {
-    const QString file_name = from_backup ? mStorageNameBackUp : mStorageName;
+    const auto& file_name = [this, type]() -> QString {
+        switch (type) {
+        case FileTypes::BACKUP:
+            return mStorageNameBackUp;
+            break;
+        case FileTypes::TEMPORARY:
+            return mStorageNameTmp;
+            break;
+        default:
+            return mStorageName;
+            break;
+        }
+    }();
     if (file_name.isEmpty()) {
         qDebug() << "Empty storage.";
         return Loading_Errors::EMPTY_STORAGE;
@@ -871,10 +884,22 @@ void StorageManager::RemoveTmpFile()
     }
 }
 
+bool StorageManager::FileIsExist() const
+{
+    const QFile file(mStorageName);
+    return file.exists();
+}
+
 bool StorageManager::BackupFileIsExist() const
 {
     const QFile backup_file(mStorageNameBackUp);
     return backup_file.exists();
+}
+
+bool StorageManager::TmpFileIsExist() const
+{
+    const QFile tmp_file(mStorageNameTmp);
+    return tmp_file.exists();
 }
 
 bool StorageManager::WasUpdated() const
@@ -885,6 +910,11 @@ bool StorageManager::WasUpdated() const
 bool StorageManager::IsSuccess() const {
     return mEnc.gamma_gen.is_succes() && mDec.gamma_gen.is_succes() &&
         mEncInner.gamma_gen.is_succes() && mDecInner.gamma_gen.is_succes();
+}
+
+bool StorageManager::IsTryToLoadFromTmp() const
+{
+    return mTryToLoadFromTmp;
 }
 
 void StorageManager::BeforeUpdate()
@@ -903,12 +933,26 @@ void StorageManager::SetName(const QString &name)
     if (!name.isEmpty()) mSetCounter++;
     mStorageName = name;
     mStorageNameBackUp = QString::fromUtf8(".") + name;
+}
+
+void StorageManager::SetTmpName(const QString &name)
+{
     mStorageNameTmp = name + QString::fromUtf8(".tmp");
 }
 
 QString StorageManager::Name() const
 {
     return mStorageName;
+}
+
+QString StorageManager::NameTmp() const
+{
+    return mStorageNameTmp;
+}
+
+void StorageManager::SetTryToLoadFromTmp(bool value)
+{
+    mTryToLoadFromTmp = value;
 }
 
 void StorageManager::SetEncGammaGenerator(const lfsr_rng::Generators &generator)

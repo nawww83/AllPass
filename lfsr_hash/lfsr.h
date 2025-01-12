@@ -189,17 +189,17 @@ public:
         d = _mm_add_epi16(inp, d);
         _mm_store_si128((__m128i*)&m_state[0], d);
         for (int i=0; i<8; ++i) {
-            m_state[i] %= p;
+            m_state[i] %= static_cast<u16>(p);
         }
 #else
         u16 m_v3 = m_state[3];
         u16 m_v7 = m_state[7];
         for (int i=7; i>4; i--) {
-            m_state[i] = (m_state[i-1] + m_v7*m_K[i]) % p;
-            m_state[i-4] = (m_state[i-1-4] + m_v3*m_K[i-4]) % p;
+            m_state[i] = (m_state[i-1] + m_v7*m_K[i]) % static_cast<u16>(p);
+            m_state[i-4] = (m_state[i-1-4] + m_v3*m_K[i-4]) % static_cast<u16>(p);
         }
-        m_state[0] = (input + m_v3*m_K[0]) % p;
-        m_state[4] = (input + m_v7*m_K[4]) % p;
+        m_state[0] = (input + m_v3*m_K[0]) % static_cast<u16>(p);
+        m_state[4] = (input + m_v7*m_K[4]) % static_cast<u16>(p);
 #endif
     }
     void next(u16 inp1, u16 inp2) {
@@ -223,17 +223,17 @@ public:
         d = _mm_add_epi16(inp, d);
         _mm_store_si128((__m128i*)&m_state[0], d);
         for (int i=0; i<8; ++i) {
-            m_state[i] %= p;
+            m_state[i] %= static_cast<u16>(p);
         }
 #else
         u16 m_v3 = m_state[3];
         u16 m_v7 = m_state[7];
         for (int i=7; i>4; i--) {
-            m_state[i] = (m_state[i-1] + m_v7*m_K[i]) % p;
-            m_state[i-4] = (m_state[i-1-4] + m_v3*m_K[i-4]) % p;
+            m_state[i] = (m_state[i-1] + m_v7*m_K[i]) % static_cast<u16>(p);
+            m_state[i-4] = (m_state[i-1-4] + m_v3*m_K[i-4]) % static_cast<u16>(p);
         }
-        m_state[0] = (inp1 + m_v3*m_K[0]) % p;
-        m_state[4] = (inp2 + m_v7*m_K[4]) % p;
+        m_state[0] = (inp1 + m_v3*m_K[0]) % static_cast<u16>(p);
+        m_state[4] = (inp2 + m_v7*m_K[4]) % static_cast<u16>(p);
 #endif
     }
     void back(u16 inp1, u16 inp2) {
@@ -262,7 +262,7 @@ public:
             alignas(16) u16x8 tmp;
             _mm_store_si128((__m128i*)&tmp[0], a);
             for (int i=0; i<8; ++i) {
-                tmp[i] %= p;
+                tmp[i] %= static_cast<u16>(p);
             }
             a = _mm_load_si128((const __m128i*)&tmp[0]);
             // a = _mm_set_epi16(m_v_2, m_v_2, m_v_2, m_v_2, m_v_1, m_v_1, m_v_1, m_v_1)
@@ -277,17 +277,17 @@ public:
         coeffs = _mm_add_epi16(coeffs, _mm_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0));
 
         a = _mm_sub_epi16(d, _mm_mullo_epi16(a, coeffs));
-        a = _mm_add_epi16(a, _mm_and_si128(mask, _mm_set1_epi16(p*p)));
+        a = _mm_add_epi16(a, _mm_and_si128(mask, _mm_set1_epi16(static_cast<u16>(p*p))));
         _mm_store_si128((__m128i*)&m_state[0], a);
         for (int i=0; i<8; ++i) {
-            m_state[i] %= p;
+            m_state[i] %= static_cast<u16>(p);
         }
 #else
-        const u16 m_v_1 = (m_inv_K[0]*(m_state[0] - inp1 + p)) % p;
-        const u16 m_v_2 = (m_inv_K[4]*(m_state[4] - inp2 + p)) % p;
+        const u16 m_v_1 = (m_inv_K[0]*(m_state[0] - inp1 + static_cast<u16>(p))) % static_cast<u16>(p);
+        const u16 m_v_2 = (m_inv_K[4]*(m_state[4] - inp2 + static_cast<u16>(p))) % static_cast<u16>(p);
         for (int i=0; i<3; i++) {
-            m_state[i] = (m_state[i+1] - m_v_1*m_K[i+1] + p*p) % p;
-            m_state[i+4] = (m_state[i+5] - m_v_2*m_K[i+5] + p*p) % p;
+            m_state[i] = (m_state[i+1] - m_v_1*m_K[i+1] + static_cast<u16>(p*p)) % static_cast<u16>(p);
+            m_state[i+4] = (m_state[i+5] - m_v_2*m_K[i+5] + static_cast<u16>(p*p)) % static_cast<u16>(p);
         }
         m_state[3] = m_v_1;
         m_state[7] = m_v_2;
@@ -324,13 +324,13 @@ private:
         bool achieved0 = false;
         bool achieved4 = false;
         for (;;) {
-            achieved0 = achieved0 ? achieved0 : ((x0*m_inv_K[0]) % p) == 1;
-            achieved4 = achieved4 ? achieved4 : ((x4*m_inv_K[4]) % p) == 1;
+            achieved0 = achieved0 ? achieved0 : ((x0*m_inv_K[0]) % static_cast<u16>(p)) == u16(1);
+            achieved4 = achieved4 ? achieved4 : ((x4*m_inv_K[4]) % static_cast<u16>(p)) == u16(1);
             if (achieved0 && achieved4) {
                 break;
             }
-            m_inv_K[0] += achieved0 ? 0 : 1;
-            m_inv_K[4] += achieved4 ? 0 : 1;
+            m_inv_K[0] += !achieved0;
+            m_inv_K[4] += !achieved4;
         }
     }
 };
