@@ -164,8 +164,8 @@ button = new QPushButton(); \
 /**
  * @brief Тест на корректность функций "вперед-назад" генераторов гаммы.
  */
-static void run_test() {
-    const int offset = 62000;
+static int run_test() {
+    const int offset = 120'000;
     QFutureWatcher<lfsr_rng::Generators> watcher_enc;
     lfsr_rng::STATE state_inner {2929 ,
                                 14359 ,
@@ -180,7 +180,7 @@ static void run_test() {
     Encryption mEnc;
     mEnc.gamma_gen = watcher_enc.result();
     const int base_size = 64;
-    const auto init = mEnc.gamma_gen.peek_u64();
+    const auto init_value = mEnc.gamma_gen.peek_u64();
     qDebug() << "1: " << mEnc.gamma_gen.peek_u64() << ", " << mEnc.counter;
     uint64_t tmp;
     for (int i = 0; i < offset; ++i) {
@@ -201,7 +201,7 @@ static void run_test() {
         mEnc.counter--;
     }
     qDebug() << "1: " << tmp << ", " << mEnc.counter;
-    assert(init == mEnc.gamma_gen.peek_u64());
+    return (init_value == mEnc.gamma_gen.peek_u64()) ? 0 : -1;
 }
 
 
@@ -209,7 +209,11 @@ Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
-    run_test();
+    const auto result = run_test();
+    if (result < 0) {
+        critical_message_box("", QString::fromUtf8("Не пройден критический тест."));
+        return;
+    }
 
     utils::fill_pin(std::move(pin));
     ui->setupUi(this);
