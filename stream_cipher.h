@@ -20,15 +20,17 @@ using u32 = lfsr8::u32;
 using u64 = lfsr8::u64;
 using u128 = std::pair<lfsr8::u64, lfsr8::u64>;
 
-// Простые числа: поля Галуа GF(p^m).
+// Простые числа, рассматривается поле GF(p^m).
 static constexpr std::array<int, 4> p {19, 17, 17, 13};
-// Длина сдвоенных LFSR-генераторов. Один генератор имеет длину m/2.
+
+// Общая длина сдвоенного LFSR-генератора.
 static constexpr int m = 8;
 
 using LFSR_pair_1 = lfsr8::LFSR_paired_2x4<p[0]>;
 using LFSR_pair_2 = lfsr8::LFSR_paired_2x4<p[1]>;
 using LFSR_pair_3 = lfsr8::LFSR_paired_2x4<p[2]>;
 using LFSR_pair_4 = lfsr8::LFSR_paired_2x4<p[3]>;
+
 using STATE = lfsr8::u16x8;
 
 // Коэффициенты LFSR-генераторов, дающие максимальный свободный (немодулированный) период.
@@ -40,8 +42,7 @@ static constexpr STATE K4 = {2, 3, 1, 1, 2, 0, 1, 7};    // p=13
 // Периоды модулирующей "пилы": выбраны так, что периоды T = p^4 - 1 не делятся на соответствующие периоды нацело.
 static constexpr std::array<int, 4> primes {7, 11, 11, 11};
 
-
-// Дубликаты простых периодов для упрощения реализации.
+// Дубликаты простых периодов для упрощения кода.
 static constexpr std::array<int, 8> primes_duplicates {7, 7, 11, 11, 11, 11, 11, 11};
 
 static_assert((primes[0] == primes_duplicates[0]) && (primes[0] == primes_duplicates[1]));
@@ -179,7 +180,7 @@ public:
      * @return
      */
     bool is_succes() const {
-        return (is_finded != 0);
+        return is_finded != 0;
     }
 
     /**
@@ -240,37 +241,37 @@ public:
      */
     void seed(STATE st) {
         // Некоторая "соль".
-        std::array<u16, 4> h {1, 2, 2, 3};
+        std::array<u16, 4> init_inputs {1, 2, 2, 3};
         // Распределить начальное состояние по всем LFSR-генераторам.
-        STATE tmp[4]  {st, st, st, st};
-        for (int i=0; i<h.size(); ++i) {
-            for (auto& el : tmp[i]) {
+        STATE init_states[4]  {st, st, st, st};
+        for (int i=0; i<4; ++i) {
+            for (auto& el : init_states[i]) {
                 el >>= i*4;
                 el %= 16;
-                h[i] ^= el;
+                init_inputs[i] ^= el;
             }
         }
-        gp1.set_state(tmp[0]);
-        gp2.set_state(tmp[1]);
-        gp3.set_state(tmp[2]);
-        gp4.set_state(tmp[3]);
+        gp1.set_state(init_states[0]);
+        gp2.set_state(init_states[1]);
+        gp3.set_state(init_states[2]);
+        gp4.set_state(init_states[3]);
         // Насытить генераторы.
         for (int i=0; i<my_lcm<4>(primes); ++i) {
-            gp1.next(h[0]);
-            gp2.next(h[1]);
-            gp3.next(h[2]);
-            gp4.next(h[3]);
-            sawtooth<4>(h, primes);
+            gp1.next(init_inputs[0]);
+            gp2.next(init_inputs[1]);
+            gp3.next(init_inputs[2]);
+            gp4.next(init_inputs[3]);
+            sawtooth<4>(init_inputs, primes);
         }
-        // Сохранить состояния генераторов в качестве опорных (начальных).
+        // Сохранить текущие состояния генераторов в качестве опорных (начальных).
         const std::array<STATE, 4> refs {gp1.get_state(), gp2.get_state(), gp3.get_state(), gp4.get_state()};
         /**
          * @brief Протестировать начальные состояния генераторов "пилы".
          * @return Признак успеха, целое число.
          */
         auto test251 = [&refs, this](u16 i01, u16 i02, u16 i03, u16 i04) -> int {
-            Tc = {1, 1, 1, 1, 1, 1, 1, 1};   // Счетчики.
-            Tref = {0, 0, 0, 0, 0, 0, 0, 0}; // Найденные периоды.
+            Tc = {1, 1, 1, 1, 1, 1, 1, 1};   // Счетчики: копится суммарный период.
+            Tref = {0, 0, 0, 0, 0, 0, 0, 0}; // Найденные суммарные периоды.
             std::array<u32, 4> Tmax; // Наибольший свободный период.
             Tmax[0] = std::pow((long)p[0], m/2) - 1;
             Tmax[1] = std::pow((long)p[1], m/2) - 1;
@@ -295,23 +296,24 @@ public:
                 // Но ключевой момент рандомизации периодоы:
                 // мы будем проходить почти все i, кроме одного => устанавливаем ограничение на суммарный период T[j] = sum_of(All i except last one) < q*T0.
                 for (int j=0; j<4; ++j) {
-                    const bool is_matched = is_state_low(refs[j], j);
-                    const bool is_good_T = Tc[2*j] < primes_duplicates[2*j]*Tmax[j];
+                    const bool is_matched = is_state_low(refs[j], j); // достигли ли начального (опорного) состояния?
+                    const bool is_good_T = Tc[2*j] < primes_duplicates[2*j]*Tmax[j]; // валидный ли период?
                     Tref[2*j] = !is_matched ? Tref[2*j] : (is_good_T ? Tc[2*j] : Tref[2*j]);
                     ii_back_saw[2*j] = !is_matched ? ii_back_saw[2*j] : (is_good_T ? i[j] : ii_back_saw[2*j]);
                 }
                 for (int j=0; j<4; ++j) {
-                    const bool is_matched = is_state_high(refs[j], j);
-                    const bool is_good_T = Tc[2*j+1] < primes_duplicates[2*j+1]*Tmax[j];
+                    const bool is_matched = is_state_high(refs[j], j); // достигли ли начального (опорного) состояния?
+                    const bool is_good_T = Tc[2*j+1] < primes_duplicates[2*j+1]*Tmax[j]; // валидный ли период?
                     Tref[2*j+1] = !is_matched ? Tref[2*j+1] : (is_good_T ? Tc[2*j+1] : Tref[2*j+1]);
                     ii_back_saw[2*j + 1] = !is_matched ? ii_back_saw[2*j + 1] : (is_good_T ? i[j] : ii_back_saw[2*j + 1]);
                 }
                 increment(Tc);
                 // Проверяем не вышли ли все счетчики за грани допустимого диапазона.
-                bool is_enough = true;
-                for (int j=0; j<8; ++j)
-                    is_enough &= (Tc[j] >= primes_duplicates[j]*Tmax[j/2]);
-                if (is_enough) {
+                bool all_are_outliers = true;
+                for (int j=0; j<8; ++j) {
+                    all_are_outliers &= (Tc[j] >= primes_duplicates[j] * Tmax[j/2]);
+                }
+                if (all_are_outliers) {
                     break;
                 }
             }
@@ -321,10 +323,11 @@ public:
             auto gcd = std::gcd(gcd1, gcd2);
             // Устанавливаем ограничение на НОД. По статистике оно зачастую выполняется. Изредка бывает тест не проходит,
             // тогда мы запускаем test251() еще раз: в этом случае с большой вероятностью единичный НОД будет достигнут.
-            bool is_ok = (gcd < 2);
-            for (int j=0; j<8; ++j)
+            bool is_ok = gcd < 2;
+            for (int j=0; j<8; ++j) {
                 is_ok &= (Tref[j] > Tmax[j/2]);
-            return is_ok ? 1 : 0;
+            }
+            return is_ok;
         };
         is_finded = 0;
         for (u16 i1=1; i1<primes[0]; ++i1) {
@@ -359,8 +362,8 @@ public:
     }
 
     /**
-     * @brief Генерирует 64-битное случайное число.
-     * @return Случайное целое беззнаковое 64-битное число.
+     * @brief Генерирует 64-битное случайное число (режим "вперед" - режим по умолчанию).
+     * @return Целое беззнаковое 64-битное число.
      */
     u64 next_u64() {
         u64 x = 0;
@@ -390,6 +393,11 @@ public:
         return x;
     }
 
+    /**
+     * @brief Генерирует 64-битное случайное число в режиме "назад":
+     * позволяет вернуться назад - своего рода перемотка генератора.
+     * @return Целое беззнаковое 64-битное число.
+     */
     u64 back_u64() {
         u64 x = 0;
         for (int i=0; i<4; ++i) {
@@ -416,6 +424,10 @@ public:
         return x;
     }
 
+    /**
+     * @brief Позволяет прочитать текущее случайное число без изменения состояния генератора.
+     * @return Целое беззнаковое 64-битное число.
+     */
     u64 peek_u64() {
         u64 x = next_u64();
         back_u64();

@@ -160,7 +160,7 @@ button = new QPushButton(); \
                                 tr("&Показать дату изменения пароля"), this); \
     connect(showPassDateAct, &QAction::triggered, this, &Widget::show_pass_date);
 
-
+#ifdef QT_DEBUG
 /**
  * @brief Тест на корректность функций "вперед-назад" генераторов гаммы.
  */
@@ -203,17 +203,20 @@ static int run_test() {
     qDebug() << "1: " << tmp << ", " << mEnc.counter;
     return (init_value == mEnc.gamma_gen.peek_u64()) ? 0 : -1;
 }
+#endif
 
 
 Widget::Widget(QString&& pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
+    #ifdef QT_DEBUG
     const auto result = run_test();
     if (result < 0) {
         critical_message_box("", QString::fromUtf8("Не пройден критический тест."));
         return;
     }
+    #endif
 
     utils::fill_pin(std::move(pin));
     ui->setupUi(this);
