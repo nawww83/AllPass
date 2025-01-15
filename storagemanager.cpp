@@ -2,18 +2,21 @@
 #include "utils.h"
 #include "constants.h"
 
-#ifdef __unix__                    /* __unix__ is usually defined by compilers targeting Unix systems */
-    #define OS_Windows 0
-#elif defined(_WIN32) || defined(WIN32)     /* _Win32 is usually defined by compilers targeting 32 or   64 bit Windows systems */
-    #define OS_Windows 1
+#ifdef __unix__
+    #undef OS_Windows
+#elif defined(_WIN32) || defined(WIN32)
+    #define OS_Windows
     #include <windows.h>
 #endif
 
 #include <QTableWidget>
 #include <QFile>
 #include <QMessageBox>
-#include <QStringEncoder>
 #include <QSet>
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    #include <QStringEncoder>
+#endif
 
 #include <random> // std::random_device
 
@@ -552,7 +555,6 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     uint32_t seed2 = 0; \
     if constexpr (version >= 3) { \
         seed2 = std::random_device{}(); \
-        qDebug() << "save: session seed: " << seed2; \
     } \
     ns::init_encryption(enc_inner, crc, seed2); \
     QByteArray encrypted_inner; \
@@ -592,14 +594,13 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     ns::decrypt(data, decrypted, dec); \
     uint32_t seed2 = 0; \
     if constexpr (version >= 3) { \
-        if (decrypted.size() < sizeof(seed2)) { \
+    if (decrypted.size() < static_cast<int>(sizeof(seed2))) { \
             qDebug() << "Decode failure: input size is too small: " << \
                                                               decrypted.size(); \
             ns::finalize_encryption(dec); \
             return {}; \
         } \
         seed2 = utils::seed_from_bytes_pop_back(decrypted); \
-        qDebug() << "load: session seed: " << seed2; \
     } \
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
@@ -679,7 +680,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         return;
     }
     QByteArray packed_data_bytes;
-    auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+    #endif
     QString packed_data_str;
     for( int row = 0; row < ro_table->rowCount(); ++row )
     {
@@ -700,16 +703,25 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         packed_data_str = data_rows.join( symbols::row_delimiter );
         if (row < ro_table->rowCount() - 1) {
             packed_data_str.append( symbols::col_delimiter );
-            packed_data_bytes.append( fromUtf16( packed_data_str ) );
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+                packed_data_bytes.append( fromUtf16( packed_data_str ) );
+            #else
+                packed_data_bytes.append( packed_data_str.toUtf8() );
+            #endif
         }
     }
     { // Конец сообщения.
         packed_data_str.append( symbols::end_message );
-        packed_data_bytes.append( fromUtf16( packed_data_str ) );
+        #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+            packed_data_bytes.append( fromUtf16( packed_data_str ) );
+        #else
+            packed_data_bytes.append( packed_data_str.toUtf8() );
+        #endif
     }
     QByteArray encoded_data_bytes;
     QFile file(file_name);
-    const QString& current_version = QString(VERSION_LABEL).remove(g_version_prefix);
+    QString current_version = QString::fromUtf8(VERSION_LABEL);
+    current_version.remove(g_version_prefix);
     if (g_supported_as_version_1.contains(current_version)) {
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
     }
@@ -836,8 +848,12 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
             return Loading_Errors::NEW_STORAGE;
         }
     }
-    auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-    QString decoded_data_str = toUtf16(decoded_data_bytes);
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
+        QString decoded_data_str = toUtf16(decoded_data_bytes);
+    #else
+        QString decoded_data_str(decoded_data_bytes);
+    #endif
     if (decoded_data_str.isEmpty()) {
         qDebug() << "Unrecognized error while loading.";
         return Loading_Errors::UNRECOGNIZED;
@@ -925,7 +941,8 @@ void StorageManager::BeforeUpdate()
 
 void StorageManager::AfterUpdate()
 {
-    mWasUpdated = mSetCounter == 5; // Ожидаемое количество сеттеров.
+    assert(mSetCounter == 6); // Ожидаемое количество сеттеров.
+    mWasUpdated = true;
 }
 
 void StorageManager::SetName(const QString &name)
@@ -937,6 +954,7 @@ void StorageManager::SetName(const QString &name)
 
 void StorageManager::SetTmpName(const QString &name)
 {
+    if (!name.isEmpty()) mSetCounter++;
     mStorageNameTmp = name + QString::fromUtf8(".tmp");
 }
 

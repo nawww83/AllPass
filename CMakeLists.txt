@@ -20,9 +20,14 @@ set(PROJECT_SOURCES
         widget.cpp
         widget.h
         widget.ui
-        lfsr_hash/lfsr_hash.h
-        lfsr_hash/lfsr.h
-        lfsr_hash/io_utils.h
+        worker.h worker.cpp
+        stream_cipher.h
+        key.h
+        utils.h
+        passitemdelegate.h passitemdelegate.cpp
+        storagemanager.h storagemanager.cpp
+        constants.h
+        images.qrc
 )
 
 set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
