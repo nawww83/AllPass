@@ -1,8 +1,8 @@
 <RCC>
 <qresource prefix="/">
-<file>icons8-restore-page-24.png</file>
-<file>icons8-key-24.png</file>
-<file>icons8-clear-24.png</file>
-<file>favicon.ico</file>
+<file>images/icons8-restore-page-24.png</file>
+<file>images/icons8-key-24.png</file>
+<file>images/icons8-clear-24.png</file>
+<file>images/favicon.ico</file>
 </qresource>
 </RCC>

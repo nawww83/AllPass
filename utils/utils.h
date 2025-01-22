@@ -7,9 +7,9 @@
 #include <qglobalstatic.h>
 
 #include "lfsr_hash.h"
-#include "worker.h"
 #include "key.h"
 #include "constants.h"
+#include "../worker.h"
 
 namespace const_arr {
     static inline constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,

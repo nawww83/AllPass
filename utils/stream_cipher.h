@@ -6,7 +6,7 @@
  * Генератор псевдослучайных чисел с периодом около 2^155 по отношению к 16-битному отсчету.
 */
 
-#include "lfsr_hash/lfsr.h"
+#include "lfsr.h"
 
 #include <utility>
 #include <cmath>

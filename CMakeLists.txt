@@ -10,24 +10,38 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_compile_options("-msse4.1")
-include_directories(lfsr_hash)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
+set(UTILS_DIR utils)
+set(LFSR_DIR ${UTILS_DIR}/lfsr)
+
+INCLUDE_DIRECTORIES(${UTILS_DIR} ${LFSR_DIR} images)
+
+set(COMMON_SRC
+    main.cpp
+    widget.cpp
+    worker.cpp
+    passitemdelegate.cpp
+    storagemanager.cpp
+    widget.ui
+    images.qrc
+    widget.h
+    passitemdelegate.h
+    worker.h
+    storagemanager.h
+    ${UTILS_DIR}/constants.h
+    ${UTILS_DIR}/key.h
+    ${UTILS_DIR}/stream_cipher.h
+    ${UTILS_DIR}/utils.h
+    ${LFSR_DIR}/io_utils.h
+    ${LFSR_DIR}/lfsr.h
+    ${LFSR_DIR}/lfsr_hash.h
+)
+
 set(PROJECT_SOURCES
-        main.cpp
-        widget.cpp
-        widget.h
-        widget.ui
-        worker.h worker.cpp
-        stream_cipher.h
-        key.h
-        utils.h
-        passitemdelegate.h passitemdelegate.cpp
-        storagemanager.h storagemanager.cpp
-        constants.h
-        images.qrc
+    ${COMMON_SRC}
 )
 
 set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
@@ -36,14 +50,6 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(AllPass
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
-        worker.h worker.cpp
-        stream_cipher.h
-        key.h
-        utils.h
-        passitemdelegate.h passitemdelegate.cpp
-        storagemanager.h storagemanager.cpp
-        constants.h
-        images.qrc
         ${app_icon_resource_windows}
     )
 # Define target properties for Android with Qt 6 as:

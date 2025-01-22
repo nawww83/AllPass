@@ -70,4 +70,4 @@
 
 Диаграмма шифрования сообщения показана на рисунке ниже.
 
-![screenshot](storage_manager_diagram.gif)
+![screenshot](images/storage_manager_diagram.gif)

@@ -18,7 +18,6 @@
 
 #include "passitemdelegate.h"
 #include "utils.h"
-#include "constants.h"
 #include "storagemanager.h"
 
 
@@ -76,13 +75,13 @@ static void clear_table(QTableWidget* widget) {
             QString::fromUtf8("Ошибка создания кнопки"), \
             QString::fromUtf8("Нулевой указатель QPushButton.")); \
     } else { \
-        const QPixmap icon_map(":/icons8-restore-page-24.png"); \
+        const QPixmap icon_map("://images/icons8-restore-page-24.png"); \
         button->setIcon(QIcon(icon_map)); \
         button->setIconSize(icon_map.rect().size()); \
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Восстановить данные из активного хранилища, icons8.com")); \
+            QString::fromUtf8("Восстановить данные из активного хранилища (icons8.com)")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
     }
@@ -94,13 +93,13 @@ button = new QPushButton(); \
                               QString::fromUtf8("Ошибка создания кнопки"), \
                               QString::fromUtf8("Нулевой указатель QPushButton.")); \
 } else { \
-        const QPixmap icon_map(":/icons8-key-24.png"); \
+        const QPixmap icon_map("://images/icons8-key-24.png"); \
         button->setIcon(QIcon(icon_map)); \
         button->setIconSize(icon_map.rect().size()); \
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Создать новое хранилище с переносом данных, icons8.com")); \
+            QString::fromUtf8("Создать новое хранилище с переносом данных (icons8.com)")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
 }
@@ -112,13 +111,13 @@ button = new QPushButton(); \
                               QString::fromUtf8("Ошибка создания кнопки"), \
                               QString::fromUtf8("Нулевой указатель QPushButton.")); \
 } else { \
-        const QPixmap icon_map(":/icons8-clear-24.png"); \
+        const QPixmap icon_map("://images/icons8-clear-24.png"); \
         button->setIcon(QIcon(icon_map)); \
         button->setIconSize(icon_map.rect().size()); \
         button->setEnabled(false); \
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
         button->setToolTip( \
-            QString::fromUtf8("Очистить текущую таблицу, icons8.com")); \
+            QString::fromUtf8("Очистить текущую таблицу (icons8.com)")); \
         ui->horizontalLayout->addWidget(button); \
         connect(button, &QPushButton::clicked, this, &Widget::btn_clear_table_clicked); \
 }
