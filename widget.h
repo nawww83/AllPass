@@ -80,6 +80,8 @@ private slots:
 
     void update_table_info();
 
+    void highlight_items();
+
 signals:
     void master_phrase_ready();
 

@@ -26,6 +26,16 @@ static int g_new_storage_with_transfer_mode = false;
 static int g_table_is_loading = false;
 Q_GLOBAL_STATIC( StorageManager, storage_manager);
 
+/**
+ * @brief Создавать перед массовым обновлением таблицы.
+ * Запрещает автоматическую реакцию на изменение содержимого ячеек.
+ */
+class TableLoadingRAII {
+public:
+    explicit TableLoadingRAII() noexcept {g_table_is_loading = true;};
+    ~TableLoadingRAII(){g_table_is_loading = false;};
+};
+
 namespace {
     namespace pointers {
         MyTextEdit* txt_edit_master_phrase = nullptr;
@@ -61,10 +71,31 @@ static void critical_message_box(const QString& title, const QString& message) {
 
 // Очистить содержимое таблицы, сохраняя ее структуру.
 static void clear_table(QTableWidget* widget) {
-    g_table_is_loading = true;
+    TableLoadingRAII lock;
     widget->clearContents();
-    while (widget->rowCount() > 0) {
+    while (widget->rowCount() > 0)
         widget->removeRow(0);
+}
+
+// Подсветить пароль если просрочен; вернуть в дефолтное значение цвета, если нет.
+static void highlight_pswd(QTableWidget* widget, int row, const QDate& current_date) {
+    TableLoadingRAII lock;
+    auto date_item = widget->item(row, constants::date_column_idx);
+    auto pswd_item = widget->item(row, constants::pswd_column_idx);
+    if (!date_item || !pswd_item) return;
+    const auto& date = QDate::fromString(date_item->text(), "yyyy.MM.dd");
+    if (!date.isValid()) return;
+    const auto delta = current_date.toJulianDay() - date.toJulianDay(); // Разница в датах.
+    const qint64 basic_interval = 365; // Базовый интервал (в днях). В данном случае это год.
+    if ((delta > (basic_interval*3)/4) && (delta < basic_interval)) { // (75..100)% от года - желтый.
+        pswd_item->setBackground(Qt::yellow);
+        qDebug() << "Highlight item yellow: " << delta;
+    }
+    else if (delta >= basic_interval) { // Более 100% от года - красный.
+        pswd_item->setBackground(Qt::red);
+        qDebug() << "Highlight item red: " << delta;
+    } else {
+        pswd_item->setBackground(QBrush{});
     }
 }
 
@@ -619,6 +650,8 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
         if (date_item) {
             date_item->setText(date);
             qDebug() << "Set date: " << date;
+            const auto& current_date = QDate::currentDate();
+            highlight_pswd(ui->tableWidget, row, current_date);
         }
     }
 }
@@ -633,6 +666,7 @@ void Widget::load_storage()
 {
     QTableWidget* const table = ui->tableWidget;
     clear_table(table);
+    TableLoadingRAII lock;
     const auto loading_status = storage_manager->LoadFromStorage(table);
     qDebug() << "Loading status: " << int(loading_status);
     bool try_load_from_backup = false;
@@ -680,6 +714,7 @@ void Widget::load_storage()
             break;
     }
     if (try_load_from_backup) {
+        TableLoadingRAII lock;
         const auto loading_status_backup = storage_manager->LoadFromStorage(table, FileTypes::BACKUP);
         qDebug() << "Backup loading status: " << int(loading_status_backup);
         switch (loading_status_backup) {
@@ -770,6 +805,7 @@ void Widget::btn_recover_from_backup_clicked()
                              QString::fromUtf8("Таблица будет возвращена к исходному состоянию."));
         QTableWidget* const table = ui->tableWidget;
         clear_table(table);
+        TableLoadingRAII lock;
         const auto loading_status_revert = storage_manager->LoadFromStorage(table, FileTypes::TEMPORARY);
         qDebug() << "Revert: loading status: " << int(loading_status_revert);
         if (loading_status_revert != Loading_Errors::OK) {
@@ -854,6 +890,14 @@ void Widget::update_number_of_rows()
     ui->lbl_number_of_rows->setText(QString::fromUtf8("Количество записей: %1").arg(ui->tableWidget->rowCount()));
 }
 
+void Widget::highlight_items()
+{
+    const auto& current_date = QDate::currentDate();
+    QTableWidget* const table = ui->tableWidget;
+    for( int row = 0; row < table->rowCount(); ++row )
+        highlight_pswd(table, row, current_date);
+}
+
 void Widget::update_table_info()
 {
     ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
@@ -862,10 +906,9 @@ void Widget::update_table_info()
     btn_new_storage_with_transfer->setEnabled(true);
     btn_clear_table->setEnabled(true);
 
-    g_table_is_loading = false;
-
     storage_manager->RemoveTmpFile();
     storage_manager->SetTryToLoadFromTmp(false);
 
     update_number_of_rows();
+    highlight_items(); // Подсветить просроченные пароли.
 }

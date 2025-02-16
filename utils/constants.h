@@ -5,7 +5,7 @@
 
 namespace {
     static inline constexpr auto g_version_prefix = '#';
-    static inline constexpr auto VERSION_LABEL = "#v1.07"; // ASCII.
+    static inline constexpr auto VERSION_LABEL = "#v1.08"; // ASCII.
     static inline const char* g_asterics {"*************"};
     namespace labels {
         static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись с паролем");
