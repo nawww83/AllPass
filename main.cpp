@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
     splashFont.setBold(true);
     splashFont.setPixelSize(18);
     splash.setFont(splashFont);
-    splash.showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, QColor::fromString("blue"));
+    splash.showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, Qt::blue);
     a.processEvents();
 
     MyDialog dialog;
