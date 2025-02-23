@@ -24,12 +24,12 @@ namespace const_arr {
 
 class MyQByteArray : public QByteArray {
 public:
-    explicit MyQByteArray(QByteArray * parent): QByteArray(*parent) {};
+    explicit MyQByteArray(QByteArray * parent): QByteArray(*parent) {}
     char back() const {
         return this->at(size() - 1);
     }
     char& back() {
-        return operator[](size() - 1);
+        return this->data()[size() - 1];
     }
     MyQByteArray& removeLast() {
         if (!this->isEmpty())
