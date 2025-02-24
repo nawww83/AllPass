@@ -38,10 +38,10 @@ public:
     }
     MyQByteArray& resize(int new_size, char filler = '\0') {
         if (new_size >= 0) {
-            while (this->size() > new_size) {
+            while (size() > new_size) {
                 this->removeLast();
             }
-            while (this->size() < new_size) {
+            while (size() < new_size) {
                 this->push_back(filler);
             }
         }
@@ -258,14 +258,17 @@ inline static QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed)
     return result;
 }
 
-template <int N>
+template <int block_size>
 inline static void padd(QByteArray& data) {
-    const int n = data.size();
-    const int r =  n % N != 0 ? N - n % N : 0;
-    int counter = 0;
-    while (counter++ < r) {
-        data.push_back('\0');
-    }
+    #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
+        MyQByteArray& data_ref = static_cast<MyQByteArray&>(data);
+    #else
+        QByteArray& data_ref = data;
+    #endif
+    const int old_size = data.size();
+    const int res = old_size % block_size;
+    const int new_size = old_size + (res != 0 ? block_size - res : 0);
+    data_ref.resize(new_size, '\0');
 }
 
 inline static void dpadd(QByteArray& data) {
@@ -277,9 +280,8 @@ inline static void dpadd(QByteArray& data) {
     #else
         QByteArray& data_ref = data;
     #endif
-    while (!data_ref.isEmpty() && data_ref.back() == '\0') {
+    while (!data_ref.isEmpty() && data_ref.back() == '\0')
         data_ref.removeLast();
-    }
 }
 
 inline static uint8_t rotl8(uint8_t value, unsigned int count)
@@ -415,33 +417,24 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint se
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
-        #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-            MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-        #else
-            QByteArray& bytes_ref = bytes;
-        #endif
         for (int i=0; i<sizeof(uint); ++i) {
-            bytes_ref.push_back(static_cast<char>(seed % 256));
+            bytes.push_back(static_cast<char>(seed % 256));
             seed >>= 8;
         }
-        {
-            const auto bytesRead = bytes_ref.size();
-            const size_t res = bytesRead % blockSize;
-            bytes_ref.resize(bytesRead + (res > 0 ? blockSize - res : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes_ref.size();
+        padd<blockSize>(bytes);
+        const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
             const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes_ref.data() + i*blockSize), original_size_salt);
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                 hash.first ^= inner_hash.first;
                 hash.second ^= inner_hash.second;
             }
         }
-        utils::erase_bytes(bytes_ref);
+        utils::erase_bytes(bytes);
     }
     return hash;
 }
@@ -452,29 +445,20 @@ inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
-        #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-            MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-        #else
-            QByteArray& bytes_ref = bytes;
-        #endif
-        {
-            const auto bytesRead = bytes_ref.size();
-            const size_t r = bytesRead % blockSize;
-            bytes_ref.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes_ref.size();
+        padd<blockSize>(bytes);
+        const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
             const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes_ref.data() + i*blockSize), original_size_salt);
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                 hash_fs.first ^= inner_hash.first;
                 hash_fs.second ^= inner_hash.second;
             }
         }
-        utils::erase_bytes(bytes_ref);
+        utils::erase_bytes(bytes);
     }
     return hash_fs;
 }
@@ -485,29 +469,20 @@ inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
-        #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-            MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-        #else
-            QByteArray& bytes_ref = bytes;
-        #endif
-        {
-            const auto bytesRead = bytes_ref.size();
-            const size_t r = bytesRead % blockSize;
-            bytes_ref.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes_ref.size();
+        padd<blockSize>(bytes);
+        const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
             const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes_ref.data() + i*blockSize), original_size_salt);
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                 hash_enc.first ^= inner_hash.first;
                 hash_enc.second ^= inner_hash.second;
             }
         }
-        utils::erase_bytes(bytes_ref);
+        utils::erase_bytes(bytes);
     }
     return hash_enc;
 }
@@ -518,29 +493,20 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
     constexpr size_t blockSize = 64;
     {
         auto bytes = text.toUtf8();
-        #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-            MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-        #else
-            QByteArray& bytes_ref = bytes;
-        #endif
-        {
-            const auto bytesRead = bytes_ref.size();
-            const size_t r = bytesRead % blockSize;
-            bytes_ref.resize(bytesRead + (r > 0 ? blockSize - r : 0), '\0'); // Zero padding.
-        }
-        const auto bytesRead = bytes_ref.size();
+        padd<blockSize>(bytes);
+        const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
             const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
             for (size_t i=0; i<n; ++i) {
                 u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes_ref.data() + i*blockSize), original_size_salt);
+                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
                 hash_enc_inner.first ^= inner_hash.first;
                 hash_enc_inner.second ^= inner_hash.second;
             }
         }
-        utils::erase_bytes(bytes_ref);
+        utils::erase_bytes(bytes);
     }
     return hash_enc_inner;
 }
