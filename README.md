@@ -80,4 +80,4 @@
 
 Диаграмма шифрования сообщения показана на рисунке ниже.
 
-![screenshot](images/storage_manager_diagram.gif)
+![screenshot](AppCore/images/storage_manager_diagram.gif)
