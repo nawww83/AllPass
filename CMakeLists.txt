@@ -14,23 +14,24 @@ add_compile_options("-msse4.1")
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
+set(APP_DIR AppCore)
 set(UTILS_DIR utils)
 set(LFSR_DIR ${UTILS_DIR}/lfsr)
 
 INCLUDE_DIRECTORIES(${UTILS_DIR} ${LFSR_DIR} images)
 
 set(COMMON_SRC
-    main.cpp
-    widget.cpp
-    worker.cpp
-    passitemdelegate.cpp
-    storagemanager.cpp
-    widget.ui
-    images.qrc
-    widget.h
-    passitemdelegate.h
-    worker.h
-    storagemanager.h
+    ${APP_DIR}/main.cpp
+    ${APP_DIR}/widget.cpp
+    ${APP_DIR}/worker.cpp
+    ${APP_DIR}/passitemdelegate.cpp
+    ${APP_DIR}/storagemanager.cpp
+    ${APP_DIR}/widget.ui
+    ${APP_DIR}/images.qrc
+    ${APP_DIR}/widget.h
+    ${APP_DIR}/passitemdelegate.h
+    ${APP_DIR}/worker.h
+    ${APP_DIR}/storagemanager.h
     ${UTILS_DIR}/constants.h
     ${UTILS_DIR}/key.h
     ${UTILS_DIR}/stream_cipher.h
@@ -44,7 +45,7 @@ set(PROJECT_SOURCES
     ${COMMON_SRC}
 )
 
-set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
+set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/${APP_DIR}/app.rc")
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(AllPass
