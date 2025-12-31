@@ -305,44 +305,44 @@ inline static uint8_t rotr8(uint8_t value, unsigned int count)
 
 inline static QString encode_u32_simple_level(lfsr8::u32 sample)
 {
-    constexpr int num_of_symbols_per_sample = 4;
+    constexpr int num_of_symbols_per_sample = 5; // 5*6 = 30 < 32.
     QString word(num_of_symbols_per_sample, '\0');
     // Level 1: 48-57, 65-90, 97-122. Total = 62 symbols.
     for (int i = 0; i < num_of_symbols_per_sample; ++i) {
         lfsr8::u32 r = sample % 62u;
         auto code = r + 48u;
-        if (code > 57 && code < 65)
+        if (code > 57u && code < 65u)
         {
             code += 7u;
         }
-        if (code > 90 && code < 97)
+        if (code > 90u && code < 97u)
         {
             code += 6u;
         }
         word[num_of_symbols_per_sample - i - 1] = char(code);
-        sample >>= 6;
+        sample >>= 6; // округленно 6 бит на символ
     }
     return word;
 }
 
 inline static QString encode_u32_hard_level(lfsr8::u32 sample)
 {
-    constexpr int num_of_symbols_per_sample = 4;
+    constexpr int num_of_symbols_per_sample = 4; // 4*7 = 28 < 32
     QString word(num_of_symbols_per_sample, '\0');
     // Level 2: 33-47, 48-57, 65-90, 97-122. Total = 77 symbols.
     for (int i = 0; i < num_of_symbols_per_sample; ++i) {
         lfsr8::u32 r = sample % 77u;
         auto code = r + 33u;
-        if (code > 57 && code < 65)
+        if (code > 57u && code < 65u)
         {
             code += 7u;
         }
-        if (code > 90 && code < 97)
+        if (code > 90u && code < 97u)
         {
             code += 6u;
         }
         word[num_of_symbols_per_sample - i - 1] = char(code);
-        sample >>= 7;
+        sample >>= 7; // округленно 7 бит на символ
     }
     return word;
 }
