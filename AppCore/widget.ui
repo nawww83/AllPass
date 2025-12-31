@@ -157,6 +157,31 @@
           </property>
          </widget>
         </item>
+        <item>
+         <widget class="QComboBox" name="cmbbx_password_level">
+          <property name="font">
+           <font>
+            <pointsize>13</pointsize>
+           </font>
+          </property>
+          <property name="toolTip">
+           <string>Уровень пароля</string>
+          </property>
+          <property name="maxVisibleItems">
+           <number>2</number>
+          </property>
+          <item>
+           <property name="text">
+            <string>Простой (буквы цифры)</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Сложный (+доп. символы)</string>
+           </property>
+          </item>
+         </widget>
+        </item>
        </layout>
       </widget>
      </item>

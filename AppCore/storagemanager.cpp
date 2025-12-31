@@ -35,7 +35,8 @@ static const QSet<QString> g_supported_as_version_3 {
     QString("v1.05"),
     QString("v1.06"),
     QString("v1.07"),
-    QString("v1.08")
+    QString("v1.08"),
+    QString("v1.09")
 };
 
 #ifdef OS_Windows

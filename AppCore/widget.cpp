@@ -387,10 +387,11 @@ void Widget::update_pass() {
                 return;
             }
         }
-        QString pswd = utils::try_to_get_password(g_current_password_len);
+        const int pass_level = ui->cmbbx_password_level->currentIndex();
+        QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
         if (pswd.length() < g_current_password_len) {
             utils::request_passwords(watcher_passwords, g_current_password_len);
-            pswd = utils::try_to_get_password(g_current_password_len);
+            pswd = utils::try_to_get_password(g_current_password_len, pass_level);
         }
         pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
@@ -553,10 +554,11 @@ void Widget::discard_master_key()
 
 void Widget::insert_new_password()
 {
-    QString pswd = utils::try_to_get_password(g_current_password_len);
+    const int pass_level = ui->cmbbx_password_level->currentIndex();
+    QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
     if (pswd.length() < g_current_password_len) {
         utils::request_passwords(watcher_passwords, g_current_password_len);
-        pswd = utils::try_to_get_password(g_current_password_len);
+        pswd = utils::try_to_get_password(g_current_password_len, pass_level);
     }
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;

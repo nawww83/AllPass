@@ -70,6 +70,11 @@ namespace password {
 
 namespace utils {
 
+/**
+ * @brief Запросить пароли (относительно долго) и положить их в буфер.
+ * @param watcher Наблюдатель.
+ * @param password_len Количество символов.
+ */
 inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watcher, int password_len) {
     const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_request + 1;
     watcher.setFuture( password::worker->gen_n(std::ref(password::pass_gen), Nw) );
@@ -298,15 +303,46 @@ inline static uint8_t rotr8(uint8_t value, unsigned int count)
     return (value >> count) | (value << ( (-count) & mask ));
 }
 
-inline static QString encode_u32_to_94(lfsr8::u32 sample)
+inline static QString encode_u32_simple_level(lfsr8::u32 sample)
 {
-    constexpr int num_of_symbols_per_sample = 5; // See the password_len_per_request.
+    constexpr int num_of_symbols_per_sample = 4;
     QString word(num_of_symbols_per_sample, '\0');
-    for (int i=0; i<num_of_symbols_per_sample; ++i) {
-        const auto code = sample % 94 + 33;
-        word[num_of_symbols_per_sample-i-1] = char(code);
-        sample -= code;
-        sample /= 94;
+    // Level 1: 48-57, 65-90, 97-122. Total = 62 symbols.
+    for (int i = 0; i < num_of_symbols_per_sample; ++i) {
+        lfsr8::u32 r = sample % 62u;
+        auto code = r + 48u;
+        if (code > 57 && code < 65)
+        {
+            code += 7u;
+        }
+        if (code > 90 && code < 97)
+        {
+            code += 6u;
+        }
+        word[num_of_symbols_per_sample - i - 1] = char(code);
+        sample >>= 6;
+    }
+    return word;
+}
+
+inline static QString encode_u32_hard_level(lfsr8::u32 sample)
+{
+    constexpr int num_of_symbols_per_sample = 4;
+    QString word(num_of_symbols_per_sample, '\0');
+    // Level 2: 33-47, 48-57, 65-90, 97-122. Total = 77 symbols.
+    for (int i = 0; i < num_of_symbols_per_sample; ++i) {
+        lfsr8::u32 r = sample % 77u;
+        auto code = r + 33u;
+        if (code > 57 && code < 65)
+        {
+            code += 7u;
+        }
+        if (code > 90 && code < 97)
+        {
+            code += 6u;
+        }
+        word[num_of_symbols_per_sample - i - 1] = char(code);
+        sample >>= 7;
     }
     return word;
 }
@@ -511,7 +547,13 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
     return hash_enc_inner;
 }
 
-inline static QString try_to_get_password(int len)
+/**
+ * @brief Получить пароль из буфера паролей (быстро).
+ * @param len Количество символов пароля.
+ * @param level Уровень сложности пароля (0, 1).
+ * @return
+ */
+inline static QString try_to_get_password(int len, int level)
 {
     using namespace password;
     QString pswd{};
@@ -526,7 +568,10 @@ inline static QString try_to_get_password(int len)
             pswd_buff->mPasswords.back() = 0;
             pswd_buff->mPasswords.pop_back();
         }
-        pswd += encode_u32_to_94(raw64);
+        if (level == 0)
+            pswd += encode_u32_simple_level(raw64);
+        if (level != 0)
+            pswd += encode_u32_hard_level(raw64);
         #pragma optimize( "", off )
             capacity -= 1;
             capacity = capacity == 0 ? 2 : capacity;
