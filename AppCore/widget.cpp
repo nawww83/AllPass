@@ -270,7 +270,7 @@ Widget::Widget(QString&& pin, QWidget *parent)
     connect(this, &Widget::row_inserted, this, &Widget::update_number_of_rows);
     connect(this, &Widget::table_changed, this, &Widget::update_table_info);
 
-    ui->spbx_pass_len->setSingleStep(constants::pass_len_step);
+    ui->spbx_pass_len->setSingleStep(constants::password_len_step);
     g_current_password_len = ui->spbx_pass_len->value();
 
     ui->btn_generate->setText(labels::gen_pass_txt);
@@ -606,7 +606,7 @@ void Widget::on_btn_generate_clicked()
 
 void Widget::on_spbx_pass_len_valueChanged(int arg1)
 {
-    g_current_password_len = arg1 - (arg1 % constants::pass_len_step);
+    g_current_password_len = arg1 - (arg1 % constants::password_len_step);
 }
 
 void Widget::on_spbx_pass_len_editingFinished()

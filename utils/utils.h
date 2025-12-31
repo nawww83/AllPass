@@ -76,7 +76,7 @@ namespace utils {
  * @param password_len Количество символов.
  */
 inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watcher, int password_len) {
-    const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_request + 1;
+    const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_u64 + 1;
     watcher.setFuture( password::worker->gen_n(std::ref(password::pass_gen), Nw) );
     watcher.waitForFinished();
     password::pswd_buff->mPasswords = watcher.result();
@@ -556,13 +556,12 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
 inline static QString try_to_get_password(int len, int level)
 {
     using namespace password;
-    QString pswd{};
+    QString pswd;
     int capacity = 2;
     lfsr8::u64 raw64;
     while (pswd.size() < len) {
-        if (pswd_buff->mPasswords.empty()) {
-            break;
-        }
+        if (pswd_buff->mPasswords.empty())
+            return {};
         raw64 = capacity == 2 ? pswd_buff->mPasswords.back() : raw64;
         if (capacity == 2) {
             pswd_buff->mPasswords.back() = 0;
@@ -578,6 +577,7 @@ inline static QString try_to_get_password(int len, int level)
             raw64 >>= 32;
         #pragma optimize( "", on )
     }
+    pswd.resize(len);
     return pswd;
 }
 
