@@ -330,9 +330,12 @@ inline static QString encode_u32_hard_level(lfsr8::u32 sample)
     constexpr int num_of_symbols_per_sample = 4; // 4*7 = 28 < 32
     QString word(num_of_symbols_per_sample, '\0');
     // Level 2: 33-47, 48-57, 65-90, 97-122. Total = 77 symbols.
+    bool has_special_symbol = false;
     for (int i = 0; i < num_of_symbols_per_sample; ++i) {
         lfsr8::u32 r = sample % 77u;
         auto code = r + 33u;
+        if (code >= 33u && code <= 47u)
+            has_special_symbol = true;
         if (code > 57u && code < 65u)
         {
             code += 7u;
@@ -344,6 +347,8 @@ inline static QString encode_u32_hard_level(lfsr8::u32 sample)
         word[num_of_symbols_per_sample - i - 1] = char(code);
         sample >>= 7; // округленно 7 бит на символ
     }
+    if (!has_special_symbol)
+        word.clear();
     return word;
 }
 
