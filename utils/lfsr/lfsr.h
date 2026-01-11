@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @author Новиков А.В.
+ * @author Новиков А.В., nawww83@gmail.com.
  *
  * Генератор LFSR в поле GF(p^m) с числом ячеек m = [1, 8] и простым модулем p = [2, 256*256).
  * Реализован код для SSE4.1 архитектуры x86_64.
@@ -15,18 +15,21 @@
 #include <cassert>
 #include <array>
 #include <type_traits>
+#include <cmath>
 
 #if defined(__x86_64__) || defined(_M_X64)
-    #define USE_SSE
+#define USE_SSE
 #endif
 
 #ifdef USE_SSE
-    #include <immintrin.h>
-    #include <smmintrin.h>
+#include <immintrin.h>
+#include <smmintrin.h>
 #endif
 
 
-namespace lfsr8 {
+namespace lfsr8
+{
+
 using u64 = uint64_t;
 using u32 = uint32_t;
 using u16 = uint16_t;
@@ -42,47 +45,74 @@ public:
 
 /**
  * @brief Генератор LFSR общего назначения в поле GF(p^m).
- * p должно быть простым числом в итервале:
+ * @details
+ * p должно быть простым числом в интервале:
  *   [2, 256) для длин регистра (4, 8].
  *   [2, 256*256) для длин регистра [1, 4].
- * m - длина регистра [1, 8].
+ * m - длина регистра, [1, 8].
  */
 template <int p, int m>
 class LFSR {
     using STATE = typename MType<m>::STATE;
     using SAMPLE = typename MType<m>::SAMPLE;
 public:
-    constexpr LFSR(STATE K): m_K(K) {
+    /**
+     * @brief Конструктор с параметром.
+     * @param K Коэффициенты (g[0], ..., g[m-1]) порождающего полинома g(x).
+     */
+    constexpr LFSR(STATE K): m_K(K)
+    {
         static_assert(m <= 8);
         static_assert(m > 0);
-        if constexpr (m > 4) {
+        if constexpr (m > 4)
+        {
             static_assert(p < 256);
-        } else {
+        }
+        else
+        {
             static_assert(p < 256*256);
         }
         static_assert(p > 1);
         m_calculate_inverse_of_K();
     };
 
-    void set_state(STATE st) {
-        m_state = st;
+    /**
+     * @brief Максимальный период генератора.
+     */
+    static const unsigned long T_MAX = std::pow(p, m) - 1;
+
+    /**
+     * @brief Установить состояние.
+     * @param state Состояние.
+     */
+    void set_state(STATE state)
+    {
+        m_state = state;
     }
 
-    void set_unit_state() {
+    /**
+     * @brief Установить единичное состояние.
+     */
+    void set_unit_state()
+    {
         m_state = {1};
     }
 
-    void set_K(STATE K) {
+    /**
+     * Установить коэффициенты порождающего полинома g(x).
+     */
+    void set_K(STATE K)
+    {
         m_K = K;
         m_calculate_inverse_of_K();
     }
 
     /**
-     * @brief Сделать шаг вперед (один такт генератора).
-     * @param input Входной символ (по модулю p), который подается
-     * на вход генератора.
+     * @brief Сделать шаг вперед (осуществить один такт генератора).
+     * @param input Входной символ (по модулю p), который подается на вход генератора.
      */
-    void next(SAMPLE input=0) {
+    void next(SAMPLE input = 0)
+    {
 #ifdef USE_SSE
         if constexpr (m > 4) {
             __m128i a = _mm_set1_epi16(m_state[m-1]);
@@ -96,7 +126,7 @@ public:
             c = _mm_add_epi16(c, inp);
             _mm_store_si128((__m128i*)&m_state[0], c);
             for (int i=0; i<m; ++i) {
-                m_state[i] %= SAMPLE(p);
+                m_state[i] %= static_cast<SAMPLE>(p);
             }
         } else {
             __m128i a = _mm_set1_epi32(m_state[m-1]);
@@ -110,93 +140,298 @@ public:
             c = _mm_add_epi32(c, inp);
             _mm_store_si128((__m128i*)&m_state[0], c);
             for (int i=0; i<m; ++i) {
-                m_state[i] %= SAMPLE(p);
+                m_state[i] %= static_cast<SAMPLE>(p);
             }
         }
 #else // Для процессора общего назначения.
         const SAMPLE m_v = m_state[m-1];
         for (int i=m-1; i>0; i--) {
-            m_state[i] = (m_state[i-1] + m_v*m_K[i]) % SAMPLE(p);
+            m_state[i] = (m_state[i-1] + m_v*m_K[i]) % static_cast<SAMPLE>(p);
         }
-        m_state[0] = (input + m_v*m_K[0]) % SAMPLE(p);
+        m_state[0] = (input + m_v*m_K[0]) % static_cast<SAMPLE>(p);
 #endif
     }
 
     /**
-     * @brief Сделать шаг назад (один такт генератора). Обратно к next(input).
-     * @param input Входной символ (по модулю p), который подается
-     * на вход генератора.
+     * @brief Сделать шаг назад. Является операцией, обратной к next(input).
+     * @param input Входной символ (по модулю p), который подается на вход генератора.
      */
-    void back(SAMPLE input=0) {
-        const SAMPLE m_v = (m_inv_K0*(m_state[0] - input + SAMPLE(p))) % SAMPLE(p);
+    void back(SAMPLE input = 0)
+    {
+#ifdef USE_SSE
+        if constexpr (m > 4)
+        {
+            __m128i mask1 = _mm_slli_si128(_mm_set1_epi16(-1), 2);
+            __m128i input_ext = _mm_andnot_si128( mask1, _mm_set1_epi16(input) );
+            __m128i state = _mm_andnot_si128( mask1, _mm_set1_epi16(m_state[0]) );
+            __m128i a = _mm_sub_epi16(state, input_ext);
+
+            __m128i prime = _mm_andnot_si128( mask1, _mm_set1_epi16(p) );
+            a = _mm_add_epi16(a, prime);
+
+            __m128i i_coeffs = _mm_load_si128((const __m128i*)&m_inv_K[0]);
+            a = _mm_mullo_epi16(a, i_coeffs);
+            a = _mm_add_epi16(a, _mm_slli_si128(a, 2));
+            a = _mm_add_epi16(a, _mm_slli_si128(a, 4));
+            a = _mm_add_epi16(a, _mm_slli_si128(a, 8));
+            {
+                alignas(16) u16x8 tmp;
+                _mm_store_si128((__m128i*)&tmp[0], a);
+                for (int i=0; i<m; ++i) {
+                    tmp[i] %= static_cast<SAMPLE>(p);
+                }
+                a = _mm_load_si128((const __m128i*)&tmp[0]);
+            }
+            __m128i mask = _mm_set_epi16(0, 0, 0, 0, 0, 0, 0, -1);
+            mask = _mm_slli_si128(mask, 2*(m-1));
+            mask = _mm_andnot_si128(mask, _mm_set1_epi16(-1));
+
+            __m128i d = _mm_load_si128((const __m128i*)&m_state[0]);
+            d = _mm_and_si128(mask, _mm_srli_si128(d, 2));
+
+            __m128i coeffs = _mm_load_si128((const __m128i*)&m_K[0]);
+            coeffs = _mm_and_si128(mask, _mm_srli_si128(coeffs, 2));
+
+            __m128i mask2 = _mm_set_epi16(0, 0, 0, 0, 0, 0, 0, -1);
+            mask2 = _mm_slli_si128(mask2, 2*(m-1));
+            coeffs = _mm_add_epi16(coeffs, mask2);
+
+            a = _mm_sub_epi16(d, _mm_mullo_epi16(a, coeffs));
+            a = _mm_add_epi16(a, _mm_and_si128(mask, _mm_set1_epi16(static_cast<SAMPLE>(p*p))));
+            _mm_store_si128((__m128i*)&m_state[0], a);
+            for (int i=0; i<m; ++i) {
+                m_state[i] %= static_cast<SAMPLE>(p);
+            }
+        }
+        else
+        {
+            __m128i mask1 = _mm_slli_si128(_mm_set1_epi32(-1), 4);
+            __m128i input_ext = _mm_andnot_si128( mask1, _mm_set1_epi32(input) );
+            __m128i state = _mm_andnot_si128( mask1, _mm_set1_epi32(m_state[0]) );
+            __m128i a = _mm_sub_epi32(state, input_ext);
+
+            __m128i prime = _mm_andnot_si128( mask1, _mm_set1_epi32(p) );
+            a = _mm_add_epi32(a, prime);
+
+            __m128i i_coeffs = _mm_load_si128((const __m128i*)&m_inv_K[0]);
+            a = _mm_mullo_epi32(a, i_coeffs);
+            a = _mm_add_epi32(a, _mm_slli_si128(a, 4));
+            a = _mm_add_epi32(a, _mm_slli_si128(a, 8));
+            {
+                alignas(16) u32x4 tmp;
+                _mm_store_si128((__m128i*)&tmp[0], a);
+                for (int i=0; i<m; ++i) {
+                    tmp[i] %= static_cast<SAMPLE>(p);
+                }
+                a = _mm_load_si128((const __m128i*)&tmp[0]);
+            }
+            __m128i mask = _mm_set_epi32(0, 0, 0, -1);
+            mask = _mm_slli_si128(mask, 4*(m-1));
+            mask = _mm_andnot_si128(mask, _mm_set1_epi32(-1));
+
+            __m128i d = _mm_load_si128((const __m128i*)&m_state[0]);
+            d = _mm_and_si128(mask, _mm_srli_si128(d, 4));
+
+            __m128i coeffs = _mm_load_si128((const __m128i*)&m_K[0]);
+            coeffs = _mm_and_si128(mask, _mm_srli_si128(coeffs, 4));
+
+            __m128i mask2 = _mm_set_epi32(0, 0, 0, -1);
+            mask2 = _mm_slli_si128(mask2, 4*(m-1));
+            coeffs = _mm_add_epi32(coeffs, mask2);
+
+            a = _mm_sub_epi32(d, _mm_mullo_epi32(a, coeffs));
+            a = _mm_add_epi32(a, _mm_and_si128(mask, _mm_set1_epi32(static_cast<SAMPLE>(p*p))));
+            _mm_store_si128((__m128i*)&m_state[0], a);
+            for (int i=0; i<m; ++i) {
+                m_state[i] %= static_cast<SAMPLE>(p);
+            }
+        }
+#else
+        const SAMPLE m_v = (m_inv_K[0]*(m_state[0] - inp + static_cast<SAMPLE>(p))) % static_cast<SAMPLE>(p);
         for (int i=0; i<m-1; i++) {
-            m_state[i] = (m_state[i+1] - m_v*m_K[i+1] + SAMPLE(p)*SAMPLE(p)) % SAMPLE(p);
+            m_state[i] = (m_state[i+1] - m_v*m_K[i+1] + static_cast<SAMPLE>(p)*static_cast<SAMPLE>(p)) % static_cast<SAMPLE>(p);
         }
         m_state[m-1] = m_v;
+#endif
+    }
+
+    /**
+     * @brief Возвести в квадрат, то есть вычислить состояние (x^s)^2, где
+     * x^s - текущее состояние (некоторая степень s вспомогательной переменной x).
+     * Соответствует s итерациям next() - прямое вычисление (долго, если s - большое число).
+     */
+    void square()
+    {
+        const STATE old_state = m_state;
+        for (int i = 0; i < m; ++i)
+        {
+            m_state[i] = 0;
+        }
+        for (int power = 2*m - 2; power >= 0; --power)
+        {
+            SAMPLE v = 0;
+            for (int i = 0; i < power/2 + 1; ++i) {
+                const int j = power - i;
+                if ((j >= m) || (j < 0)) { continue;}
+                const SAMPLE tmp = (old_state[i] * old_state[j]) % SAMPLE(p);
+                v += (i != j) ? (2*tmp) % SAMPLE(p) : tmp;
+            }
+            next(v);
+        }
+    }
+
+    /**
+     * @brief Умножить текущее состояние x^s на некоторое другое состояние x^t.
+     * Итоговое состояние генератора становится равным x^(s+t).
+     * @param other Другое состояние x^t.
+     */
+    void mult_by(STATE other)
+    {
+        const STATE old_state = m_state;
+        for (int i = 0; i < m; ++i)
+        {
+            m_state[i] = 0;
+        }
+        for (int power = 2*m - 2; power >= 0; --power)
+        {
+            SAMPLE v = 0;
+            for (int i = 0; i < power + 1; ++i) {
+                const int j = power - i;
+                if ((j >= m) || (j < 0)) { continue;}
+                if ((i >= m) || (i < 0)) { continue;}
+                v += (old_state[i] * other[j]) % SAMPLE(p);
+            }
+            next(v);
+        }
+    }
+
+    /**
+     * @brief Возвести текущее состояние генератора в степень.
+     * @param q Показатель степени.
+     */
+    void power_by(unsigned long q)
+    {
+        unsigned long x = q;
+        LFSR<p, m> lfsr{m_K};
+        lfsr.set_unit_state();
+        for (; x != 0;)
+        {
+            if ((x & 1) == 1)
+                lfsr.mult_by(get_state());
+            square();
+            x /= 2;
+        }
+        set_state(lfsr.get_state());
+    }
+
+    /**
+     * @brief Возвести состояние в степень.
+     * @param state Состояние x^t.
+     * @param K Коэффициенты порождающего полинома g(x).
+     * @param q Показатель степени.
+     * @return Состояние x^(qt).
+     */
+    static STATE power_by(STATE state, STATE K, unsigned long q)
+    {
+        LFSR<p, m> lfsr{K};
+        lfsr.set_state(state);
+        lfsr.power_by(q);
+        return lfsr.get_state();
+    }
+
+    /**
+     * @brief Вычислить обратное состояние.
+     * @param state Состояние x^t.
+     * @param K Коэффициенты порождающего полинома g(x).
+     * @return Состояние, 1/x^t.
+     */
+    static STATE inverse_of(STATE state, STATE K)
+    {
+        return power_by(state, K, T_MAX - 1);
     }
 
     /**
      * @brief Насытить генератор.
      * @param q Количество тактов.
      */
-    void saturate(int q=m) {
-        assert(!is_zero<m>(m_state));
-        assert(q >= m);
-        for (int i=0; i<q; ++i) {
+    void saturate(int q = m)
+    {
+        for (int i = 0; i < q; ++i) {
             next();
         }
     }
 
     /**
      * @brief Является ли заданное состояние текущим состоянием генератора.
-     * @param st Заданное состояние.
+     * @param state Заданное состояние.
      * @return Да/нет.
      */
-    bool is_state(STATE st) const {
+    bool is_state(STATE state) const
+    {
 #ifdef USE_SSE
         bool result = true;
-        for (int i=0; i<m; ++i) {
-            result &= (m_state[i] == st[i]);
+        for (int i = 0; i < m; ++i)
+        {
+            result &= (m_state[i] == state[i]);
         }
         return result;
 #else
-        return st == m_state;
+        return (state == m_state);
 #endif
     }
 
-    auto get_state() const {
+    STATE get_generator_coeffs() const
+    {
+        return m_K;
+    }
+
+    STATE get_state() const
+    {
         return m_state;
     }
 
-    auto get_cell(int idx) const {
+    SAMPLE get_cell(int idx) const
+    {
         return m_state[idx];
     }
 private:
+    /**
+     * @brief Состояние генератора.
+     */
     alignas(16) STATE m_state {};
 
+    /**
+     * @brief Коэффициенты порождающего полинома g(x).
+     */
     alignas(16) STATE m_K {};
 
-    SAMPLE m_inv_K0 {};
+    /**
+     * @brief Коэффициенты регистра для выполнения шага назад.
+     */
+    alignas(16) STATE m_inv_K {};
 
     /**
-     * @brief Вычисляется обратный (по умножению) коэффициент.
+     * @brief Вычисляется обратный (по умножению) коэффициент K[0].
      */
-    void m_calculate_inverse_of_K() {
-        const auto x = m_K[0];
-        assert(x != 0);
-        m_inv_K0 = 1;
-        for (;;) {
-            const auto modulo_p = x * m_inv_K0 % static_cast<SAMPLE>(p);
-            if (modulo_p == SAMPLE(1)) {
+    void m_calculate_inverse_of_K()
+    {
+        const auto g0 = m_K[0];
+        assert(g0 != 0);
+        SAMPLE inverse = 1;
+        const auto modulo = static_cast<SAMPLE>(p);
+        for (;; inverse++)
+        {
+            const auto product = (g0 * inverse) % modulo;
+            if (product == 1)
                 break;
-            }
-            m_inv_K0++;
         }
+        m_inv_K[0] = inverse;
     }
 };
 
 /**
  * @brief Класс сдвоенного LFSR генератора общей длиной m = 4*2.
+ * @details
  * Хранит числа в 16-битных ячейках.
  * Цель данного генератора: оптимизировать использование основного класса (см. LFSR), если
  * требуется парная работа генераторов. Генераторы работают независимо, но в
@@ -208,22 +443,23 @@ class LFSR_paired_2x4 {
     static_assert(p > 1);
 public:
     /**
-     * @brief Конструктор.
+     * @brief Конструктор с параметром.
      * @param K Коэффициенты двух порождающих полиномов в поле GF(p^4).
      */
-    constexpr LFSR_paired_2x4(u16x8 K): m_K(K) {
-        m_calculate_inverse_of_K();
-    }
+    constexpr LFSR_paired_2x4(u16x8 K): m_K(K) {m_calculate_inverse_of_K();};
 
-    void set_state(u16x8 state) {
+    void set_state(u16x8 state)
+    {
         m_state = state;
     }
 
-    void set_unit_state() {
+    void set_unit_state()
+    {
         m_state = {1, 0, 0, 0, 1, 0, 0, 0};
     }
 
-    void set_K(u16x8 K) {
+    void set_K(u16x8 K)
+    {
         m_K = K;
         m_calculate_inverse_of_K();
     }
@@ -233,7 +469,8 @@ public:
      * @param input Входной символ (по модулю p), который одинаково
      * подается на оба генератора.
      */
-    void next(u16 input=0) {
+    void next(u16 input = 0)
+    {
 #ifdef USE_SSE
         __m128i a = _mm_set1_epi16(m_state[3]);
         __m128i b = _mm_set1_epi16(m_state[3] ^ m_state[7]);
@@ -270,7 +507,8 @@ public:
      * @param inp1 Входной символ (по модулю p) первого генератора.
      * @param inp2 Входной символ (по модулю p) второго генератора.
      */
-    void next(u16 inp1, u16 inp2) {
+    void next(u16 inp1, u16 inp2)
+    {
 #ifdef USE_SSE
         __m128i a = _mm_set1_epi16(m_state[3]);
         __m128i b = _mm_set1_epi16(m_state[3] ^ m_state[7]);
@@ -281,14 +519,14 @@ public:
 
         __m128i mask1 = _mm_slli_si128(_mm_set1_epi16(-1), 2);
         const __m128i mask2 = _mm_set_epi16(-1, -1, -1, 0, -1, -1, -1, -1);
-        __m128i inp = _mm_andnot_si128( mask1, _mm_set1_epi16(inp1) );
-        inp = _mm_or_si128( inp, _mm_andnot_si128( mask2, _mm_set1_epi16(inp2) ) );
+        __m128i input = _mm_andnot_si128( mask1, _mm_set1_epi16(inp1) );
+        input = _mm_or_si128( input, _mm_andnot_si128( mask2, _mm_set1_epi16(inp2) ) );
 
         const __m128i mask = _mm_and_si128(mask1, mask2); // _mm_set_epi16(-1, -1, -1, 0, -1, -1, -1, 0);
         __m128i d = _mm_load_si128((const __m128i*)&m_state[0]);
         d = _mm_and_si128(mask, _mm_slli_si128(d, 2));
         d = _mm_add_epi16(c, d);
-        d = _mm_add_epi16(inp, d);
+        d = _mm_add_epi16(input, d);
         _mm_store_si128((__m128i*)&m_state[0], d);
         for (int i=0; i<8; ++i) {
             m_state[i] %= static_cast<u16>(p);
@@ -310,7 +548,8 @@ public:
      * @param inp1 Входной символ (по модулю p) первого генератора.
      * @param inp2 Входной символ (по модулю p) второго генератора.
      */
-    void back(u16 inp1, u16 inp2) {
+    void back(u16 inp1, u16 inp2)
+    {
 #ifdef USE_SSE
         __m128i mask1 = _mm_slli_si128(_mm_set1_epi16(-1), 2);
         const __m128i mask2 = _mm_set_epi16(-1, -1, -1, 0, -1, -1, -1, -1);
@@ -368,32 +607,37 @@ public:
 #endif
     }
 
-    auto get_state() const {
+    auto get_state() const
+    {
         return m_state;
     }
 
     /**
-     * @brief Совпадает ли заданное состояние с текущим "нижним" состоянием генератора.
-     * @param st Заданное состояние.
+     * @brief Совпадает ли заданное состояние с текущей нижней частью состояния.
+     * @param state Заданное состояние.
      * @return Да/нет.
      */
-    bool is_state_low(u16x8 st) const {
+    bool is_state_low(u16x8 state) const
+    {
         bool result = true;
-        for (int i=0; i<4; ++i) {
-            result &= (m_state[i] == st[i]);
+        for (int i = 0; i < 4; ++i)
+        {
+            result &= (m_state[i] == state[i]);
         }
         return result;
     }
 
     /**
-     * @brief Совпадает ли заданное состояние с текущим "верхним" состоянием генератора.
-     * @param st Заданное состояние.
+     * @brief Совпадает ли заданное состояние с текущей верхней частью состояния.
+     * @param state Заданное состояние.
      * @return Да/нет.
      */
-    bool is_state_high(u16x8 st) const {
+    bool is_state_high(u16x8 state) const
+    {
         bool result = true;
-        for (int i=0; i<4; ++i) {
-            result &= (m_state[i + 4] == st[i + 4]);
+        for (int i = 0; i < 4; ++i)
+        {
+            result &= (m_state[i + 4] == state[i + 4]);
         }
         return result;
     }
@@ -407,26 +651,29 @@ private:
     /**
      * @brief Вычисляются обратные (по умножению) коэффициенты.
      */
-    void m_calculate_inverse_of_K() {
-        const auto x0 = m_K[0];
-        const auto x4 = m_K[4];
-        assert(x0 != 0);
-        assert(x4 != 0);
-        m_inv_K[0] = 1;
-        m_inv_K[4] = 1;
+    void m_calculate_inverse_of_K()
+    {
+        const auto g0 = m_K[0];
+        const auto g4 = m_K[4];
+        assert(g0 != 0);
+        assert(g4 != 0);
+        u16 inverse0 = 1;
+        u16 inverse4 = 1;
+        const auto modulo = static_cast<u16>(p);
         bool achieved0 = false;
         bool achieved4 = false;
-        for (;;) {
-            const auto modulo_0 = (x0 * m_inv_K[0]) % static_cast<u16>(p);
-            const auto modulo_4 = (x4 * m_inv_K[4]) % static_cast<u16>(p);
-            achieved0 |= modulo_0 == u16(1);
-            achieved4 |= modulo_4 == u16(1);
-            if (achieved0 && achieved4) {
-                break;
-            }
-            m_inv_K[0] += !achieved0;
-            m_inv_K[4] += !achieved4;
+        for (;;)
+        {
+            const auto product0 = (g0 * inverse0) % modulo;
+            const auto product4 = (g4 * inverse4) % modulo;
+            achieved0 = achieved0 ? achieved0 : product0 == 1;
+            achieved4 = achieved4 ? achieved4 : product4 == 1;
+            if (achieved0 && achieved4) break;
+            inverse0 += !achieved0;
+            inverse4 += !achieved4;
         }
+        m_inv_K[0] = inverse0;
+        m_inv_K[4] = inverse4;
     }
 };
 
