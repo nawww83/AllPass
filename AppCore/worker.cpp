@@ -12,9 +12,9 @@ QFuture<lfsr_rng::Generators> Worker::seed(lfsr_rng::STATE st) {
     return QtConcurrent::run(f, st);
 }
 
-QFuture<QVector<lfsr8::u64> > Worker::gen_n(lfsr_rng::Generators& g, int n)
+QFuture<QVector<lfsr8::u64> > Worker::gen_n(lfsr_rng::Generators g, int n)
 {
-    auto f = [&g](int n) {
+    auto f = [g](int n) mutable {
         QVector<lfsr8::u64> v{};
         v.reserve(n);
         for (int i=0; i<n; ++i) {

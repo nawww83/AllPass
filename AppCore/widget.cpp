@@ -236,7 +236,7 @@ static int run_test() {
 #endif
 
 
-Widget::Widget(QString&& pin, QWidget *parent)
+Widget::Widget(QString pin, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {

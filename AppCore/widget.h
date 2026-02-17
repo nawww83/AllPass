@@ -26,7 +26,7 @@ class Widget : public QWidget
     Q_OBJECT
 
 public:
-    Widget(QString &&pin, QWidget *parent = nullptr);
+    Widget(QString pin, QWidget *parent = nullptr);
     ~Widget();
 
     bool eventFilter(QObject *object, QEvent *event) override;

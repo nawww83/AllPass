@@ -50,7 +50,8 @@ public:
 };
 
 struct PasswordBuffer {
-    QVector<lfsr8::u64> mPasswords{};
+    QVector<lfsr8::u64> mPasswords;
+    mutable QMutex mMutex;
 };
 
 struct PinCode {
@@ -77,24 +78,51 @@ namespace utils {
  */
 inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>>& watcher, int password_len) {
     const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_u64 + 1;
-    watcher.setFuture( password::worker->gen_n(std::ref(password::pass_gen), Nw) );
+    watcher.setFuture( password::worker->gen_n(password::pass_gen, Nw) );
     watcher.waitForFinished();
-    password::pswd_buff->mPasswords = watcher.result();
+    {
+        QMutexLocker locker(&password::pswd_buff->mMutex);
+        password::pswd_buff->mPasswords = watcher.result();
+    }
     qDebug() << "Passwords were requested.";
 }
 
-inline static void fill_pin(QString&& pin) {
-    QString mPin = std::move(pin);
+inline static void erase_bytes(uint8_t* b, int len) {
+#pragma optimize( "", off )
+    for (int i=0; i<len; ++i) {
+        b[i] = 0;
+    }
+#pragma optimize( "", on )
+}
+
+inline static void erase_bytes(QByteArray& b) {
+#pragma optimize( "", off )
+    for (int i=0; i<b.length(); ++i) {
+        b[i] = '\0';
+    }
+#pragma optimize( "", on )
+}
+
+inline static void erase_string(QString& str) {
+    if (str.isEmpty()) return;
+#pragma optimize( "", off )
+    // Получаем доступ к сырым данным (UTF-16)
+    ushort* data = reinterpret_cast<ushort*>(str.data());
+    int size = str.size();
+    for (int i = 0; i < size; ++i) {
+        data[i] = 0;
+    }
+#pragma optimize( "", on )
+    str.clear(); // Теперь уже можно безопасно очистить объект
+}
+
+inline static void fill_pin(QString pin) {
     using namespace password;
-    pin_code->mPinCode[0] = mPin[0].digitValue();
-    pin_code->mPinCode[1] = mPin[1].digitValue();
-    pin_code->mPinCode[2] = mPin[2].digitValue();
-    pin_code->mPinCode[3] = mPin[3].digitValue();
-    #pragma optimize( "", off )
-        for (auto& el : mPin) {
-            el = '\0';
-        }
-    #pragma optimize( "", on )
+    pin_code->mPinCode[0] = pin[0].digitValue();
+    pin_code->mPinCode[1] = pin[1].digitValue();
+    pin_code->mPinCode[2] = pin[2].digitValue();
+    pin_code->mPinCode[3] = pin[3].digitValue();
+    erase_string(pin);
 }
 
 inline static void back_up_pin() {
@@ -158,30 +186,6 @@ inline static void clear_main_key() {
         key->set_key(0, 6);
         key->set_key(0, 5);
         key->set_key(0, 4);
-    #pragma optimize( "", on )
-}
-
-inline static void erase_bytes(uint8_t* b, int len) {
-    #pragma optimize( "", off )
-        for (int i=0; i<len; ++i) {
-            b[i] = 0;
-        }
-    #pragma optimize( "", on )
-}
-
-inline static void erase_bytes(QByteArray& b) {
-#pragma optimize( "", off )
-    for (int i=0; i<b.length(); ++i) {
-        b[i] = '\0';
-    }
-#pragma optimize( "", on )
-}
-
-inline static void erase_string(QString& str) {
-    #pragma optimize( "", off )
-        for (auto& el : str) {
-            el = '\0';
-        }
     #pragma optimize( "", on )
 }
 
@@ -305,50 +309,40 @@ inline static uint8_t rotr8(uint8_t value, unsigned int count)
 
 inline static QString encode_u32_simple_level(lfsr8::u32 sample)
 {
-    constexpr int num_of_symbols_per_sample = 5; // 5*6 = 30 < 32.
-    QString word(num_of_symbols_per_sample, '\0');
+    QString word(constants::password_len_per_u32, '\0');
     // Level 1: 48-57, 65-90, 97-122. Total = 62 symbols.
-    for (int i = 0; i < num_of_symbols_per_sample; ++i) {
+    for (int i = 0; i < constants::password_len_per_u32; ++i) {
         lfsr8::u32 r = sample % 62u;
+        sample /= 62u; // Используем деление
         auto code = r + 48u;
-        if (code > 57u && code < 65u)
-        {
-            code += 7u;
-        }
-        if (code > 90u && code < 97u)
-        {
-            code += 6u;
-        }
-        word[num_of_symbols_per_sample - i - 1] = char(code);
-        sample >>= 6; // округленно 6 бит на символ
+
+        if (code > 57u && code < 65u) code += 7u;
+        if (code > 90u && code < 97u) code += 6u;
+
+        word[constants::password_len_per_u32 - i - 1] = char(code);
     }
     return word;
 }
 
 inline static QString encode_u32_hard_level(lfsr8::u32 sample)
 {
-    constexpr int num_of_symbols_per_sample = 4; // 4*7 = 28 < 32
-    QString word(num_of_symbols_per_sample, '\0');
-    // Level 2: 33-47, 48-57, 65-90, 97-122. Total = 77 symbols.
+    QString word(constants::password_len_per_u32, '\0');
     bool has_special_symbol = false;
-    for (int i = 0; i < num_of_symbols_per_sample; ++i) {
+
+    for (int i = 0; i < constants::password_len_per_u32; ++i) {
         lfsr8::u32 r = sample % 77u;
+        sample /= 77u; // Используем деление
         auto code = r + 33u;
-        if (code >= 33u && code <= 47u)
-            has_special_symbol = true;
-        if (code > 57u && code < 65u)
-        {
-            code += 7u;
-        }
-        if (code > 90u && code < 97u)
-        {
-            code += 6u;
-        }
-        word[num_of_symbols_per_sample - i - 1] = char(code);
-        sample >>= 7; // округленно 7 бит на символ
+
+        if (code >= 33u && code <= 47u) has_special_symbol = true;
+
+        if (code > 57u && code < 65u) code += 7u;
+        if (code > 90u && code < 97u) code += 6u;
+
+        word[constants::password_len_per_u32 - i - 1] = QChar(code);
     }
-    if (!has_special_symbol)
-        word.clear();
+
+    if (!has_special_symbol) word.clear();
     return word;
 }
 
@@ -561,28 +555,29 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
 inline static QString try_to_get_password(int len, int level)
 {
     using namespace password;
+    auto* buffer = password::pswd_buff();
+    QMutexLocker locker(&buffer->mMutex);
     QString pswd;
-    int capacity = 2;
-    lfsr8::u64 raw64;
     while (pswd.size() < len) {
-        if (pswd_buff->mPasswords.empty())
-            return {};
-        raw64 = capacity == 2 ? pswd_buff->mPasswords.back() : raw64;
-        if (capacity == 2) {
-            pswd_buff->mPasswords.back() = 0;
-            pswd_buff->mPasswords.pop_back();
+        if (buffer->mPasswords.empty())
+            return {}; // Буфер пуст, выходим (мьютекс откроется сам)
+
+        // Берем одно 64-битное число
+        lfsr8::u64 raw64 = buffer->mPasswords.takeLast();
+
+        // Разбиваем u64 на два u32 и кодируем их
+        uint32_t high = static_cast<uint32_t>(raw64 >> 32);
+        uint32_t low  = static_cast<uint32_t>(raw64 & 0xFFFFFFFF);
+
+        if (level == 0) {
+            pswd += encode_u32_simple_level(low);
+            if (pswd.size() < len) pswd += encode_u32_simple_level(high);
+        } else {
+            pswd += encode_u32_hard_level(low);
+            if (pswd.size() < len) pswd += encode_u32_hard_level(high);
         }
-        if (level == 0)
-            pswd += encode_u32_simple_level(raw64);
-        if (level != 0)
-            pswd += encode_u32_hard_level(raw64);
-        #pragma optimize( "", off )
-            capacity -= 1;
-            capacity = capacity == 0 ? 2 : capacity;
-            raw64 >>= 32;
-        #pragma optimize( "", on )
     }
-    pswd.resize(len);
+    if (pswd.size() > len) pswd.resize(len);
     return pswd;
 }
 

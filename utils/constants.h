@@ -15,9 +15,9 @@ namespace {
     namespace constants {
         static inline const int pin_code_len = 4; // Длина пин-кода.
         static inline const int password_len_step = 5; // Шаг изменения длины пароля.
-        static inline const int password_len_per_u32 = 4; // Количество символов, получаемое по 32-битному слову.
+        static inline const int password_len_per_u32 = 5; // Количество символов, получаемое по 32-битному слову.
         static inline const int password_len_per_u64 = 2 * password_len_per_u32; // Количество символов на 64-битное слово.
-        static inline const int num_of_passwords = 8; // Количество паролей в буфере после одного запроса.
+        static inline const int num_of_passwords = 16; // Количество паролей в буфере после одного запроса.
 
         static inline const int login_column_idx = 0;
         static inline const int pswd_column_idx = 1;
