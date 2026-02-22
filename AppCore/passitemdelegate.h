@@ -1,21 +1,27 @@
 #ifndef PASSITEMDELEGATE_H
 #define PASSITEMDELEGATE_H
 
-#include <QItemDelegate>
+#include <QStyledItemDelegate>
 
-class PassEditDelegate : public QItemDelegate
+class PassEditDelegate : public QStyledItemDelegate
 {
+    Q_OBJECT
 public:
-    explicit PassEditDelegate(const char* asterics, QObject* parent = nullptr)
-        : mAsterics(asterics)
-        , QItemDelegate(parent)
-    {}
-    void setEditorData(QWidget *editor, const QModelIndex &index) const;
+    explicit PassEditDelegate(QObject *parent = nullptr);
 
-    void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const;
+    // Создает виджет для редактирования (QLineEdit в режиме пароля)
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const override;
 
-private:
-    const char* mAsterics;
+    // Передает данные из модели в редактор
+    void setEditorData(QWidget *editor, const QModelIndex &index) const override;
+
+    // Сохраняет данные из редактора обратно в модель
+    void setModelData(QWidget *editor, QAbstractItemModel *model,
+                      const QModelIndex &index) const override;
+
+    bool helpEvent(QHelpEvent *event, QAbstractItemView *view,
+                   const QStyleOptionViewItem &option, const QModelIndex &index) override;
 };
 
 #endif // PASSITEMDELEGATE_H

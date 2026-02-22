@@ -609,7 +609,7 @@ struct CRCProcessor {
     CRCProcessor(int b, int s, bool sw, int _s0)
         : b_mod(b), s_mod(s), s0(_s0), init_swap(sw), sequence(_s0), current_swap(sw) {}
 
-    // Обработка одного байта (аналог вашей логики в core_crc_strong)
+    // Обработка одного байта
     inline void process(int i, uchar byte) {
         const bool doit = current_swap ? i % b_mod != 0 : i % b_mod == 0;
         sequence = doit ? (sequence % b_mod) + 1 : sequence + 1;
@@ -1042,12 +1042,22 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
         {
             const QString& row_str = data_items.at(col);
             QTableWidgetItem *item = new QTableWidgetItem();
+
+            // Проверяем, пустое ли значение (используя ваш символ empty_item)
+            QString final_str = (row_str.isEmpty() || row_str.at(0) == symbols::empty_item)
+                                    ? ""
+                                    : row_str;
+
             if (col == constants::pswd_column_idx) {
-                item->setData(Qt::DisplayRole, g_asterics);
-                item->setData(Qt::UserRole, row_str.at(0) == symbols::empty_item ? "" : row_str);
+                // --- ИСПРАВЛЕНИЕ: Динамическая маска ---
+                QString mask(final_str.length(), '*');
+
+                item->setData(Qt::DisplayRole, mask);      // Визуально: звездочки
+                item->setData(Qt::UserRole, final_str);    // Внутри: реальный пароль
             } else {
-                item->setText(row_str.at(0) == symbols::empty_item ? "" : row_str);
+                item->setText(final_str);
             }
+
             wr_table->setItem(row, col, item);
         }
     }

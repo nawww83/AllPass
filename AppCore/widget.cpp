@@ -162,9 +162,9 @@ button = new QPushButton(); \
     widget->verticalHeader()->setVisible(false); \
     widget->setColumnWidth(0, 210); \
     widget->setColumnWidth(1, 200); \
-    widget->setColumnWidth(2, 370); \
+    widget->setColumnWidth(2, 400); \
     widget->setColumnHidden(constants::date_column_idx, true); \
-    PassEditDelegate* pass_delegate = new PassEditDelegate(g_asterics, this); \
+    PassEditDelegate* pass_delegate = new PassEditDelegate(this); \
     widget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate); \
     widget->installEventFilter(this); \
     widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
@@ -378,7 +378,9 @@ void Widget::update_pass() {
     if (!pointers::selected_context_table_item) {
         return;
     }
+
     if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
+        // Проверяем наличие старого пароля через UserRole
         if (!pointers::selected_context_table_item->data(Qt::UserRole).toString().isEmpty()) {
             if (!question_message_box(
                     tr("Замена текущего пароля новым"),
@@ -387,19 +389,29 @@ void Widget::update_pass() {
                 return;
             }
         }
+
         const int pass_level = ui->cmbbx_password_level->currentIndex();
         QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+
         if (pswd.length() < g_current_password_len) {
             utils::request_passwords(watcher_passwords, g_current_password_len);
             pswd = utils::try_to_get_password(g_current_password_len, pass_level);
         }
-        pointers::selected_context_table_item->setData(Qt::DisplayRole, g_asterics);
+
+        // --- ИСПРАВЛЕНИЕ ТУТ ---
+        // Генерируем маску из '*' длиной, равной полученному паролю
+        QString dynamicAsterics(pswd.length(), '*');
+
+        // Устанавливаем визуальную маску
+        pointers::selected_context_table_item->setData(Qt::DisplayRole, dynamicAsterics);
+        // Сохраняем реальный пароль
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
+        // -----------------------
+
         information_message_box(QString::fromUtf8("Успех"),
                                 QString::fromUtf8("Пароль был обновлен"));
-    } else {
-        ;
     }
+
     pointers::selected_context_table_item = nullptr;
 }
 
@@ -556,18 +568,30 @@ void Widget::insert_new_password()
 {
     const int pass_level = ui->cmbbx_password_level->currentIndex();
     QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+
     if (pswd.length() < g_current_password_len) {
         utils::request_passwords(watcher_passwords, g_current_password_len);
         pswd = utils::try_to_get_password(g_current_password_len, pass_level);
     }
+
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
+
+    // Секция пароля
     {
         QTableWidgetItem* item = new QTableWidgetItem();
-        item->setData(Qt::DisplayRole, g_asterics);
-        item->setData(Qt::UserRole, pswd);
+
+        // --- ИСПРАВЛЕНИЕ: Генерируем маску точно по длине пароля ---
+        QString mask(pswd.length(), '*');
+
+        item->setData(Qt::DisplayRole, mask); // Отображаем звездочки
+        item->setData(Qt::UserRole, pswd);    // Храним реальный пароль
+        // ---------------------------------------------------------
+
         ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     }
+
+    // Секция даты
     {
         const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
         QTableWidgetItem* item = new QTableWidgetItem();
@@ -576,6 +600,7 @@ void Widget::insert_new_password()
         qDebug() << "Set date: " << date;
     }
 
+    // Остальные настройки интерфейса
     ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
     ui->tableWidget->scrollToBottom();
     ui->btn_generate->setText(labels::gen_pass_txt);
