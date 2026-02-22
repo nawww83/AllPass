@@ -39,6 +39,10 @@ static const QSet<QString> g_supported_as_version_3 {
     QString("v1.09")
 };
 
+static const QSet<QString> g_supported_as_version_4 {
+    QString("v1.10"),
+};
+
 #ifdef OS_Windows
     static void do_hidden(wchar_t* fileLPCWSTR) {
         int attr = GetFileAttributes(fileLPCWSTR);
@@ -552,6 +556,121 @@ static bool decode_crc(const QByteArray& data, QByteArray& crc) {
 using namespace api_v2;
 } // api_v3.
 
+namespace api_v4 {
+
+// S-Box для нелинейности
+static constexpr unsigned char SBOX[256] = {
+    0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+    0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+    0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+    0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+    0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+    0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+    0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+    0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+    0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+    0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+    0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+    0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+    0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+    0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+    0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+    0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16
+};
+
+// Эта проверка не занимает времени при работе программы,
+// она сработает только в момент компиляции.
+static constexpr bool validate_sbox() {
+    bool seen[256] = {false};
+    for (int i = 0; i < 256; ++i) {
+        if (seen[SBOX[i]]) return false;
+        seen[SBOX[i]] = true;
+    }
+    return true;
+}
+
+static_assert(sizeof(SBOX) == 256, "SBOX must have 256 elements!");
+static_assert(validate_sbox(), "SBOX must be a valid permutation (no duplicates)!");
+
+// Секретная соль (выберите любое число от 1 до 255)
+// Изменение этого числа полностью меняет все результаты CRC
+static constexpr uchar SECRET_SALT = 0x5A;
+
+// Объект-вычислитель для одного прохода
+struct CRCProcessor {
+    int b_mod, s_mod, s0;
+    bool init_swap;
+
+    uchar crc = SECRET_SALT;
+    int sequence;
+    bool current_swap;
+
+    // Конструктор инициализирует начальное состояние
+    CRCProcessor(int b, int s, bool sw, int _s0)
+        : b_mod(b), s_mod(s), s0(_s0), init_swap(sw), sequence(_s0), current_swap(sw) {}
+
+    // Обработка одного байта (аналог вашей логики в core_crc_strong)
+    inline void process(int i, uchar byte) {
+        const bool doit = current_swap ? i % b_mod != 0 : i % b_mod == 0;
+        sequence = doit ? (sequence % b_mod) + 1 : sequence + 1;
+
+        uchar mul = doit ? static_cast<uchar>(sequence ^ crc) : 0;
+        crc = SBOX[crc ^ static_cast<uchar>(mul * byte)];
+        crc = static_cast<uchar>((crc << 3) | (crc >> 5));
+
+        if (s_mod > 0 && (i % s_mod) == 0) current_swap = !current_swap;
+    }
+};
+
+static QByteArray encode_crc(const QByteArray& data) {
+    // 1. Создаем кортеж со всеми 16 процессорами.
+    auto processors = std::make_tuple(
+        CRCProcessor(119, 140, false, 10), CRCProcessor(15, 106, false, 10),
+        CRCProcessor(20, 74, false, 10),  CRCProcessor(65, 41, false, 10),
+        CRCProcessor(119, 140, true, 10),  CRCProcessor(15, 106, true, 10),
+        CRCProcessor(20, 74, true, 10),   CRCProcessor(65, 41, true, 10),
+
+        CRCProcessor(208, 201, false, 61), CRCProcessor(1, 109, false, 61),
+        CRCProcessor(119, 26, false, 61),  CRCProcessor(20, 203, false, 61),
+        CRCProcessor(208, 201, true, 61),  CRCProcessor(1, 109, true, 61),
+        CRCProcessor(119, 26, true, 61),   CRCProcessor(20, 203, true, 61)
+        );
+
+    uchar c1 = SECRET_SALT ^ 0xFF;
+
+    // 2. ЕДИНСТВЕННЫЙ проход по данным
+    for (int i = 1; i <= data.size(); ++i) {
+        uchar byte = static_cast<uchar>(data.at(i - 1));
+        c1 = SBOX[c1 ^ byte];
+
+        // Применяем лямбду ко всем элементам кортежа
+        std::apply([i, byte](auto&... p) {
+            (p.process(i, byte), ...); // Fold expression (C++17)
+        }, processors);
+    }
+
+    // 3. Сборка результата
+    QByteArray out;
+    out.reserve(17);
+    out.append(static_cast<char>(c1));
+
+    std::apply([&out](auto&... p) {
+        (out.append(static_cast<char>(p.crc)), ...);
+    }, processors);
+
+    return out;
+}
+
+static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
+    if (received_crc.size() != 17) return false;
+
+    // Прямое сравнение - единственный надежный способ для нелинейного хеша
+    return (encode_crc(data) == received_crc);
+}
+
+using namespace api_v3;
+
+} // api_v4
 
 StorageManager::StorageManager() {}
 
@@ -602,6 +721,9 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     }
     if constexpr (version == 3) {
         my_encode(api_v3, (256-17), 17);
+    }
+    if constexpr (version == 4) {
+        my_encode(api_v4, (256-17), 17);
     }
     return out;
 }
@@ -685,6 +807,9 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     if constexpr (version == 3) {
         my_decode(api_v3, (256-17), 17);
     }
+    if constexpr (version == 4) {
+        my_decode(api_v4, (256-17), 17);
+    }
     return decoded_data;
 }
 
@@ -754,6 +879,9 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     }
     else if (g_supported_as_version_3.contains(current_version)) {
         encoded_data_bytes = do_encode<3>(packed_data_bytes, mEnc, mEncInner);
+    }
+    else if (g_supported_as_version_4.contains(current_version)) {
+        encoded_data_bytes = do_encode<4>(packed_data_bytes, mEnc, mEncInner);
     }
     if (encoded_data_bytes.isEmpty()) {
         return;
@@ -862,6 +990,12 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
         }
         else if (g_supported_as_version_3.contains(read_version)) {
             decoded_data_bytes = do_decode<3>(raw_ref, mDec, mDecInner);
+            if (decoded_data_bytes.isEmpty()) {
+                return Loading_Errors::CRC_FAILURE;
+            }
+        }
+        else if (g_supported_as_version_4.contains(read_version)) {
+            decoded_data_bytes = do_decode<4>(raw_ref, mDec, mDecInner);
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }

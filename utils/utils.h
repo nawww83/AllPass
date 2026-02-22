@@ -108,7 +108,7 @@ inline static void erase_string(QString& str) {
 #pragma optimize( "", off )
     // Получаем доступ к сырым данным (UTF-16)
     ushort* data = reinterpret_cast<ushort*>(str.data());
-    int size = str.size();
+    auto size = str.size();
     for (int i = 0; i < size; ++i) {
         data[i] = 0;
     }
@@ -136,13 +136,12 @@ inline static void restore_pin() {
 }
 
 inline static bool check_pin(QString&& pin) {
-    const QString& mPin = std::move(pin);
     using namespace password;
     bool ok = true;
-    ok &= pin_code->mPinCode[0] == mPin[0].digitValue() &&
-    pin_code->mPinCode[1] == mPin[1].digitValue() &&
-    pin_code->mPinCode[2] == mPin[2].digitValue() &&
-    pin_code->mPinCode[3] == mPin[3].digitValue();
+    ok &= pin_code->mPinCode[0] == pin[0].digitValue();
+    ok &= pin_code->mPinCode[1] == pin[1].digitValue();
+    ok &= pin_code->mPinCode[2] == pin[2].digitValue();
+    ok &= pin_code->mPinCode[3] == pin[3].digitValue();
     return ok;
 }
 
