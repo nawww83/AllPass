@@ -393,7 +393,8 @@ inline static lfsr_hash::u128 pin_to_hash_1()
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    const auto hash = hash128<64>(password::hash_gen, b_, pin_to_salt_1());
+    password::hash_gen.add_salt(pin_to_salt_1());
+    const auto hash = hash128(password::hash_gen, std::as_bytes( std::span(b_) ));
     utils::erase_bytes(b_, 64);
     return hash;
 }
@@ -408,7 +409,8 @@ inline static lfsr_hash::u128 pin_to_hash_2()
                    static_cast<uint8_t>(x2_4bit),
                    static_cast<uint8_t>((x1_4bit << 4) | x2_4bit),
                    static_cast<uint8_t>((x2_4bit << 4) | x1_4bit)};
-    const auto hash = hash128<64>(password::hash_gen, b_, pin_to_salt_2());
+    password::hash_gen.add_salt(pin_to_salt_2());
+    const auto hash = hash128(password::hash_gen, std::as_bytes( std::span(b_) ));
     utils::erase_bytes(b_, 64);
     return hash;
 }
@@ -447,6 +449,7 @@ inline static lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
 
 inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint seed)
 {
+    password::hash_gen.reset();
     lfsr_hash::u128 hash = utils::pin_to_hash_1();
     constexpr size_t blockSize = 64;
     {
@@ -459,11 +462,13 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint se
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
+            const salt original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 hash.first ^= inner_hash.first;
                 hash.second ^= inner_hash.second;
             }
@@ -475,6 +480,7 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString& text, uint se
 
 inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
 {
+    password::hash_gen.reset();
     lfsr_hash::u128 hash_fs = utils::pin_to_hash_2();
     constexpr size_t blockSize = 64;
     {
@@ -483,11 +489,13 @@ inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
+            const salt original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 hash_fs.first ^= inner_hash.first;
                 hash_fs.second ^= inner_hash.second;
             }
@@ -499,6 +507,7 @@ inline static lfsr_hash::u128 gen_hash_for_storage(const QString& text)
 
 inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
 {
+    password::hash_gen.reset();
     lfsr_hash::u128 hash_enc = utils::pin_to_hash_1();
     constexpr size_t blockSize = 64;
     {
@@ -507,11 +516,13 @@ inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
+            const salt original_size_salt = utils::pin_to_salt_4(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 hash_enc.first ^= inner_hash.first;
                 hash_enc.second ^= inner_hash.second;
             }
@@ -523,6 +534,7 @@ inline static lfsr_hash::u128 gen_hash_for_encryption(const QString& text)
 
 inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
 {
+    password::hash_gen.reset();
     lfsr_hash::u128 hash_enc_inner = utils::pin_to_hash_2();
     constexpr size_t blockSize = 64;
     {
@@ -531,11 +543,13 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
+            const salt original_size_salt = utils::pin_to_salt_3(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 hash_enc_inner.first ^= inner_hash.first;
                 hash_enc_inner.second ^= inner_hash.second;
             }
@@ -553,7 +567,6 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString& text)
  */
 inline static QString try_to_get_password(int len, int level)
 {
-    using namespace password;
     auto* buffer = password::pswd_buff();
     QMutexLocker locker(&buffer->mMutex);
     QString pswd;
@@ -583,7 +596,7 @@ inline static QString try_to_get_password(int len, int level)
 inline static QString generate_storage_name(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
-    using namespace password;
+    password::hash_gen.reset();
     static constexpr auto allowed {"0123456789abcdefghijklmnopqrstuvwxyz"};
     const int allowed_len = std::strlen(allowed);
     if (allowed_len < 36) {
@@ -603,7 +616,10 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
         b_[2*i] = hash.first >> 8*i;
         b_[2*i + 1] = hash.second >> 8*i;
     }
-    u128 hash2 = hash128<buffer_len>(hash_gen, b_, utils::hash_to_salt_1(hash));
+
+    const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(b_), buffer_len);
+    password::hash_gen.add_salt(utils::hash_to_salt_1(hash));
+    u128 hash2 = hash128(password::hash_gen, bytes_span);
     QString name {};
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash2.first >> 8*i) % 36] );
@@ -613,7 +629,8 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
         b_[16 + 2*i] = hash2.first >> 8*i;
         b_[16 + 2*i + 1] = hash2.second >> 8*i;
     }
-    u128 hash3 = hash128<buffer_len>(hash_gen, b_, utils::hash_to_salt_2(hash2));
+    password::hash_gen.add_salt(utils::hash_to_salt_2(hash2));
+    u128 hash3 = hash128(password::hash_gen, bytes_span);
     for (int i=0; i<8; ++i) {
         name.push_back( allowed[(hash3.first >> 8*i) % 36] );
         name.push_back( allowed[(hash3.second >> 8*i) % 36] );

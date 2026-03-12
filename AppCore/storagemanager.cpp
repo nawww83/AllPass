@@ -174,17 +174,20 @@ static void insert_hash128(QByteArray& bytes) {
         qDebug() << "Insert hash128 error: input size is not a 128*k bytes: " << bytes.size();
         return;
     }
+    password::hash_gen.reset();
     lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 128;
     {
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
+            const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 hash.first ^= inner_hash.first;
                 hash.second ^= inner_hash.second;
             }
@@ -225,17 +228,20 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
         extracted_hash.first |= lfsr8::u64(uint8_t(bytes_ref.back())) << (num_of_bytes-1-i)*CHAR_BIT;
         bytes_ref.removeLast();
     }
+    password::hash_gen.reset();
     lfsr_hash::u128 calculated_hash = {0, 0};
     constexpr size_t blockSize = 128;
     {
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
-            const salt& original_size_salt = utils::get_salt(bytesRead, blockSize);
+            const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
             const size_t n = bytesRead / blockSize;
-            for (size_t i=0; i<n; ++i) {
-                u128 inner_hash = hash128<blockSize>(password::hash_gen,
-                                                     reinterpret_cast<const uint8_t*>(bytes.data() + i*blockSize), original_size_salt);
+            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+            password::hash_gen.add_salt(original_size_salt);
+            for (size_t i = 0; i < n; ++i) {
+                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
+                auto inner_hash = hash128(password::hash_gen, chunk);
                 calculated_hash.first ^= inner_hash.first;
                 calculated_hash.second ^= inner_hash.second;
             }
@@ -408,12 +414,12 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     ns::decrypt(data, decrypted, dec); \
     uint32_t seed2 = 0; \
     if (decrypted.size() < static_cast<int>(sizeof(seed2))) { \
-            qDebug() << "Decode failure: input size is too small: " << \
-                                                              decrypted.size(); \
-            ns::finalize_encryption(dec); \
-            return {}; \
-        } \
-        seed2 = utils::seed_from_bytes_pop_back(decrypted); \
+        qDebug() << "Decode failure: input size is too small: " << \
+                                                          decrypted.size(); \
+        ns::finalize_encryption(dec); \
+        return {}; \
+    } \
+    seed2 = utils::seed_from_bytes_pop_back(decrypted); \
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \

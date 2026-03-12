@@ -257,10 +257,10 @@ public:
         gp4.set_state(init_states[3]);
         // Насытить генераторы.
         for (int i=0; i<my_lcm<4>(primes); ++i) {
-            gp1.next(init_inputs[0]);
-            gp2.next(init_inputs[1]);
-            gp3.next(init_inputs[2]);
-            gp4.next(init_inputs[3]);
+            gp1.next_simd(init_inputs[0]);
+            gp2.next_simd(init_inputs[1]);
+            gp3.next_simd(init_inputs[2]);
+            gp4.next_simd(init_inputs[3]);
             sawtooth<4>(init_inputs, primes);
         }
         // Сохранить текущие состояния генераторов в качестве опорных (начальных).
@@ -284,10 +284,10 @@ public:
             gp4.set_state(refs[3]);
             std::array<u16, 4> i {i01, i02, i03, i04};
             for (;;) {
-                gp1.next(i[0]);
-                gp2.next(i[1]);
-                gp3.next(i[2]);
-                gp4.next(i[3]);
+                gp1.next_simd(i[0]);
+                gp2.next_simd(i[1]);
+                gp3.next_simd(i[2]);
+                gp4.next_simd(i[3]);
                 // Остаток от деления mod(p^4 - 1 , q) не равен нулю => мы проходим все индексы i in [0, q),
                 // когда LFSR генератор находится в одном и том же опорном состоянии.
                 // Получаем набор случайных периодов T[i] так, что их сумма неслучайна и равна q*T0, где q - период "пилы".
@@ -377,10 +377,10 @@ public:
                 x <<= 4;
                 x |= mSt[j] ^ mSt[j+4];
             }
-            gp1.next(ii_saw[0], ii_saw[1]);
-            gp2.next(ii_saw[2], ii_saw[3]);
-            gp3.next(ii_saw[4], ii_saw[5]);
-            gp4.next(ii_saw[6], ii_saw[7]);
+            gp1.next_simd(ii_saw[0], ii_saw[1]);
+            gp2.next_simd(ii_saw[2], ii_saw[3]);
+            gp3.next_simd(ii_saw[4], ii_saw[5]);
+            gp4.next_simd(ii_saw[6], ii_saw[7]);
             sawtooth(ii_saw, primes_duplicates);
             // Сбрасываем счетчик и генератор "пилы", если период LFSR был достигнут.
             for (int j=0; j<8; ++j) {
@@ -408,10 +408,10 @@ public:
                 Tc[j] = is_matched ? Tref[j] : Tc[j];
             }
             undo_sawtooth(ii_saw, primes_duplicates);
-            gp1.back(ii_saw[0], ii_saw[1]);
-            gp2.back(ii_saw[2], ii_saw[3]);
-            gp3.back(ii_saw[4], ii_saw[5]);
-            gp4.back(ii_saw[6], ii_saw[7]);
+            gp1.back_simd(ii_saw[0], ii_saw[1]);
+            gp2.back_simd(ii_saw[2], ii_saw[3]);
+            gp3.back_simd(ii_saw[4], ii_saw[5]);
+            gp4.back_simd(ii_saw[6], ii_saw[7]);
             STATE mSt = gp1.get_state();
             mSt ^= gp2.get_state();
             mSt ^= gp3.get_state();

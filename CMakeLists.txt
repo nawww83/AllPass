@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AllPass VERSION 1.10 LANGUAGES CXX)
+project(AllPass VERSION 2.00 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -63,7 +63,6 @@ set(COMMON_SRC
     ${UTILS_DIR}/key.h
     ${UTILS_DIR}/stream_cipher.h
     ${UTILS_DIR}/utils.h
-    ${LFSR_DIR}/io_utils.h
     ${LFSR_DIR}/lfsr.h
     ${LFSR_DIR}/lfsr_hash.h
 )
