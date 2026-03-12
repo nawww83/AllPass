@@ -21,26 +21,7 @@
 #include <random> // std::random_device
 
 static const QSet<QString> g_supported_as_version_1 {
-                        QString("v1.00"),
-                        QString("v1.01")
-                    };
-
-static const QSet<QString> g_supported_as_version_2 {
-    QString("v1.02"),
-    QString("v1.03"),
-    QString("v1.04")
-};
-
-static const QSet<QString> g_supported_as_version_3 {
-    QString("v1.05"),
-    QString("v1.06"),
-    QString("v1.07"),
-    QString("v1.08"),
-    QString("v1.09")
-};
-
-static const QSet<QString> g_supported_as_version_4 {
-    QString("v1.10"),
+    QString("v2.00")
 };
 
 #ifdef OS_Windows
@@ -52,92 +33,8 @@ static const QSet<QString> g_supported_as_version_4 {
     }
 #endif
 
-namespace api_v1 {
-
-template <int basic_modulo, int swap_modulo, bool initial_swap, int initial_s0>
-static char core_crc(const QByteArray& data, int initial_crc='\0') {
-    char crc = initial_crc;
-    const int N = data.size() + 1;
-    bool current_swap = initial_swap;
-    int sequence = initial_s0;
-    for (int i=1; i<N; i++) {
-        const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
-        sequence = doit ? (sequence % basic_modulo) + ((sequence % basic_modulo) % 2) + 1 : sequence + 2;
-        char mul = doit ? sequence : 0;
-        crc ^= mul * data.at(i-1);
-        if constexpr (swap_modulo > 0) {
-            current_swap ^= i % swap_modulo == 0;
-        }
-    }
-    return crc;
-};
-
-static QByteArray encode_crc(const QByteArray& data) {
-    QByteArray out_crc;
-    {
-        char crc1 = '\0';
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        out_crc.push_back(crc1);
-        char crc2 = core_crc<11, 16, false, 13>(data);
-        out_crc.push_back(crc2);
-        char crc8 = core_crc<41, 205, false, 13>(data);
-        out_crc.push_back(crc8);
-        char crc16 = core_crc<17, 7, false, 13>(data);
-        out_crc.push_back(crc16);
-    }
-    {
-        char crc2 = core_crc<11, 16, true, 13>(data);
-        out_crc.push_back(crc2);
-        char crc8 = core_crc<41, 205, true, 13>(data);
-        out_crc.push_back(crc8);
-        char crc16 = core_crc<17, 7, true, 13>(data);
-        out_crc.push_back(crc16);
-    }
-    return out_crc;
-}
-
-static bool decode_crc(const QByteArray& data, QByteArray& crc) {
-    if (crc.size() != 7) {
-        return false;
-    }
-    #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-        MyQByteArray& crc_ref = static_cast<MyQByteArray&>(crc);
-    #else
-        QByteArray& crc_ref = crc;
-    #endif
-    {
-        char crc16 = core_crc<17, 7, true, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = core_crc<41, 205, true, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = core_crc<11, 16, true, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
-        {
-            return false;
-        }
-    }
-    {
-        char crc16 = core_crc<17, 7, false, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = core_crc<41, 205, false, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = core_crc<11, 16, false, 13>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc1 = crc_ref.back();
-        crc_ref.removeLast();
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
-        {
-            return false;
-        }
-    }
-    return true;
-}
+namespace api_v1
+{
 
 static void init_encryption(Encryption& enc, const QByteArray& salt1 = {}, uint salt2 = 0) {
     enc.aligner64 = 0;
@@ -347,217 +244,6 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
     return extracted_hash == calculated_hash;
 }
 
-} // api_v1.
-
-namespace api_v2 {
-
-template <int basic_modulo, int swap_modulo, bool initial_swap, int initial_s0=0>
-static char core_crc(const QByteArray& data, int initial_crc='\0') {
-    char crc = initial_crc;
-    const int N = data.size() + 1;
-    bool current_swap = initial_swap;
-    int sequence = initial_s0;
-    for (int i=1; i<N; i++) {
-        const bool doit = current_swap ? i % basic_modulo != 0 : i % basic_modulo == 0;
-        sequence = doit ? (sequence % basic_modulo) + 1 : sequence + 1;
-        char mul = doit ? sequence : 0;
-        crc ^= mul * data.at(i-1);
-        if constexpr (swap_modulo > 0) {
-            current_swap ^= i % swap_modulo == 0;
-        }
-    }
-    return crc;
-};
-
-static constexpr std::array<int, 6> params {237, 234, 55, 1, 124, 75};
-static QByteArray encode_crc(const QByteArray& data) {
-    QByteArray out_crc;
-    {
-        char crc1 = '\0';
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        out_crc.push_back(crc1);
-        char crc2 = core_crc<params[0], params[3], false>(data);
-        out_crc.push_back(crc2);
-        char crc8 = core_crc<params[1], params[4], false>(data);
-        out_crc.push_back(crc8);
-        char crc16 = core_crc<params[2], params[5], false>(data);
-        out_crc.push_back(crc16);
-    }
-    {
-        char crc2 = core_crc<params[0], params[3], true>(data);
-        out_crc.push_back(crc2);
-        char crc8 = core_crc<params[1], params[4], true>(data);
-        out_crc.push_back(crc8);
-        char crc16 = core_crc<params[2], params[5], true>(data);
-        out_crc.push_back(crc16);
-    }
-    return out_crc;
-}
-
-static bool decode_crc(const QByteArray& data, QByteArray& crc) {
-    if (crc.size() != 7) {
-        return false;
-    }
-    #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-        MyQByteArray& crc_ref = static_cast<MyQByteArray&>(crc);
-    #else
-        QByteArray& crc_ref = crc;
-    #endif
-    {
-        char crc16 = core_crc<params[2], params[5], true>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = core_crc<params[1], params[4], true>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = core_crc<params[0], params[3], true>(data, crc_ref.back());
-        crc_ref.removeLast();
-        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
-        {
-            return false;
-        }
-    }
-    {
-        char crc16 = core_crc<params[2], params[5], false>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = core_crc<params[1], params[4], false>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = core_crc<params[0], params[3], false>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc1 = crc_ref.back();
-        crc_ref.removeLast();
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        if (crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-using namespace api_v1;
-
-} // api_v2.
-
-namespace api_v3 {
-
-static constexpr std::array<int, 16> params {119, 15, 20, 65, 140, 106, 74, 41, 208, 1, 119, 20, 201, 109, 26, 203};
-static QByteArray encode_crc(const QByteArray& data) {
-    QByteArray out_crc;
-    {
-        char crc1 = '\0';
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        out_crc.push_back(crc1);
-        char crc2 = api_v2::core_crc<params[0], params[4], false, 10>(data);
-        out_crc.push_back(crc2);
-        char crc8 = api_v2::core_crc<params[1], params[5], false, 10>(data);
-        out_crc.push_back(crc8);
-        char crc16 = api_v2::core_crc<params[2], params[6], false, 10>(data);
-        out_crc.push_back(crc16);
-        char crc32 = api_v2::core_crc<params[3], params[7], false, 10>(data);
-        out_crc.push_back(crc32);
-        char crc64 = api_v2::core_crc<params[0], params[4], true, 10>(data);
-        out_crc.push_back(crc64);
-        char crc128 = api_v2::core_crc<params[1], params[5], true, 10>(data);
-        out_crc.push_back(crc128);
-        char crc256 = api_v2::core_crc<params[2], params[6], true, 10>(data);
-        out_crc.push_back(crc256);
-        char crc512 = api_v2::core_crc<params[3], params[7], true, 10>(data);
-        out_crc.push_back(crc512);
-    }
-    {
-        char crc2 = api_v2::core_crc<params[8], params[12], false, 61>(data);
-        out_crc.push_back(crc2);
-        char crc8 = api_v2::core_crc<params[9], params[13], false, 61>(data);
-        out_crc.push_back(crc8);
-        char crc16 = api_v2::core_crc<params[10], params[14], false, 61>(data);
-        out_crc.push_back(crc16);
-        char crc32 = api_v2::core_crc<params[11], params[15], false, 61>(data);
-        out_crc.push_back(crc32);
-        char crc64 = api_v2::core_crc<params[8], params[12], true, 61>(data);
-        out_crc.push_back(crc64);
-        char crc128 = api_v2::core_crc<params[9], params[13], true, 61>(data);
-        out_crc.push_back(crc128);
-        char crc256 = api_v2::core_crc<params[10], params[14], true, 61>(data);
-        out_crc.push_back(crc256);
-        char crc512 = api_v2::core_crc<params[11], params[15], true, 61>(data);
-        out_crc.push_back(crc512);
-    }
-    return out_crc;
-}
-
-static bool decode_crc(const QByteArray& data, QByteArray& crc) {
-    if (crc.size() != 17) {
-        return false;
-    }
-    #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-        MyQByteArray& crc_ref = static_cast<MyQByteArray&>(crc);
-    #else
-        QByteArray& crc_ref = crc;
-    #endif
-    {
-        char crc512 = api_v2::core_crc<params[11], params[15], true, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc256 = api_v2::core_crc<params[10], params[14], true, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc128 = api_v2::core_crc<params[9], params[13], true, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc64 = api_v2::core_crc<params[8], params[12], true, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc32 = api_v2::core_crc<params[11], params[15], false, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc16 = api_v2::core_crc<params[10], params[14], false, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = api_v2::core_crc<params[9], params[13], false, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = api_v2::core_crc<params[8], params[12], false, 61>(data, crc_ref.back());
-        crc_ref.removeLast();
-        if (crc512 != '\0' || crc256 != '\0' || crc128 != '\0' || crc64 != '\0' \
-            || crc32 != '\0' || crc16 != '\0' || crc8 != '\0' || crc2 != '\0')
-        {
-            return false;
-        }
-    }
-    {
-        char crc512 = api_v2::core_crc<params[3], params[7], true, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc256 = api_v2::core_crc<params[2], params[6], true, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc128 = api_v2::core_crc<params[1], params[5], true, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc64 = api_v2::core_crc<params[0], params[4], true, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc32 = api_v2::core_crc<params[3], params[7], false, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc16 = api_v2::core_crc<params[2], params[6], false, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc8 = api_v2::core_crc<params[1], params[5], false, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc2 = api_v2::core_crc<params[0], params[4], false, 10>(data, crc_ref.back());
-        crc_ref.removeLast();
-        char crc1 = crc_ref.back();
-        crc_ref.removeLast();
-        for (const auto b : std::as_const(data)) {
-            crc1 ^= b;
-        }
-        if (crc512 != '\0' || crc256 != '\0' || crc128 != '\0' || crc64 != '\0' || crc32 != '\0' || \
-            crc16 != '\0' || crc8 != '\0' || crc2 != '\0' || crc1 != '\0')
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-using namespace api_v2;
-} // api_v3.
-
-namespace api_v4 {
-
 // S-Box для нелинейности
 static constexpr unsigned char SBOX[256] = {
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -668,9 +354,7 @@ static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
     return (encode_crc(data) == received_crc);
 }
 
-using namespace api_v3;
-
-} // api_v4
+} // api_v1
 
 StorageManager::StorageManager() {}
 
@@ -693,10 +377,7 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
         ns::finalize_encryption(enc); \
         return {}; \
     } \
-    uint32_t seed2 = 0; \
-    if constexpr (version >= 3) { \
-        seed2 = std::random_device{}(); \
-    } \
+    uint32_t seed2 = std::random_device{}(); \
     ns::init_encryption(enc_inner, crc, seed2); \
     QByteArray encrypted_inner; \
     ns::encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
@@ -705,25 +386,14 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     ns::insert_hash128(permuted); \
     crc = utils::xor_data_by_seed(crc, seed2); \
     permuted.append(crc); \
-    if constexpr (version >= 3) { \
-        QByteArray seed_b = utils::seed_to_bytes(seed2); \
-        permuted.append(seed_b); \
-    } \
+    QByteArray seed_b = utils::seed_to_bytes(seed2); \
+    permuted.append(seed_b); \
     ns::encrypt(permuted, out, enc); \
     ns::finalize_encryption(enc); \
     ns::finalize_encryption(enc_inner);
 
     if constexpr (version == 1) {
-        my_encode(api_v1, (256-7), 7);
-    }
-    if constexpr (version == 2) {
-        my_encode(api_v2, (256-7), 7);
-    }
-    if constexpr (version == 3) {
-        my_encode(api_v3, (256-17), 17);
-    }
-    if constexpr (version == 4) {
-        my_encode(api_v4, (256-17), 17);
+        my_encode(api_v1, (256-17), 17);
     }
     return out;
 }
@@ -737,7 +407,6 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray decrypted; \
     ns::decrypt(data, decrypted, dec); \
     uint32_t seed2 = 0; \
-    if constexpr (version >= 3) { \
     if (decrypted.size() < static_cast<int>(sizeof(seed2))) { \
             qDebug() << "Decode failure: input size is too small: " << \
                                                               decrypted.size(); \
@@ -745,7 +414,6 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
             return {}; \
         } \
         seed2 = utils::seed_from_bytes_pop_back(decrypted); \
-    } \
     const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
     const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
     if (Res != 0) { \
@@ -799,16 +467,7 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     ns::finalize_encryption(dec_inner);
 
     if constexpr (version == 1) {
-        my_decode(api_v1, (256-7), 7);
-    }
-    if constexpr (version == 2) {
-        my_decode(api_v2, (256-7), 7);
-    }
-    if constexpr (version == 3) {
-        my_decode(api_v3, (256-17), 17);
-    }
-    if constexpr (version == 4) {
-        my_decode(api_v4, (256-17), 17);
+        my_decode(api_v1, (256-17), 17);
     }
     return decoded_data;
 }
@@ -873,15 +532,6 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     current_version.remove(g_version_prefix);
     if (g_supported_as_version_1.contains(current_version)) {
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
-    }
-    else if (g_supported_as_version_2.contains(current_version)) {
-        encoded_data_bytes = do_encode<2>(packed_data_bytes, mEnc, mEncInner);
-    }
-    else if (g_supported_as_version_3.contains(current_version)) {
-        encoded_data_bytes = do_encode<3>(packed_data_bytes, mEnc, mEncInner);
-    }
-    else if (g_supported_as_version_4.contains(current_version)) {
-        encoded_data_bytes = do_encode<4>(packed_data_bytes, mEnc, mEncInner);
     }
     if (encoded_data_bytes.isEmpty()) {
         return;
@@ -981,26 +631,8 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }
-        }
-        else if (g_supported_as_version_2.contains(read_version)) {
-            decoded_data_bytes = do_decode<2>(raw_ref, mDec, mDecInner);
-            if (decoded_data_bytes.isEmpty()) {
-                return Loading_Errors::CRC_FAILURE;
-            }
-        }
-        else if (g_supported_as_version_3.contains(read_version)) {
-            decoded_data_bytes = do_decode<3>(raw_ref, mDec, mDecInner);
-            if (decoded_data_bytes.isEmpty()) {
-                return Loading_Errors::CRC_FAILURE;
-            }
-        }
-        else if (g_supported_as_version_4.contains(read_version)) {
-            decoded_data_bytes = do_decode<4>(raw_ref, mDec, mDecInner);
-            if (decoded_data_bytes.isEmpty()) {
-                return Loading_Errors::CRC_FAILURE;
-            }
-        }
-        else {
+        } else
+        {
             return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
