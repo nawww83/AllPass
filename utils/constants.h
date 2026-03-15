@@ -4,8 +4,8 @@
 #include <QString>
 
 namespace {
-    static inline constexpr auto g_version_prefix = '#';
-    static inline constexpr auto VERSION_LABEL = "#v2.00"; // ASCII.
+    inline constexpr auto g_version_prefix = '#';
+    inline constexpr auto VERSION_LABEL = "#v2.00"; // ASCII.
     namespace labels {
         static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись");
         static inline const auto recover_txt = QString::fromUtf8("\xE2\x86\xB6");

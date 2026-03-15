@@ -4,6 +4,9 @@
 
 #include <QDebug>
 #include <QFutureWatcher>
+#include <QByteArray>
+#include <QMutex>
+#include <QMutexLocker>
 #include <qglobalstatic.h>
 
 #include "lfsr_hash.h"
