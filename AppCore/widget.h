@@ -72,7 +72,7 @@ private slots:
 
     void show_pass_date();
 
-    void save_to_store();
+    bool save_to_store();
 
     void load_storage();
 

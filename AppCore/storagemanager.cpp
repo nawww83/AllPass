@@ -478,20 +478,20 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     return decoded_data;
 }
 
-void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save_to_tmp )
+bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save_to_tmp )
 {
     const QString& file_name = save_to_tmp ? mStorageNameTmp : mStorageName;
     if (file_name.isEmpty()) {
         qDebug() << "Empty storage.";
-        return;
+        return true;
     }
     if (!mEnc.gamma_gen.is_succes()) {
         qDebug() << "Empty encryption.";
-        return;
+        return false;
     }
     if (!mEncInner.gamma_gen.is_succes()) {
         qDebug() << "Empty inner encryption.";
-        return;
+        return false;
     }
     QByteArray packed_data_bytes;
     #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
@@ -540,7 +540,7 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
     }
     if (encoded_data_bytes.isEmpty()) {
-        return;
+        return true;
     }
     encoded_data_bytes.append(VERSION_LABEL);
     utils::padd<128>(encoded_data_bytes);
@@ -549,7 +549,7 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         file.write(encoded_data_bytes);
         file.close();
         if (save_to_tmp) {
-            return;
+            return true;
         }
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
@@ -562,7 +562,7 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         }
     } else {
         if (save_to_tmp) {
-            return;
+            return true;
         }
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
@@ -576,8 +576,10 @@ void StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
             QMessageBox mb;
             mb.critical(nullptr, QString::fromUtf8("Ошибка сохранения."),
                         QString::fromUtf8("Файловая ошибка сохранения таблицы в хранилище."));
+            return false;
         }
     }
+    return true;
 }
 
 Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, FileTypes type)

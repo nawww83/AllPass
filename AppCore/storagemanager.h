@@ -38,7 +38,7 @@ class StorageManager
 public:
     StorageManager();
 
-    void SaveToStorage(const QTableWidget * const ro_table, bool save_to_tmp = false);
+    bool SaveToStorage(const QTableWidget * const ro_table, bool save_to_tmp = false);
 
     Loading_Errors LoadFromStorage(QTableWidget * const wr_table, FileTypes type = FileTypes::NORMAL);
 

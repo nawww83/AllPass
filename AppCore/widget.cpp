@@ -43,6 +43,29 @@ namespace {
     }
 }
 
+enum class ExitAction {
+    SaveAndExit,
+    DiscardAndExit,
+    Cancel
+};
+
+static ExitAction before_exit_message_box(const QString& title, const QString& question) {
+    QMessageBox mb(QMessageBox::Question, title, question);
+
+    // Добавляем три кнопки
+    QPushButton* saveButton = mb.addButton(QObject::tr("Да (сохранить)"), QMessageBox::AcceptRole);
+    QPushButton* discardButton = mb.addButton(QObject::tr("Нет (не сохранять)"), QMessageBox::DestructiveRole);
+    QPushButton* cancelButton = mb.addButton(QObject::tr("Отмена"), QMessageBox::RejectRole);
+
+    mb.setDefaultButton(saveButton);
+    mb.exec();
+
+    if (mb.clickedButton() == saveButton) return ExitAction::SaveAndExit;
+    if (mb.clickedButton() == discardButton) return ExitAction::DiscardAndExit;
+    return ExitAction::Cancel;
+}
+
+
 static bool question_message_box(const QString& title, const QString& question) {
     QMessageBox mb(QMessageBox::Question,
                    title,
@@ -293,7 +316,6 @@ Widget::Widget(QString pin, QWidget *parent)
 
 Widget::~Widget()
 {
-    save_to_store();
     delete ui;
 }
 
@@ -339,11 +361,25 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
 
 void Widget::closeEvent(QCloseEvent *event)
 {
-    event->ignore();
-    if (question_message_box(tr("Подтверждение выхода"),
-                             tr("Закрыть приложение? Текущие данные в таблице при этом будут\
-                                сохранены на диск."))) {
-        event->accept();
+    // 1. Спрашиваем пользователя
+    ExitAction action = before_exit_message_box(
+        tr("Подтверждение выхода"),
+        tr("Сохранить изменения в таблице перед выходом?")
+        );
+
+    if (action == ExitAction::SaveAndExit) {
+        // 2. Пытаемся сохранить
+        if (save_to_store()) {
+            event->accept(); // Сохранение успешно, закрываем
+        } else {
+            event->ignore(); // Ошибка сохранения, не закрываем (даем исправить ситуацию)
+        }
+    }
+    else if (action == ExitAction::DiscardAndExit) {
+        event->accept(); // Просто закрываем без сохранения
+    }
+    else {
+        event->ignore(); // Пользователь передумал выходить
     }
 }
 
@@ -683,10 +719,11 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
     }
 }
 
-void Widget::save_to_store()
+bool Widget::save_to_store()
 {
     const QTableWidget* const table = ui->tableWidget;
-    storage_manager->SaveToStorage(table);
+    // Возвращаем результат выполнения
+    return storage_manager->SaveToStorage(table);
 }
 
 void Widget::load_storage()
