@@ -3,9 +3,12 @@
 /**
  * @author Новиков А.В., nawww83@gmail.com.
  *
- * Сдвоенный LFSR генератор с фиксированным m = 4, p = [2, 256). Фактически, это два независимых LFSR генератора.
- * Реализован в форме Галуа.
- *
+ * Генератор LFSR в поле GF(p^m) с числом ячеек m = [1, 8] и простым модулем p = [2, 256*256).
+ * Реализованы:
+ *  - Генератор общего назначения:
+ *     - p = [2, 256) для m = [5, 8],
+ *     - p = [2, 256*256) для m = [1, 4].
+ *  - Сдвоенный генератор с фиксированным m = 4, p = [2, 256). Фактически, это два независимых генератора.
  */
 
 #include <cstdint>
@@ -29,6 +32,8 @@ using u64 = uint64_t;
 using u32 = uint32_t;
 using u16 = uint16_t;
 using u16x8 = std::array<u16, 8>;
+using u32x4 = std::array<u32, 4>;
+
 
 /**
      * @brief Класс сдвоенного LFSR генератора общей длиной m = 4*2.
@@ -75,8 +80,7 @@ public:
 
     /**
          * @brief Сделать шаг вперед (один такт генератора).
-         * @param input Входной символ (должен быть приведен по модулю p!), который одинаково
-         * подается на оба генератора.
+         * @param input Входной символ, который одинаково подается на оба генератора.
          */
     void next(u16 input = 0)
     {
@@ -85,20 +89,21 @@ public:
 
     /**
          * @brief Сделать шаг вперед (один такт генератора).
-         * @param inp1 Входной символ (должен быть приведен по модулю p!) первого генератора.
-         * @param inp2 Входной символ (должен быть приведен по модулю p!) второго генератора.
+         * @param inp1 Входной символ первого генератора.
+         * @param inp2 Входной символ второго генератора.
          */
     void next(u16 inp1, u16 inp2)
     {
+        const u32 up = p;
         u16 m_v3 = m_state[3];
         u16 m_v7 = m_state[7];
         for (int i = 7; i > 4; i--)
         {
-            m_state[i] = ((u32)m_state[i - 1] + (u32)m_v7 * (u32)m_K[i]) % (u16)p;
-            m_state[i - 4] = ((u32)m_state[i - 1 - 4] + (u32)m_v3 * (u32)m_K[i - 4]) % (u16)p;
+            m_state[i - 0] = ((u32)m_state[i - 1 - 0] + (u32)m_v7 * m_K[i - 0]) % up;
+            m_state[i - 4] = ((u32)m_state[i - 1 - 4] + (u32)m_v3 * m_K[i - 4]) % up;
         }
-        m_state[0] = (inp1 + (u32)m_v3 * (u32)m_K[0]) % (u16)p;
-        m_state[4] = (inp2 + (u32)m_v7 * (u32)m_K[4]) % (u16)p;
+        m_state[0] = (inp1 + (u32)m_v3 * m_K[0]) % up;
+        m_state[4] = (inp2 + (u32)m_v7 * m_K[4]) % up;
     }
 
     void next_simd(u16 inp)
@@ -140,19 +145,27 @@ public:
         _mm_store_si128((__m128i *)m_state.data(), simd_mod_p(res));
     }
 
+    void back(u16 inp)
+    {
+        back(inp, inp);
+    }
+
     /**
          * @brief Сделать шаг назад (один такт генератора). Обратно к next(inp1, inp2).
-         * @param inp1 Входной символ (должен быть приведен по модулю p!) первого генератора.
-         * @param inp2 Входной символ (должен быть приведен по модулю p!) второго генератора.
+         * @param inp1 Входной символ первого генератора.
+         * @param inp2 Входной символ второго генератора.
          */
     void back(u16 inp1, u16 inp2)
     {
-        const u16 m_v_1 = ((u32)m_inv_K[0] * ((u32)m_state[0] - (u32)inp1 + (u32)p)) % (u16)p;
-        const u16 m_v_2 = ((u32)m_inv_K[4] * ((u32)m_state[4] - (u32)inp2 + (u32)p)) % (u16)p;
+        const u32 up = p;
+        const u16 m_v_1 = ((u32)m_inv_K[0] * ((u32)m_state[0] - (inp1 % up) + up)) % up;
+        const u16 m_v_2 = ((u32)m_inv_K[4] * ((u32)m_state[4] - (inp2 % up) + up)) % up;
         for (int i = 0; i < 3; i++)
         {
-            m_state[i] = ((u32)m_state[i + 1] - (u32)m_v_1 * (u32)m_K[i + 1] + (u32)p * (u32)p) % (u16)p;
-            m_state[i + 4] = ((u32)m_state[i + 5] - (u32)m_v_2 * (u32)m_K[i + 5] + (u32)p * (u32)p) % (u16)p;
+            u32 a = ((u32)m_v_1 * m_K[i + 1]) % up;
+            u32 b = ((u32)m_v_2 * m_K[i + 5]) % up;
+            m_state[i + 0] = ((u32)m_state[i + 1] - a + up) % up;
+            m_state[i + 4] = ((u32)m_state[i + 5] - b + up) % up;
         }
         m_state[3] = m_v_1;
         m_state[7] = m_v_2;
@@ -288,8 +301,9 @@ public:
             u16 s0 = static_cast<u16>(_mm_extract_epi16(cur_s, 0));
             u16 s4 = static_cast<u16>(_mm_extract_epi16(cur_s, 4));
 
-            u16 v1 = static_cast<u16>((u32)m_inv_K[0] * (s0 + p - (inp1 % p)) % p);
-            u16 v2 = static_cast<u16>((u32)m_inv_K[4] * (s4 + p - (inp2 % p)) % p);
+            const u32 up = p;
+            u16 v1 = static_cast<u16>((u32)m_inv_K[0] * (s0 + up - (inp1 % up)) % up);
+            u16 v2 = static_cast<u16>((u32)m_inv_K[4] * (s4 + up - (inp2 % up)) % up);
 
             __m128i v_vec = _mm_setr_epi16(v1, v1, v1, v1, v2, v2, v2, v2);
             __m128i next_vals = _mm_srli_si128(cur_s, 2);
@@ -344,10 +358,10 @@ public:
                     continue;
                 if ((i >= 4) || (i < 0))
                     continue;
-                v1 += ((u32)old_state[i] * (u32)other_ref[j]) % (u16)p;
-                v2 += ((u32)old_state[i + 4] * (u32)other_ref[j + 4]) % (u16)p;
+                v1 += ((u32)old_state[i + 0] * other_ref[j + 0]) % (u32)p;
+                v2 += ((u32)old_state[i + 4] * other_ref[j + 4]) % (u32)p;
             }
-            next(static_cast<u16>(v1), static_cast<u16>(v2));
+            next(v1, v2);
         }
     }
 
@@ -449,16 +463,12 @@ private:
         {
             // 1. Влияние состояния: ставим 1 в ячейку i, остальные 0, входы 0
             m_state.fill(0);
-            m_state[i] = 1;     // Для первого LFSR
+            m_state[i + 0] = 1; // Для первого LFSR
             m_state[i + 4] = 1; // Для второго LFSR
 
             // Прогоняем 4 чистых шага (скалярных)
             for (int t = 0; t < 4; ++t)
-            {
-                // Временная имитация next без внешних входов
-                // (используйте вашу эталонную логику next(0, 0) здесь)
                 next(0, 0);
-            }
             // Результат после 4 шагов и есть i-я строка матрицы M
             m_matM[i] = _mm_loadu_si128((const __m128i *)&m_state[0]);
         }
