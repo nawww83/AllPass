@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array> // std::array
+#include <cstring>
 
 #include <QDebug>
 #include <QFutureWatcher>
