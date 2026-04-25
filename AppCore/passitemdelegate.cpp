@@ -3,6 +3,7 @@
 #include <QToolTip>
 #include <QHelpEvent>
 #include <QAbstractItemView>
+#include <QPainter>
 
 PassEditDelegate::PassEditDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
@@ -64,4 +65,33 @@ bool PassEditDelegate::helpEvent(QHelpEvent *event, QAbstractItemView *view,
     return QStyledItemDelegate::helpEvent(event, view, option, index);
 }
 
+void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const {
+    QVariant animData = index.data(roles::AnimationRole);
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
 
+    if (animData.isValid()) {
+        QBrush bg = animData.value<QBrush>();
+        painter->save();
+
+        // 1. Принудительно очищаем фон цветом базы (белым),
+        // игнорируя синий цвет выделения.
+        painter->fillRect(option.rect, option.palette.base());
+
+        // 2. Рисуем нашу оранжевую "сигарету"
+        painter->fillRect(option.rect, bg);
+
+        painter->restore();
+
+        // 3. САМЫЙ ВАЖНЫЙ МОМЕНТ:
+        // Убираем флаг выделения из опций перед передачей в базовый класс.
+        // Это заставит стандартный отрисовщик думать, что ячейка НЕ выделена,
+        // и он нарисует текст черным цветом на нашей полоске, не закрашивая её синим.
+        opt.state &= ~QStyle::State_Selected;
+        opt.state &= ~QStyle::State_HasFocus; // Также убираем пунктирную рамку фокуса
+        opt.backgroundBrush = Qt::transparent;
+    }
+
+    // 4. Рисуем текст поверх нашей полоски
+    QStyledItemDelegate::paint(painter, opt, index);
+}

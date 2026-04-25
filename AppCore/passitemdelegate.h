@@ -3,6 +3,10 @@
 
 #include <QStyledItemDelegate>
 
+namespace roles {
+inline constexpr int AnimationRole = Qt::UserRole + 100;
+}
+
 class PassEditDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
@@ -22,6 +26,10 @@ public:
 
     bool helpEvent(QHelpEvent *event, QAbstractItemView *view,
                    const QStyleOptionViewItem &option, const QModelIndex &index) override;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+
 };
 
 #endif // PASSITEMDELEGATE_H
