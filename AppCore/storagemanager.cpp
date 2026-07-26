@@ -21,7 +21,8 @@
 #include <random> // std::random_device
 
 static const QSet<QString> g_supported_as_version_1 {
-    QString("v2.00")
+    QString("v2.00"),
+    QString("v2.01")
 };
 
 #ifdef OS_Windows

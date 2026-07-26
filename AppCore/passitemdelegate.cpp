@@ -1,48 +1,118 @@
 #include "passitemdelegate.h"
+#include "constants.h"
 #include <QLineEdit>
 #include <QToolTip>
 #include <QHelpEvent>
 #include <QAbstractItemView>
 #include <QPainter>
+#include <QTableWidget>
 
 PassEditDelegate::PassEditDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
 {
 }
 
+void PassEditDelegate::initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const
+{
+    QStyledItemDelegate::initStyleOption(option, index);
+
+    // Маскируем текст в звездочки только для колонки паролей
+    if (index.column() == constants::pswd_column_idx) {
+        QString rawPassword = option->text;
+        option->text = QString(rawPassword.length(), '*');
+    }
+
+    // Больше никаких ручных сбросов флагов фокуса и палитр здесь не требуется!
+}
+
+void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const {
+    QVariant animData = index.data(roles::AnimationRole);
+    QStyleOptionViewItem opt = option;
+
+    initStyleOption(&opt, index);
+
+    // Извлекаем таблицу для проверки фокуса
+    const QTableWidget* table = qobject_cast<const QTableWidget*>(option.widget);
+
+    // --- ИСПРАВЛЕНИЕ ПОД ЛОГИКУ Qt 6.6.2 ---
+    // Проверяем, совпадает ли И СТРОКА, И КОЛОНКА.
+    // Фон активируется строго на той ячейке, по которой кликнули!
+    bool isCellSelected = (table &&
+                           table->currentIndex().row() == index.row() &&
+                           table->currentIndex().column() == index.column());
+    // ----------------------------------------
+
+    // --- 1. ЛОГИКА АНИМАЦИИ ФОНА ---
+    if (animData.isValid()) {
+        QBrush bg = animData.value<QBrush>();
+        painter->save();
+        painter->fillRect(option.rect, option.palette.base());
+        painter->fillRect(option.rect, bg);
+        painter->restore();
+
+        opt.state &= ~QStyle::State_Selected;
+        opt.state &= ~QStyle::State_HasFocus;
+        opt.backgroundBrush = Qt::transparent;
+        opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
+    }
+    // --- 2. ПОДСТВЕЧИВАЕМ ТОЛЬКО ОДНУ ВЫБРАННУЮ ЯЧЕЙКУ ---
+    else if (isCellSelected) {
+        painter->save();
+        QColor selectColor = option.palette.color(QPalette::Highlight);
+        painter->fillRect(option.rect, selectColor);
+        painter->restore();
+
+        opt.state &= ~QStyle::State_Selected;
+        opt.state &= ~QStyle::State_HasFocus;
+        opt.backgroundBrush = Qt::transparent;
+
+        // Текст в этой конкретной ячейке делаем белым
+        opt.palette.setColor(QPalette::Text, Qt::white);
+    }
+    // --- 3. ВСЕ ОСТАЛЬНЫЕ НЕВЫБРАННЫЕ ЯЧЕЙКИ СТРОКИ ---
+    else {
+        opt.state &= ~QStyle::State_HasFocus;
+        // Текст в остальных ячейках остается стандартным черным
+        opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
+    }
+
+    QStyledItemDelegate::paint(painter, opt, index);
+}
+
 QWidget *PassEditDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &option,
                                         const QModelIndex &index) const
 {
-    QLineEdit *editor = new QLineEdit(parent);
-    // Устанавливаем режим пароля, чтобы при вводе были звездочки/точки
-    editor->setEchoMode(QLineEdit::Password);
-    return editor;
+    if (index.column() == constants::pswd_column_idx) {
+        QLineEdit *editor = new QLineEdit(parent);
+        editor->setEchoMode(QLineEdit::Password);
+        return editor;
+    }
+    return QStyledItemDelegate::createEditor(parent, option, index);
 }
 
 void PassEditDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {
-    // Извлекаем реальный пароль из UserRole
-    QString value = index.model()->data(index, Qt::UserRole).toString();
-    QLineEdit *edit = qobject_cast<QLineEdit *>(editor);
-    if (edit) {
-        edit->setText(value);
+    if (index.column() == constants::pswd_column_idx) {
+        QString value = index.data(Qt::EditRole).toString();
+        QLineEdit *lineEdit = qobject_cast<QLineEdit *>(editor);
+        if (lineEdit) {
+            lineEdit->setText(value);
+        }
+    } else {
+        QStyledItemDelegate::setEditorData(editor, index);
     }
 }
 
-void PassEditDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
-                                    const QModelIndex &index) const
+void PassEditDelegate::setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const
 {
-    QLineEdit *edit = qobject_cast<QLineEdit *>(editor);
-    if (edit) {
-        QString value = edit->text();
-
-        // Генерируем строку маски (звездочки) той же длины, что и пароль
-        QString masked(value.length(), '*');
-
-        // DisplayRole — то, что видит пользователь в таблице
-        model->setData(index, masked, Qt::DisplayRole);
-        // UserRole — то, где хранится реальное значение для логики программы
-        model->setData(index, value, Qt::UserRole);
+    if (index.column() == constants::pswd_column_idx) {
+        QLineEdit *lineEdit = qobject_cast<QLineEdit *>(editor);
+        if (lineEdit) {
+            model->setData(index, lineEdit->text(), Qt::EditRole);
+            model->setData(index, lineEdit->text(), Qt::DisplayRole);
+        }
+    } else {
+        QStyledItemDelegate::setModelData(editor, model, index);
     }
 }
 
@@ -65,33 +135,3 @@ bool PassEditDelegate::helpEvent(QHelpEvent *event, QAbstractItemView *view,
     return QStyledItemDelegate::helpEvent(event, view, option, index);
 }
 
-void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const {
-    QVariant animData = index.data(roles::AnimationRole);
-    QStyleOptionViewItem opt = option;
-    initStyleOption(&opt, index);
-
-    if (animData.isValid()) {
-        QBrush bg = animData.value<QBrush>();
-        painter->save();
-
-        // 1. Принудительно очищаем фон цветом базы (белым),
-        // игнорируя синий цвет выделения.
-        painter->fillRect(option.rect, option.palette.base());
-
-        // 2. Рисуем нашу оранжевую "сигарету"
-        painter->fillRect(option.rect, bg);
-
-        painter->restore();
-
-        // 3. САМЫЙ ВАЖНЫЙ МОМЕНТ:
-        // Убираем флаг выделения из опций перед передачей в базовый класс.
-        // Это заставит стандартный отрисовщик думать, что ячейка НЕ выделена,
-        // и он нарисует текст черным цветом на нашей полоске, не закрашивая её синим.
-        opt.state &= ~QStyle::State_Selected;
-        opt.state &= ~QStyle::State_HasFocus; // Также убираем пунктирную рамку фокуса
-        opt.backgroundBrush = Qt::transparent;
-    }
-
-    // 4. Рисуем текст поверх нашей полоски
-    QStyledItemDelegate::paint(painter, opt, index);
-}

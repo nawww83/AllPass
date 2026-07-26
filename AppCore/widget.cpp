@@ -123,137 +123,180 @@ static void highlight_pswd(QTableWidget* widget, int row, const QDate& current_d
 }
 
 #define construct_recover_button(button) \
-    button = new QPushButton(); \
-    if (!button) { \
-        critical_message_box( \
-            QString::fromUtf8("Ошибка создания кнопки"), \
-            QString::fromUtf8("Нулевой указатель QPushButton.")); \
+do { \
+        button = new QPushButton(); \
+        if (!button) { \
+            critical_message_box( \
+                                  QString::fromUtf8("Ошибка создания кнопки"), \
+                                  QString::fromUtf8("Нулевой указатель QPushButton.")); \
     } else { \
-        const QPixmap icon_map("://images/icons8-restore-page-24.png"); \
-        button->setIcon(QIcon(icon_map)); \
-        button->setIconSize(icon_map.rect().size()); \
-        button->setEnabled(false); \
-        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
-        button->setToolTip( \
-            QString::fromUtf8("Восстановить данные из активного хранилища (icons8.com)")); \
-        ui->horizontalLayout->addWidget(button); \
-        connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
-    }
+            const QPixmap icon_map("://images/icons8-restore-page-24.png"); \
+            button->setIcon(QIcon(icon_map)); \
+            button->setIconSize(icon_map.rect().size()); \
+            button->setEnabled(false); \
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+            button->setToolTip( \
+                QString::fromUtf8("Восстановить данные из active-хранилища (icons8.com)")); \
+            ui->horizontalLayout->addWidget(button); \
+            connect(button, &QPushButton::clicked, this, &Widget::btn_recover_from_backup_clicked); \
+    } \
+} while(0)
 
 #define construct_create_new_storage_button(button) \
-button = new QPushButton(); \
-    if (!button) { \
-        critical_message_box( \
-                              QString::fromUtf8("Ошибка создания кнопки"), \
-                              QString::fromUtf8("Нулевой указатель QPushButton.")); \
-} else { \
-        const QPixmap icon_map("://images/icons8-key-24.png"); \
-        button->setIcon(QIcon(icon_map)); \
-        button->setIconSize(icon_map.rect().size()); \
-        button->setEnabled(false); \
-        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
-        button->setToolTip( \
-            QString::fromUtf8("Создать новое хранилище с переносом данных (icons8.com)")); \
-        ui->horizontalLayout->addWidget(button); \
-        connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
-}
+do { \
+        button = new QPushButton(); \
+        if (!button) { \
+            critical_message_box( \
+                                  QString::fromUtf8("Ошибка создания кнопки"), \
+                                  QString::fromUtf8("Нулевой указатель QPushButton.")); \
+    } else { \
+            const QPixmap icon_map("://images/icons8-key-24.png"); \
+            button->setIcon(QIcon(icon_map)); \
+            button->setIconSize(icon_map.rect().size()); \
+            button->setEnabled(false); \
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+            button->setToolTip( \
+                QString::fromUtf8("Создать новое хранилище с переносом данных (icons8.com)")); \
+            ui->horizontalLayout->addWidget(button); \
+            connect(button, &QPushButton::clicked, this, &Widget::btn_new_storage_with_transfer_clicked); \
+    } \
+} while(0)
 
 #define construct_clear_table_button(button) \
-button = new QPushButton(); \
-    if (!button) { \
-        critical_message_box( \
-                              QString::fromUtf8("Ошибка создания кнопки"), \
-                              QString::fromUtf8("Нулевой указатель QPushButton.")); \
-} else { \
-        const QPixmap icon_map("://images/icons8-clear-24.png"); \
-        button->setIcon(QIcon(icon_map)); \
-        button->setIconSize(icon_map.rect().size()); \
-        button->setEnabled(false); \
-        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
-        button->setToolTip( \
-            QString::fromUtf8("Очистить текущую таблицу (icons8.com)")); \
-        ui->horizontalLayout->addWidget(button); \
-        connect(button, &QPushButton::clicked, this, &Widget::btn_clear_table_clicked); \
-}
+do { \
+        button = new QPushButton(); \
+        if (!button) { \
+            critical_message_box( \
+                                  QString::fromUtf8("Ошибка создания кнопки"), \
+                                  QString::fromUtf8("Нулевой указатель QPushButton.")); \
+    } else { \
+            const QPixmap icon_map("://images/icons8-clear-24.png"); \
+            button->setIcon(QIcon(icon_map)); \
+            button->setIconSize(icon_map.rect().size()); \
+            button->setEnabled(false); \
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); \
+            button->setToolTip( \
+                QString::fromUtf8("Очистить текущую таблицу (icons8.com)")); \
+            ui->horizontalLayout->addWidget(button); \
+            connect(button, &QPushButton::clicked, this, &Widget::btn_clear_table_clicked); \
+    } \
+} while(0)
 
 #define configure_table(widget) \
-    widget->setTabKeyNavigation(false); \
-    widget->setFocusPolicy(Qt::StrongFocus); \
-    widget->setSortingEnabled(false); \
-    QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии"), QString::fromUtf8("Дата")}; \
-    widget->setHorizontalHeaderLabels(table_header); \
-    widget->verticalHeader()->setVisible(false); \
-    widget->setColumnWidth(0, 210); \
-    widget->setColumnWidth(1, 200); \
-    widget->setColumnWidth(2, 400); \
-    widget->setColumnHidden(constants::date_column_idx, true); \
-    PassEditDelegate* pass_delegate = new PassEditDelegate(this); \
-    widget->setItemDelegateForColumn(constants::pswd_column_idx, pass_delegate); \
-    widget->installEventFilter(this); \
-    widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
-    widget->setContextMenuPolicy(Qt::CustomContextMenu); \
-    widget->setSelectionMode(QAbstractItemView::SingleSelection); \
-    widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, QHeaderView::Stretch); \
-    connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested); \
-    connect(widget, &QTableWidget::itemChanged, this, &Widget::tableWidget_itemChanged);
+do { \
+        widget->setTabKeyNavigation(false); \
+        widget->setFocusPolicy(Qt::ClickFocus); \
+        widget->setSortingEnabled(false); \
+    \
+        QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии"), QString::fromUtf8("Дата")}; \
+        widget->setColumnCount(table_header.size()); \
+        widget->setHorizontalHeaderLabels(table_header); \
+        widget->verticalHeader()->setVisible(false); \
+    \
+        widget->setColumnWidth(0, 210); \
+        widget->setColumnWidth(1, 200); \
+        widget->setColumnHidden(constants::date_column_idx, true); \
+        widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, QHeaderView::Stretch); \
+    \
+        PassEditDelegate* global_delegate = new PassEditDelegate(widget); \
+        widget->setItemDelegate(global_delegate); \
+    \
+        widget->installEventFilter(this); \
+        widget->viewport()->installEventFilter(this); \
+        widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
+        widget->setContextMenuPolicy(Qt::CustomContextMenu); \
+    \
+        /* Отключаем деструктивный системный механизм выделения Qt 6.11 */ \
+        widget->setSelectionMode(QAbstractItemView::NoSelection); \
+        widget->setSelectionBehavior(QAbstractItemView::SelectItems); \
+        widget->setStyleSheet("QTableWidget { outline: 0; } QTableWidget::item { border: none; }"); \
+    \
+        connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested); \
+        connect(widget, &QTableWidget::itemChanged, this, &Widget::tableWidget_itemChanged); \
+    \
+        connect(widget->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [wPtr = widget](const QModelIndex &current, const QModelIndex &previous) { \
+                Q_UNUSED(previous); \
+                if (current.isValid() && wPtr) { \
+                    /* Принудительно и синхронно обновляем область отображения всей таблицы */ \
+                    wPtr->viewport()->update(); \
+            } \
+        }); \
+    \
+        /* Двойной клик по-прежнему открывает полноценный рабочий редактор */ \
+        connect(widget, &QTableWidget::itemDoubleClicked, this, [](QTableWidgetItem* item) { \
+                if (item && item->tableWidget() && item->column() == constants::pswd_column_idx) { \
+                    item->tableWidget()->editItem(item); \
+            } \
+        }); \
+} while(0)
 
 #define configure_actions \
-    copyAct = new QAction(QIcon(), \
-                          tr("&Копировать ячейку"), this); \
-    copyAct->setShortcuts(QKeySequence::Copy); \
-    connect(copyAct, &QAction::triggered, this, &Widget::copy_to_clipboard); \
-    removeAct = new QAction(QIcon(), \
-                            tr("&Удалить строку"), this); \
-    removeAct->setShortcuts(QKeySequence::Delete); \
-    connect(removeAct, &QAction::triggered, this, &Widget::delete_row); \
-    updatePassAct = new QAction(QIcon(), \
-                                tr("&Обновить пароль"), this); \
-    connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass); \
-    showPassDateAct = new QAction(QIcon(), \
-                                tr("&Показать дату изменения пароля"), this); \
-    connect(showPassDateAct, &QAction::triggered, this, &Widget::show_pass_date);
+do { \
+        copyAct = new QAction(QIcon(), \
+                              tr("&Копировать ячейку"), this); \
+        copyAct->setShortcuts(QKeySequence::Copy); \
+        connect(copyAct, &QAction::triggered, this, &Widget::copy_to_clipboard); \
+    \
+        removeAct = new QAction(QIcon(), \
+                                tr("&Удалить строку"), this); \
+        removeAct->setShortcuts(QKeySequence::Delete); \
+        connect(removeAct, &QAction::triggered, this, &Widget::delete_row); \
+    \
+        updatePassAct = new QAction(QIcon(), \
+                                    tr("&Обновить пароль"), this); \
+        connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass); \
+    \
+        showPassDateAct = new QAction(QIcon(), \
+                                      tr("&Показать дату изменения пароля"), this); \
+        connect(showPassDateAct, &QAction::triggered, this, &Widget::show_pass_date); \
+} while(0)
 
 #ifdef QT_DEBUG
 /**
  * @brief Тест на корректность функций "вперед-назад" генераторов гаммы.
  */
 static int run_test() {
-    const int offset = 120'000;
+    constexpr int offset = 120'000;
+    constexpr int base_size = 64;
+
     QFutureWatcher<lfsr_rng::Generators> watcher_enc;
-    lfsr_rng::STATE state_inner {2929 ,
-                                14359 ,
-                                45922 ,
-                                39695 ,
-                                53744 ,
-                                53089 ,
-                                18177 ,
-                                45209 };
+    lfsr_rng::STATE state_inner {2929, 14359, 45922, 39695, 53744, 53089, 18177, 45209};
+
     watcher_enc.setFuture(password::worker->seed(state_inner));
     watcher_enc.waitForFinished();
+
     Encryption mEnc;
     mEnc.gamma_gen = watcher_enc.result();
-    const int base_size = 64;
-    const auto init_value = mEnc.gamma_gen.peek_u64();
+
+    const uint64_t init_value = mEnc.gamma_gen.peek_u64();
     qDebug() << "1: " << mEnc.gamma_gen.peek_u64() << ", " << mEnc.counter;
-    uint64_t tmp;
+
+    // Шаг 1: Сдвиг вперед на величину offset
     for (int i = 0; i < offset; ++i) {
         mEnc.gamma_gen.next_u64();
         mEnc.counter++;
     }
+
+    // Шаг 2: Сдвиг вперед на (base_size - 1)
     for (int i = 0; i < base_size - 1; ++i) {
         mEnc.gamma_gen.next_u64();
         mEnc.counter++;
     }
-    {
-        tmp = mEnc.gamma_gen.next_u64();
-        mEnc.counter++;
-    }
+
+    // Шаг 3: Последний одиночный сдвиг вперед с фиксацией пикового значения
+    uint64_t tmp = mEnc.gamma_gen.next_u64();
+    mEnc.counter++;
     qDebug() << "2: " << tmp << ", " << mEnc.counter;
-    for (int i = 0; i < (base_size + offset); ++i) {
+
+    // Шаг 4: Откат назад
+    const int total_back_steps = base_size + offset;
+    for (int i = 0; i < total_back_steps; ++i) {
         tmp = mEnc.gamma_gen.back_u64();
         mEnc.counter--;
     }
+
     qDebug() << "1: " << tmp << ", " << mEnc.counter;
+
     return (init_value == mEnc.gamma_gen.peek_u64()) ? 0 : -1;
 }
 #endif
@@ -299,6 +342,10 @@ Widget::Widget(QString pin, QWidget *parent)
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(false);
 
+    // Ловим клики по пустому фону самого окна
+    this->installEventFilter(this);
+    this->setFocusPolicy(Qt::ClickFocus);
+
     construct_recover_button(btn_recover_from_backup);
 
     construct_create_new_storage_button(btn_new_storage_with_transfer);
@@ -321,6 +368,47 @@ Widget::~Widget()
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
 {
+    // 1. ПЕРЕХВАТ КЛИКОВ МЫШИ НА ТАБЛИЦЕ И ОКНЕ
+    if (event->type() == QEvent::MouseButtonPress) {
+        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+
+        // Проверяем, если кликнули по самой таблице или её viewport
+        if (object == ui->tableWidget || object == ui->tableWidget->viewport()) {
+
+            // Проверяем, попал ли клик на какую-нибудь ячейку
+            QModelIndex index = ui->tableWidget->indexAt(mouseEvent->pos());
+
+            if (!index.isValid()) {
+                // Пользователь кликнул по ПУСТОМУ месту таблицы (ниже всех строк)
+                QModelIndex currentIndex = ui->tableWidget->currentIndex();
+                if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
+                    ui->tableWidget->closePersistentEditor(ui->tableWidget->itemFromIndex(currentIndex));
+                }
+
+                // ИСПРАВЛЕНИЕ ДЛЯ ЧИСТОГО ВИДА: Сбрасываем выбранную строку в -1
+                ui->tableWidget->setCurrentCell(-1, -1);
+                ui->tableWidget->viewport()->update(); // Принудительно очищаем экран от выделений
+
+                ui->tableWidget->clearFocus();
+                this->setFocus();
+                return true;
+            }
+        }
+
+        // Если кликнули по абсолютно пустому фону самого ОКНА (Widget)
+        else if (object == this) {
+            QModelIndex currentIndex = ui->tableWidget->currentIndex();
+            if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
+                ui->tableWidget->closePersistentEditor(ui->tableWidget->itemFromIndex(currentIndex));
+            }
+            ui->tableWidget->clearSelection();
+            ui->tableWidget->setCurrentItem(nullptr);
+            ui->tableWidget->clearFocus();
+            this->setFocus();
+        }
+    }
+
+    // --- 2. ВАШ СТАРЫЙ КОД ОБРАБОТКИ КЛАВИАТУРЫ (ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ) ---
     static bool found_copy = false;
     if (event->type() == QEvent::KeyPress)
     {
@@ -512,15 +600,11 @@ void Widget::update_pass() {
             pswd = utils::try_to_get_password(g_current_password_len, pass_level);
         }
 
-        // --- ИСПРАВЛЕНИЕ ТУТ ---
-        // Генерируем маску из '*' длиной, равной полученному паролю
         QString dynamicAsterics(pswd.length(), '*');
 
-        // Устанавливаем визуальную маску
         pointers::selected_context_table_item->setData(Qt::DisplayRole, dynamicAsterics);
-        // Сохраняем реальный пароль
         pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
-        // -----------------------
+        pointers::selected_context_table_item->setData(Qt::EditRole, pswd);
 
         information_message_box(QString::fromUtf8("Успех"),
                                 QString::fromUtf8("Пароль был обновлен"));
@@ -691,19 +775,22 @@ void Widget::insert_new_password()
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
     const int row = ui->tableWidget->rowCount() - 1;
 
-    // Секция пароля
+    ui->tableWidget->setItem(row, 0, new QTableWidgetItem(""));
+
+    // --- СЕКЦИЯ ПАРОЛЯ (ИСПРАВЛЕННАЯ) ---
     {
         QTableWidgetItem* item = new QTableWidgetItem();
 
-        // --- Генерируем маску точно по длине пароля ---
-        QString mask(pswd.length(), '*');
-
-        item->setData(Qt::DisplayRole, mask); // Отображаем звездочки
-        item->setData(Qt::UserRole, pswd);    // Храним реальный пароль
-        // ---------------------------------------------------------
+        // Записываем СТРОГО чистый пароль во все роли.
+        // Больше никаких ручных mask(length, '*') здесь!
+        item->setData(Qt::DisplayRole, pswd);
+        item->setData(Qt::UserRole, pswd);
+        item->setData(Qt::EditRole, pswd);
 
         ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     }
+
+    ui->tableWidget->setItem(row, 2, new QTableWidgetItem(""));
 
     // Секция даты
     {
@@ -711,11 +798,13 @@ void Widget::insert_new_password()
         QTableWidgetItem* item = new QTableWidgetItem();
         item->setText(date);
         ui->tableWidget->setItem(row, constants::date_column_idx, item);
-        qDebug() << "Set date: " << date;
     }
 
-    // Остальные настройки интерфейса
-    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
+    // Задаем фиксированную ширину вместо resizeColumnToContents
+    ui->tableWidget->setColumnWidth(constants::pswd_column_idx, 200);
+
+    // Мы убираем отсюда жесткие ресайзы, так как HeaderView::Stretch в макросе
+    // теперь сам автоматически растягивает комментарии на всю оставшуюся ширину окна.
     ui->tableWidget->scrollToBottom();
     ui->btn_generate->setText(labels::gen_pass_txt);
     ui->btn_generate->setEnabled(true);
@@ -789,10 +878,18 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
         const int row = item->row();
         auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
         if (date_item) {
+            // ИСПРАВЛЕНИЕ: Блокируем сигналы таблицы. Теперь изменение ячейки даты
+            // не будет сбивать фокус клавиатуры у активного поля ввода пароля.
+            ui->tableWidget->blockSignals(true);
+
             date_item->setText(date);
             qDebug() << "Set date: " << date;
+
             const auto& current_date = QDate::currentDate();
             highlight_pswd(ui->tableWidget, row, current_date);
+
+            // ОБЯЗАТЕЛЬНО: Возвращаем сигналы в исходное состояние
+            ui->tableWidget->blockSignals(false);
         }
     }
 }
