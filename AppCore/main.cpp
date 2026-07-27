@@ -50,7 +50,8 @@ int main(int argc, char *argv[])
     }
 
     if (pin.isEmpty()) {
-        MyDialog dialog;
+        QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
+        MyDialog dialog{QString::fromUtf8("Введите PIN-код (%1)").arg(current_version)};
         const int result = dialog.exec();
         if (result != QDialog::Accepted) {
             return 0;
