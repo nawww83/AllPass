@@ -15,6 +15,7 @@
 #include <QIcon>
 #include <QClipboard>
 #include <QDate>
+#include <QElapsedTimer>
 
 #include "passitemdelegate.h"
 #include "utils.h"
@@ -408,7 +409,7 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
         }
     }
 
-    // --- 2. ВАШ СТАРЫЙ КОД ОБРАБОТКИ КЛАВИАТУРЫ (ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ) ---
+    // --- КОД ОБРАБОТКИ КЛАВИАТУРЫ ---
     static bool found_copy = false;
     if (event->type() == QEvent::KeyPress)
     {
@@ -474,72 +475,82 @@ void Widget::closeEvent(QCloseEvent *event)
 void Widget::copy_to_clipboard() {
     if (!pointers::selected_context_table_item) return;
 
-    // 1. Ищем и убиваем старый таймер, если он есть
-    QTimer *oldTimer = this->findChild<QTimer*>("clipboard_timer");
-    if (oldTimer) {
-        oldTimer->stop();
-        oldTimer->deleteLater();
-        oldTimer->setObjectName(""); // Очищаем имя, чтобы не найти его снова
-    }
-
     QClipboard *clipboard = QApplication::clipboard();
     auto item = pointers::selected_context_table_item;
 
     if (item->column() == constants::pswd_column_idx) {
+        // 1. Ищем и корректно сбрасываем старый таймер, если он есть
+        QTimer *oldTimer = this->findChild<QTimer*>("clipboard_timer");
+        if (oldTimer) {
+            QPersistentModelIndex oldIndex = oldTimer->property("pIndex").value<QPersistentModelIndex>();
+            if (oldIndex.isValid()) {
+                auto oldItem = ui->tableWidget->item(oldIndex.row(), oldIndex.column());
+                if (oldItem) {
+                    TableLoadingRAII lock;
+                    oldItem->setData(roles::AnimationRole, QVariant()); // Сбрасываем анимацию ячейки
+                }
+                highlight_pswd(ui->tableWidget, oldIndex.row(), QDate::currentDate()); // Возвращаем подсветку
+            }
+            oldTimer->stop();
+            oldTimer->deleteLater();
+            oldTimer->setObjectName("");
+        }
+
+        // 2. Записываем новый пароль в буфер
         clipboard->setText(item->data(Qt::UserRole).toString());
 
         QPersistentModelIndex pIndex(ui->tableWidget->model()->index(item->row(), item->column()));
-        int timeoutSec = 30;
+        int timeoutMs = 30 * 1000; // 30 секунд в миллисекундах
         int intervalMs = 50;
-        int totalTicks = (timeoutSec * 1000) / intervalMs;
-
-        // Локальный счетчик для этой конкретной лямбды
-        int *ticks = new int(0);
 
         QTimer *timer = new QTimer(this);
         timer->setObjectName("clipboard_timer");
+        timer->setProperty("pIndex", QVariant::fromValue(pIndex));
 
-        connect(timer, &QTimer::timeout, this, [this, pIndex, clipboard, timer, totalTicks, ticks]() mutable {
-            (*ticks)++;
+        // Используем QElapsedTimer вместо ручного выделения памяти под int* ticks
+        QElapsedTimer *elapsedTimer = new QElapsedTimer();
+        elapsedTimer->start();
 
+        // Передаем elapsedTimer по значению через shared_ptr, чтобы он автоматически удалился вместе с лямбдой
+        std::shared_ptr<QElapsedTimer> timerPtr(elapsedTimer);
+
+        connect(timer, &QTimer::timeout, this, [this, pIndex, clipboard, timer, timeoutMs, timerPtr]() {
             if (!pIndex.isValid()) {
                 timer->stop();
                 timer->deleteLater();
-                delete ticks;
                 return;
             }
 
             auto currentItem = ui->tableWidget->item(pIndex.row(), pIndex.column());
             if (!currentItem) return;
 
-            if (*ticks <= totalTicks) {
-                double progress = 1.0 - (static_cast<double>(*ticks) / totalTicks);
+            qint64 elapsed = timerPtr->elapsed();
 
-                // Используем координаты относительно прямоугольника ячейки
+            if (elapsed < timeoutMs) {
+                // Вычисляем прогресс на основе реального прошедшего времени
+                double progress = 1.0 - (static_cast<double>(elapsed) / timeoutMs);
+
                 QLinearGradient gradient(0, 0, 1, 0);
                 gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
-                gradient.setColorAt(0, QColor(255, 170, 0)); // Сплошной оранжевый
+                gradient.setColorAt(0, QColor(255, 170, 0));
                 gradient.setColorAt(progress, QColor(255, 170, 0));
                 gradient.setColorAt(qMin(progress + 0.001, 1.0), Qt::transparent);
 
                 {
                     TableLoadingRAII lock;
-                    // ВАЖНО: используем AnimationRole вместо BackgroundRole
                     currentItem->setData(roles::AnimationRole, QBrush(gradient));
                 }
 
-                // Немедленно перерисовываем
                 ui->tableWidget->viewport()->update(ui->tableWidget->visualRect(pIndex));
             }
             else
             {
                 timer->stop();
                 timer->deleteLater();
-                delete ticks;
 
                 {
                     TableLoadingRAII lock;
-                    currentItem->setData(roles::AnimationRole, QVariant()); // Очищаем роль
+                    currentItem->setData(roles::AnimationRole, QVariant());
                 }
 
                 highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
