@@ -478,25 +478,25 @@ void Widget::copy_to_clipboard() {
     QClipboard *clipboard = QApplication::clipboard();
     auto item = pointers::selected_context_table_item;
 
-    if (item->column() == constants::pswd_column_idx) {
-        // 1. Ищем и корректно сбрасываем старый таймер, если он есть
-        QTimer *oldTimer = this->findChild<QTimer*>("clipboard_timer");
-        if (oldTimer) {
-            QPersistentModelIndex oldIndex = oldTimer->property("pIndex").value<QPersistentModelIndex>();
-            if (oldIndex.isValid()) {
-                auto oldItem = ui->tableWidget->item(oldIndex.row(), oldIndex.column());
-                if (oldItem) {
-                    TableLoadingRAII lock;
-                    oldItem->setData(roles::AnimationRole, QVariant()); // Сбрасываем анимацию ячейки
-                }
-                highlight_pswd(ui->tableWidget, oldIndex.row(), QDate::currentDate()); // Возвращаем подсветку
+    // Ищем и корректно сбрасываем старый таймер, если он есть
+    QTimer *oldTimer = this->findChild<QTimer*>("clipboard_timer");
+    if (oldTimer) {
+        QPersistentModelIndex oldIndex = oldTimer->property("pIndex").value<QPersistentModelIndex>();
+        if (oldIndex.isValid()) {
+            auto oldItem = ui->tableWidget->item(oldIndex.row(), oldIndex.column());
+            if (oldItem) {
+                TableLoadingRAII lock;
+                oldItem->setData(roles::AnimationRole, QVariant()); // Сбрасываем анимацию ячейки
             }
-            oldTimer->stop();
-            oldTimer->deleteLater();
-            oldTimer->setObjectName("");
+            highlight_pswd(ui->tableWidget, oldIndex.row(), QDate::currentDate()); // Возвращаем подсветку
         }
+        oldTimer->stop();
+        oldTimer->deleteLater();
+        oldTimer->setObjectName("");
+    }
 
-        // 2. Записываем новый пароль в буфер
+    if (item->column() == constants::pswd_column_idx) {
+        // Записываем новый пароль в буфер
         clipboard->setText(item->data(Qt::UserRole).toString());
 
         QPersistentModelIndex pIndex(ui->tableWidget->model()->index(item->row(), item->column()));
@@ -571,7 +571,6 @@ void Widget::copy_to_clipboard() {
 
     pointers::selected_context_table_item = nullptr;
 }
-
 
 void Widget::delete_row() {
     if (!question_message_box(
