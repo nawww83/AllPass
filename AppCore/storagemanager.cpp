@@ -479,9 +479,9 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     return decoded_data;
 }
 
-bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save_to_tmp )
+bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save_to_tmp)
 {
-    const QString& file_name = save_to_tmp ? mStorageNameTmp : mStorageName;
+    const QString &file_name = save_to_tmp ? mStorageNameTmp : mStorageName;
     if (file_name.isEmpty()) {
         qDebug() << "Empty storage.";
         return true;
@@ -494,45 +494,53 @@ bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         qDebug() << "Empty inner encryption.";
         return false;
     }
+
     QByteArray packed_data_bytes;
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-        auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-    #endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
+#endif
+
     QString packed_data_str;
-    for( int row = 0; row < ro_table->rowCount(); ++row )
-    {
+    for (int row = 0; row < ro_table->rowCount(); ++row) {
         QStringList data_rows;
-        for( int col = 0; col < ro_table->columnCount(); ++col )
-        {
+        for (int col = 0; col < ro_table->columnCount(); ++col) {
             if (ro_table->item(row, col)) {
-                if (col != constants::pswd_column_idx) {
-                    const auto& txt = ro_table->item(row, col)->text();
-                    data_rows << (txt == "" ? symbols::empty_item : txt);
-                } else {
-                    data_rows << ro_table->item(row, col)->data(Qt::UserRole).toString();
-                }
+                // --- ИСПРАВЛЕНИЕ: Теперь все роли синхронизированы ---
+                // Пароль хранится в открытом виде в DisplayRole, поэтому text()
+                // вернет чистый пароль для всех колонок одинаково.
+                const auto &txt = ro_table->item(row, col)->text();
+                data_rows << (txt.isEmpty() ? symbols::empty_item : txt);
             } else {
                 data_rows << symbols::empty_item;
             }
         }
-        packed_data_str = data_rows.join( symbols::row_delimiter );
+
+        // Формируем строку из ячеек
+        packed_data_str = data_rows.join(symbols::row_delimiter);
+
+        // Для всех строк, кроме ПОСЛЕДНЕЙ: добавляем разделитель строк и кодируем в байты
         if (row < ro_table->rowCount() - 1) {
-            packed_data_str.append( symbols::col_delimiter );
-            #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-                packed_data_bytes.append( fromUtf16( packed_data_str ) );
-            #else
-                packed_data_bytes.append( packed_data_str.toUtf8() );
-            #endif
+            packed_data_str.append(symbols::col_delimiter);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+            packed_data_bytes.append(fromUtf16(packed_data_str));
+#else
+            packed_data_bytes.append(packed_data_str.toUtf8());
+#endif
         }
     }
+
+    // Блок обработки ПОСЛЕДНЕЙ строки
+    // В переменной packed_data_str все еще лежит последняя строка таблицы.
     { // Конец сообщения.
-        packed_data_str.append( symbols::end_message );
-        #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-            packed_data_bytes.append( fromUtf16( packed_data_str ) );
-        #else
-            packed_data_bytes.append( packed_data_str.toUtf8() );
-        #endif
+        packed_data_str.append(symbols::end_message);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        packed_data_bytes.append(fromUtf16(packed_data_str));
+#else
+        packed_data_bytes.append(packed_data_str.toUtf8());
+#endif
     }
+
+    // --- СИСТЕМНАЯ ЛОГИКА (ШИФРОВАНИЕ И ЗАПИСЬ) ---
     QByteArray encoded_data_bytes;
     QFile file(file_name);
     QString current_version = QString::fromUtf8(VERSION_LABEL);
@@ -545,8 +553,7 @@ bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     }
     encoded_data_bytes.append(VERSION_LABEL);
     utils::padd<128>(encoded_data_bytes);
-    if (file.open(QFile::WriteOnly))
-    {
+    if (file.open(QFile::WriteOnly)) {
         file.write(encoded_data_bytes);
         file.close();
         if (save_to_tmp) {
@@ -556,9 +563,9 @@ bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
             file_backup.close();
-            #ifdef OS_Windows
-                do_hidden(file_backup.fileName().toStdWString().data());
-            #endif
+#ifdef OS_Windows
+            do_hidden(file_backup.fileName().toStdWString().data());
+#endif
             qDebug() << "Make backup: " << mStorageNameBackUp;
         }
     } else {
@@ -569,13 +576,14 @@ bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
             file_backup.close();
-            #ifdef OS_Windows
-                do_hidden(file_backup.fileName().toStdWString().data());
-            #endif
+#ifdef OS_Windows
+            do_hidden(file_backup.fileName().toStdWString().data());
+#endif
             qDebug() << "Make backup only: " << mStorageNameBackUp;
         } else {
             QMessageBox mb;
-            mb.critical(nullptr, QString::fromUtf8("Ошибка сохранения."),
+            mb.critical(nullptr,
+                        QString::fromUtf8("Ошибка сохранения."),
                         QString::fromUtf8("Файловая ошибка сохранения таблицы в хранилище."));
             return false;
         }
@@ -583,9 +591,9 @@ bool StorageManager::SaveToStorage(const QTableWidget* const ro_table, bool save
     return true;
 }
 
-Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, FileTypes type)
+Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, FileTypes type)
 {
-    const auto& file_name = [this, type]() -> QString {
+    const auto &file_name = [this, type]() -> QString {
         switch (type) {
         case FileTypes::BACKUP:
             return mStorageNameBackUp;
@@ -616,17 +624,16 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
     }
     QFile file(file_name);
     QByteArray decoded_data_bytes;
-    if (file.open(QFile::ReadOnly))
-    {
+    if (file.open(QFile::ReadOnly)) {
         QByteArray raw_data = file.readAll();
         file.close();
         utils::dpadd(raw_data);
         QString read_version;
-        #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-                MyQByteArray& raw_ref = static_cast<MyQByteArray&>(raw_data);
-        #else
-                QByteArray& raw_ref = raw_data;
-        #endif
+#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
+        MyQByteArray &raw_ref = static_cast<MyQByteArray &>(raw_data);
+#else
+        QByteArray &raw_ref = raw_data;
+#endif
         while (!raw_ref.isEmpty() && raw_ref.back() != g_version_prefix) {
             read_version.push_back(raw_ref.back());
             raw_ref.removeLast();
@@ -640,61 +647,63 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget * const wr_table, Fi
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }
-        } else
-        {
+        } else {
             return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
-        // qDebug() << "Storage cannot be opened.";
         if (file.exists()) {
             return Loading_Errors::CANNOT_BE_OPENED;
         } else {
             return Loading_Errors::NEW_STORAGE;
         }
     }
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-        auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-        QString decoded_data_str = toUtf16(decoded_data_bytes);
-    #else
-        QString decoded_data_str(decoded_data_bytes);
-    #endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
+    QString decoded_data_str = toUtf16(decoded_data_bytes);
+#else
+    QString decoded_data_str(decoded_data_bytes);
+#endif
     if (decoded_data_str.isEmpty()) {
         qDebug() << "Unrecognized error while loading.";
         return Loading_Errors::UNRECOGNIZED;
     }
+
+    // Удаляем технический маркер конца сообщения (symbols::end_message)
     decoded_data_str.remove(decoded_data_str.size() - 1, 1);
+
     QStringList data_rows;
     data_rows = decoded_data_str.split(symbols::col_delimiter);
     if (data_rows.isEmpty() || (!data_rows.isEmpty() && data_rows[0].isEmpty())) {
         qDebug() << "Empty row data.";
         return Loading_Errors::EMPTY_TABLE;
     }
+
     QStringList data_items;
-    for (int row = 0; row < data_rows.size(); row++)
-    {
+    for (int row = 0; row < data_rows.size(); row++) {
         data_items = data_rows.at(row).split(symbols::row_delimiter);
         if (data_items.size() <= wr_table->columnCount()) {
             wr_table->insertRow(row);
         } else {
-            qDebug() << "Small column size in table: table: " << wr_table->columnCount() << " vs loaded data: " << data_items.size();
+            qDebug() << "Small column size in table: table: " << wr_table->columnCount()
+                     << " vs loaded data: " << data_items.size();
             return Loading_Errors::UNRECOGNIZED;
         }
-        for (int col = 0; col < data_items.size(); col++)
-        {
-            const QString& row_str = data_items.at(col);
+        for (int col = 0; col < data_items.size(); col++) {
+            const QString &row_str = data_items.at(col);
             QTableWidgetItem *item = new QTableWidgetItem();
 
-            // Проверяем, пустое ли значение (используя ваш символ empty_item)
-            QString final_str = (row_str.isEmpty() || row_str.at(0) == symbols::empty_item)
-                                    ? ""
-                                    : row_str;
+            // --- Безопасное извлечение пустых значений ---
+            // Сначала проверяем на пустоту, чтобы row_str.at(0) не привел к падению приложения
+            QString final_str = "";
+            if (!row_str.isEmpty() && row_str.at(0) != symbols::empty_item) {
+                final_str = row_str;
+            }
 
             if (col == constants::pswd_column_idx) {
-                // --- ИСПРАВЛЕНИЕ: Динамическая маска ---
-                QString mask(final_str.length(), '*');
-
-                item->setData(Qt::DisplayRole, mask);      // Визуально: звездочки
-                item->setData(Qt::UserRole, final_str);    // Внутри: реальный пароль
+                // Больше никаких физических звёздочек в модель ячеек.
+                // Записываем чистый прочитанный пароль в обе роли.
+                item->setData(Qt::DisplayRole, final_str);
+                item->setData(Qt::EditRole, final_str);
             } else {
                 item->setText(final_str);
             }

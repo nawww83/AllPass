@@ -184,52 +184,64 @@ do { \
 } while(0)
 
 #define configure_table(widget) \
-do { \
+    do { \
         widget->setTabKeyNavigation(false); \
         widget->setFocusPolicy(Qt::ClickFocus); \
         widget->setSortingEnabled(false); \
-    \
-        QStringList table_header {QString::fromUtf8("Логин"), QString::fromUtf8("Пароль"), QString::fromUtf8("Комментарии"), QString::fromUtf8("Дата")}; \
+\
+        QStringList table_header{QString::fromUtf8("Логин"), \
+                                 QString::fromUtf8("Пароль"), \
+                                 QString::fromUtf8("Комментарии"), \
+                                 QString::fromUtf8("Дата")}; \
         widget->setColumnCount(table_header.size()); \
         widget->setHorizontalHeaderLabels(table_header); \
         widget->verticalHeader()->setVisible(false); \
-    \
+\
         widget->setColumnWidth(0, 210); \
         widget->setColumnWidth(1, 200); \
         widget->setColumnHidden(constants::date_column_idx, true); \
-        widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, QHeaderView::Stretch); \
-    \
-        PassEditDelegate* global_delegate = new PassEditDelegate(widget); \
+        widget->horizontalHeader()->setSectionResizeMode(constants::comments_column_idx, \
+                                                         QHeaderView::Stretch); \
+\
+        PassEditDelegate *global_delegate = new PassEditDelegate(widget); \
         widget->setItemDelegate(global_delegate); \
-    \
+\
         widget->installEventFilter(this); \
         widget->viewport()->installEventFilter(this); \
         widget->setEditTriggers(QAbstractItemView::DoubleClicked); \
         widget->setContextMenuPolicy(Qt::CustomContextMenu); \
-    \
+\
         /* Отключаем деструктивный системный механизм выделения Qt 6.11 */ \
         widget->setSelectionMode(QAbstractItemView::NoSelection); \
         widget->setSelectionBehavior(QAbstractItemView::SelectItems); \
-        widget->setStyleSheet("QTableWidget { outline: 0; } QTableWidget::item { border: none; }"); \
-    \
-        connect(widget, &QTableWidget::customContextMenuRequested, this, &Widget::tableWidget_customContextMenuRequested); \
+        widget->setStyleSheet( \
+            "QTableWidget { outline: 0; } QTableWidget::item { border: none; }"); \
+\
+        connect(widget, \
+                &QTableWidget::customContextMenuRequested, \
+                this, \
+                &Widget::tableWidget_customContextMenuRequested); \
         connect(widget, &QTableWidget::itemChanged, this, &Widget::tableWidget_itemChanged); \
-    \
-        connect(widget->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [wPtr = widget](const QModelIndex &current, const QModelIndex &previous) { \
-                Q_UNUSED(previous); \
-                if (current.isValid() && wPtr) { \
-                    /* Принудительно и синхронно обновляем область отображения всей таблицы */ \
-                    wPtr->viewport()->update(); \
-            } \
-        }); \
-    \
+\
+        /* Синхронно обновляем таблицу при перемещении фокуса (клик по любой ячейке) */ \
+        connect(widget->selectionModel(), \
+                &QItemSelectionModel::currentChanged, \
+                this, \
+                [wPtr = widget](const QModelIndex &current, const QModelIndex &previous) { \
+                    Q_UNUSED(previous); \
+                    if (current.isValid() && wPtr) { \
+                        /* update() может быть оптимизирован Qt, viewport()->repaint() принудительно перерисует экран */ \
+                        wPtr->viewport()->repaint(); \
+                    } \
+                }); \
+\
         /* Двойной клик по-прежнему открывает полноценный рабочий редактор */ \
-        connect(widget, &QTableWidget::itemDoubleClicked, this, [](QTableWidgetItem* item) { \
-                if (item && item->tableWidget() && item->column() == constants::pswd_column_idx) { \
-                    item->tableWidget()->editItem(item); \
+        connect(widget, &QTableWidget::itemDoubleClicked, this, [](QTableWidgetItem *item) { \
+            if (item && item->tableWidget() && item->column() == constants::pswd_column_idx) { \
+                item->tableWidget()->editItem(item); \
             } \
         }); \
-} while(0)
+    } while (0)
 
 #define configure_actions \
 do { \
@@ -369,84 +381,78 @@ Widget::~Widget()
 
 bool Widget::eventFilter(QObject *object, QEvent *event)
 {
-    // 1. ПЕРЕХВАТ КЛИКОВ МЫШИ НА ТАБЛИЦЕ И ОКНЕ
+    // --- 1. ПЕРЕХВАТ КЛИКОВ МЫШИ ---
     if (event->type() == QEvent::MouseButtonPress) {
-        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
 
-        // Проверяем, если кликнули по самой таблице или её viewport
         if (object == ui->tableWidget || object == ui->tableWidget->viewport()) {
-
-            // Проверяем, попал ли клик на какую-нибудь ячейку
             QModelIndex index = ui->tableWidget->indexAt(mouseEvent->pos());
 
             if (!index.isValid()) {
-                // Пользователь кликнул по ПУСТОМУ месту таблицы (ниже всех строк)
-                QModelIndex currentIndex = ui->tableWidget->currentIndex();
-                if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
-                    ui->tableWidget->closePersistentEditor(
-                    ui->tableWidget->item(currentIndex.row(), currentIndex.column()));
-                }
+                // Пользователь кликнул по ПУСТОМУ месту таблицы
 
-                // ИСПРАВЛЕНИЕ ДЛЯ ЧИСТОГО ВИДА: Сбрасываем выбранную строку в -1
+                // БЕЗОПАСНОЕ И ШТАТНОЕ ЗАКРЫТИЕ АКТИВНОГО РЕДАКТОРА:
+                // Перебиваем текущий индекс пустым — Qt автоматически закроет QLineEdit делегата с сохранением
+                ui->tableWidget->setCurrentIndex(QModelIndex());
+
+                // Очищаем состояние фокуса ячеек
                 ui->tableWidget->setCurrentCell(-1, -1);
-                ui->tableWidget->viewport()->update(); // Принудительно очищаем экран от выделений
+                ui->tableWidget->clearSelection();
+
+                ui->tableWidget->viewport()->repaint();
 
                 ui->tableWidget->clearFocus();
                 this->setFocus();
                 return true;
             }
         }
-
-        // Если кликнули по абсолютно пустому фону самого ОКНА (Widget)
+        // Клик по фону самого окна
         else if (object == this) {
-            QModelIndex currentIndex = ui->tableWidget->currentIndex();
-            if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
-                ui->tableWidget->closePersistentEditor(
-                    ui->tableWidget->item(currentIndex.row(), currentIndex.column()));
-            }
+            // Точно так же штатно закрываем редактор перед сбросом фокуса таблицы
+            ui->tableWidget->setCurrentIndex(QModelIndex());
+
+            ui->tableWidget->setCurrentCell(-1, -1);
             ui->tableWidget->clearSelection();
-            ui->tableWidget->setCurrentItem(nullptr);
             ui->tableWidget->clearFocus();
             this->setFocus();
+            ui->tableWidget->viewport()->repaint();
+            return true;
         }
     }
 
-    // --- КОД ОБРАБОТКИ КЛАВИАТУРЫ ---
-    static bool found_copy = false;
-    if (event->type() == QEvent::KeyPress)
-    {
-        QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
-        if (pKeyEvent->matches(QKeySequence::Copy))
-        {
-            found_copy = true;
-            return true;
+    // --- 2. КОД ОБРАБОТКИ КЛАВИАТУРЫ ---
+    if (event->type() == QEvent::KeyPress) {
+        QKeyEvent *pKeyEvent = static_cast<QKeyEvent *>(event);
+
+        // Надежная обработка Hotkey Ctrl+C (или Cmd+C на Mac) прямо по нажатию
+        if (pKeyEvent->matches(QKeySequence::Copy)) {
+            // Берем элемент через currentIndex, так как currentItem() ненадежен при NoSelection
+            QModelIndex currIdx = ui->tableWidget->currentIndex();
+            if (currIdx.isValid()) {
+                pointers::selected_context_table_item = ui->tableWidget->item(currIdx.row(),
+                                                                              currIdx.column());
+                copy_to_clipboard();
+            }
+            return true; // Перехватили, дальше Qt обрабатывать не нужно
         }
-        else
-        {
-            found_copy = false;
-        }
-        if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus())
-        {
+
+        // Удаление строки по кнопке Delete
+        if (pKeyEvent->key() == Qt::Key_Delete && ui->tableWidget->hasFocus()) {
             const int rows = ui->tableWidget->rowCount();
             delete_row();
+            // Возвращаем true, если строка удалилась, чтобы предотвратить дальнейшую обработку клавиши
             return rows != ui->tableWidget->rowCount();
         }
     }
-    if (event->type() == QEvent::KeyRelease)
-    {
-        QKeyEvent* pKeyEvent = static_cast<QKeyEvent*>(event);
-        if (found_copy)
-        {
-            pointers::selected_context_table_item = ui->tableWidget->currentItem();
-            copy_to_clipboard();
-            found_copy = false;
-            return true;
-        }
-        if (pKeyEvent->matches(QKeySequence::Copy))
-        {
+
+    // Игнорируем KeyRelease для Copy, так как всё сделали в KeyPress
+    if (event->type() == QEvent::KeyRelease) {
+        QKeyEvent *pKeyEvent = static_cast<QKeyEvent *>(event);
+        if (pKeyEvent->matches(QKeySequence::Copy)) {
             return true;
         }
     }
+
     return QWidget::eventFilter(object, event);
 }
 
@@ -474,23 +480,25 @@ void Widget::closeEvent(QCloseEvent *event)
     }
 }
 
-void Widget::copy_to_clipboard() {
-    if (!pointers::selected_context_table_item) return;
+void Widget::copy_to_clipboard()
+{
+    if (!pointers::selected_context_table_item)
+        return;
 
     QClipboard *clipboard = QApplication::clipboard();
     auto item = pointers::selected_context_table_item;
 
     // Ищем и корректно сбрасываем старый таймер, если он есть
-    QTimer *oldTimer = this->findChild<QTimer*>("clipboard_timer");
+    QTimer *oldTimer = this->findChild<QTimer *>("clipboard_timer");
     if (oldTimer) {
         QPersistentModelIndex oldIndex = oldTimer->property("pIndex").value<QPersistentModelIndex>();
         if (oldIndex.isValid()) {
             auto oldItem = ui->tableWidget->item(oldIndex.row(), oldIndex.column());
             if (oldItem) {
                 TableLoadingRAII lock;
-                oldItem->setData(roles::AnimationRole, QVariant()); // Сбрасываем анимацию ячейки
+                oldItem->setData(roles::AnimationRole, QVariant());
             }
-            highlight_pswd(ui->tableWidget, oldIndex.row(), QDate::currentDate()); // Возвращаем подсветку
+            highlight_pswd(ui->tableWidget, oldIndex.row(), QDate::currentDate());
         }
         oldTimer->stop();
         oldTimer->deleteLater();
@@ -498,73 +506,80 @@ void Widget::copy_to_clipboard() {
     }
 
     if (item->column() == constants::pswd_column_idx) {
-        // Записываем новый пароль в буфер
-        clipboard->setText(item->data(Qt::UserRole).toString());
+        // Читаем пароль из DisplayRole, так как теперь он там хранится без звёздочек
+        QString targetPassword = item->data(Qt::DisplayRole).toString();
+        clipboard->setText(targetPassword);
 
         QPersistentModelIndex pIndex(ui->tableWidget->model()->index(item->row(), item->column()));
-        int timeoutMs = 30 * 1000; // 30 секунд в миллисекундах
+        int timeoutMs = 30 * 1000;
         int intervalMs = 50;
 
         QTimer *timer = new QTimer(this);
         timer->setObjectName("clipboard_timer");
         timer->setProperty("pIndex", QVariant::fromValue(pIndex));
 
-        // Используем QElapsedTimer вместо ручного выделения памяти под int* ticks
         QElapsedTimer *elapsedTimer = new QElapsedTimer();
         elapsedTimer->start();
-
-        // Передаем elapsedTimer по значению через shared_ptr, чтобы он автоматически удалился вместе с лямбдой
         std::shared_ptr<QElapsedTimer> timerPtr(elapsedTimer);
 
-        connect(timer, &QTimer::timeout, this, [this, pIndex, clipboard, timer, timeoutMs, timerPtr]() {
-            if (!pIndex.isValid()) {
-                timer->stop();
-                timer->deleteLater();
-                return;
-            }
-
-            auto currentItem = ui->tableWidget->item(pIndex.row(), pIndex.column());
-            if (!currentItem) return;
-
-            qint64 elapsed = timerPtr->elapsed();
-
-            if (elapsed < timeoutMs) {
-                // Вычисляем прогресс на основе реального прошедшего времени
-                double progress = 1.0 - (static_cast<double>(elapsed) / timeoutMs);
-
-                QLinearGradient gradient(0, 0, 1, 0);
-                gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
-                gradient.setColorAt(0, QColor(255, 170, 0));
-                gradient.setColorAt(progress, QColor(255, 170, 0));
-                gradient.setColorAt(qMin(progress + 0.001, 1.0), Qt::transparent);
-
-                {
-                    TableLoadingRAII lock;
-                    currentItem->setData(roles::AnimationRole, QBrush(gradient));
-                }
-
-                ui->tableWidget->viewport()->update(ui->tableWidget->visualRect(pIndex));
-            }
-            else
-            {
-                timer->stop();
-                timer->deleteLater();
-
-                {
-                    TableLoadingRAII lock;
-                    currentItem->setData(roles::AnimationRole, QVariant());
-                }
-
-                highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
-
-                if (!clipboard->text().isEmpty()) {
-                    clipboard->clear();
-                    if (this->isActiveWindow()) {
-                        QMessageBox::information(this, "Безопасность", "Буфер обмена очищен.");
+        // Передаем targetPassword внутрь лямбды для последующей проверки безопасности
+        connect(timer,
+                &QTimer::timeout,
+                this,
+                [this, pIndex, clipboard, timer, timeoutMs, timerPtr, targetPassword]() {
+                    if (!pIndex.isValid()) {
+                        timer->stop();
+                        timer->deleteLater();
+                        return;
                     }
-                }
-            }
-        });
+
+                    auto currentItem = ui->tableWidget->item(pIndex.row(), pIndex.column());
+                    if (!currentItem) {
+                        // Предотвращаем вечный таймер, если элемент внезапно исчез
+                        timer->stop();
+                        timer->deleteLater();
+                        return;
+                    }
+
+                    qint64 elapsed = timerPtr->elapsed();
+
+                    if (elapsed < timeoutMs) {
+                        double progress = 1.0 - (static_cast<double>(elapsed) / timeoutMs);
+
+                        QLinearGradient gradient(0, 0, 1, 0);
+                        gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
+                        gradient.setColorAt(0, QColor(255, 170, 0));
+                        gradient.setColorAt(progress, QColor(255, 170, 0));
+                        gradient.setColorAt(qMin(progress + 0.001, 1.0), Qt::transparent);
+
+                        {
+                            TableLoadingRAII lock;
+                            currentItem->setData(roles::AnimationRole, QBrush(gradient));
+                        }
+
+                        ui->tableWidget->viewport()->update(ui->tableWidget->visualRect(pIndex));
+                    } else {
+                        timer->stop();
+                        timer->deleteLater();
+
+                        {
+                            TableLoadingRAII lock;
+                            currentItem->setData(roles::AnimationRole, QVariant());
+                        }
+
+                        highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
+
+                        // Очищаем буфер только если там всё ещё лежит наш пароль
+                        if (clipboard->text() == targetPassword) {
+                            clipboard->clear();
+                            if (this->isActiveWindow()) {
+                                QMessageBox::information(this,
+                                                         "Безопасность",
+                                                         "Буфер обмена очищен.");
+                            }
+                        }
+                    }
+                });
 
         timer->start(intervalMs);
     } else {
@@ -588,18 +603,18 @@ void Widget::delete_row() {
     emit row_deleted();
 }
 
-void Widget::update_pass() {
+void Widget::update_pass()
+{
     if (!pointers::selected_context_table_item) {
         return;
     }
 
     if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
-        // Проверяем наличие старого пароля через UserRole
-        if (!pointers::selected_context_table_item->data(Qt::UserRole).toString().isEmpty()) {
+        // Читаем старый пароль стандартно из DisplayRole (так как там теперь хранится чистый текст)
+        if (!pointers::selected_context_table_item->data(Qt::DisplayRole).toString().isEmpty()) {
             if (!question_message_box(
                     tr("Замена текущего пароля новым"),
-                    tr("Вы действительно хотите заменить выделенный пароль новым?")))
-            {
+                    tr("Вы действительно хотите заменить выделенный пароль новым?"))) {
                 return;
             }
         }
@@ -612,10 +627,8 @@ void Widget::update_pass() {
             pswd = utils::try_to_get_password(g_current_password_len, pass_level);
         }
 
-        QString dynamicAsterics(pswd.length(), '*');
-
-        pointers::selected_context_table_item->setData(Qt::DisplayRole, dynamicAsterics);
-        pointers::selected_context_table_item->setData(Qt::UserRole, pswd);
+        // Никаких физических звёздочек в модель. Защиту экрана берёт на себя делегат.
+        pointers::selected_context_table_item->setData(Qt::DisplayRole, pswd);
         pointers::selected_context_table_item->setData(Qt::EditRole, pswd);
 
         information_message_box(QString::fromUtf8("Успех"),
@@ -789,16 +802,9 @@ void Widget::insert_new_password()
 
     ui->tableWidget->setItem(row, 0, new QTableWidgetItem(""));
 
-    // --- СЕКЦИЯ ПАРОЛЯ (ИСПРАВЛЕННАЯ) ---
+    // Секция пароля
     {
-        QTableWidgetItem* item = new QTableWidgetItem();
-
-        // Записываем СТРОГО чистый пароль во все роли.
-        // Больше никаких ручных mask(length, '*') здесь!
-        item->setData(Qt::DisplayRole, pswd);
-        item->setData(Qt::UserRole, pswd);
-        item->setData(Qt::EditRole, pswd);
-
+        QTableWidgetItem *item = new QTableWidgetItem(pswd);
         ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     }
 
@@ -815,7 +821,7 @@ void Widget::insert_new_password()
     // Задаем фиксированную ширину вместо resizeColumnToContents
     ui->tableWidget->setColumnWidth(constants::pswd_column_idx, 200);
 
-    // Мы убираем отсюда жесткие ресайзы, так как HeaderView::Stretch в макросе
+    // Убираем отсюда жесткие ресайзы, так как HeaderView::Stretch в макросе
     // теперь сам автоматически растягивает комментарии на всю оставшуюся ширину окна.
     ui->tableWidget->scrollToBottom();
     ui->btn_generate->setText(labels::gen_pass_txt);
@@ -890,7 +896,7 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
         const int row = item->row();
         auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
         if (date_item) {
-            // ИСПРАВЛЕНИЕ: Блокируем сигналы таблицы. Теперь изменение ячейки даты
+            // Блокируем сигналы таблицы. Теперь изменение ячейки даты
             // не будет сбивать фокус клавиатуры у активного поля ввода пароля.
             ui->tableWidget->blockSignals(true);
 
@@ -900,7 +906,7 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
             const auto& current_date = QDate::currentDate();
             highlight_pswd(ui->tableWidget, row, current_date);
 
-            // ОБЯЗАТЕЛЬНО: Возвращаем сигналы в исходное состояние
+            // Возвращаем сигналы в исходное состояние
             ui->tableWidget->blockSignals(false);
         }
     }

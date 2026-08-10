@@ -16,33 +16,31 @@ void PassEditDelegate::initStyleOption(QStyleOptionViewItem *option, const QMode
 {
     QStyledItemDelegate::initStyleOption(option, index);
 
-    // Маскируем текст в звездочки только для колонки паролей
+    // Маскируем вывод на экран ТОЛЬКО для колонки паролей
     if (index.column() == constants::pswd_column_idx) {
-        QString rawPassword = option->text;
+        // Читаем сырой текст из DisplayRole (модель хранит там чистый пароль)
+        QString rawPassword = index.data(Qt::DisplayRole).toString();
         option->text = QString(rawPassword.length(), '*');
     }
-
-    // Больше никаких ручных сбросов флагов фокуса и палитр здесь не требуется!
 }
 
-void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const {
+void PassEditDelegate::paint(QPainter *painter,
+                             const QStyleOptionViewItem &option,
+                             const QModelIndex &index) const
+{
     QVariant animData = index.data(roles::AnimationRole);
     QStyleOptionViewItem opt = option;
 
+    // Сначала инициализируем опции и маскируем текст в звёздочки внутри opt.text
     initStyleOption(&opt, index);
 
-    // Извлекаем таблицу для проверки фокуса
-    const QTableWidget* table = qobject_cast<const QTableWidget*>(option.widget);
+    const QTableWidget *table = qobject_cast<const QTableWidget *>(option.widget);
+    bool isCellSelected = (table && table->currentIndex().row() == index.row()
+                           && table->currentIndex().column() == index.column());
 
-    // --- ИСПРАВЛЕНИЕ ПОД ЛОГИКУ Qt 6.6.2 ---
-    // Проверяем, совпадает ли И СТРОКА, И КОЛОНКА.
-    // Фон активируется строго на той ячейке, по которой кликнули!
-    bool isCellSelected = (table &&
-                           table->currentIndex().row() == index.row() &&
-                           table->currentIndex().column() == index.column());
-    // ----------------------------------------
+    opt.state &= ~QStyle::State_HasFocus;
 
-    // --- 1. ЛОГИКА АНИМАЦИИ ФОНА ---
+    // 1. АНИМАЦИЯ ФОНА
     if (animData.isValid()) {
         QBrush bg = animData.value<QBrush>();
         painter->save();
@@ -51,11 +49,10 @@ void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
         painter->restore();
 
         opt.state &= ~QStyle::State_Selected;
-        opt.state &= ~QStyle::State_HasFocus;
         opt.backgroundBrush = Qt::transparent;
         opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
     }
-    // --- 2. ПОДСТВЕЧИВАЕМ ТОЛЬКО ОДНУ ВЫБРАННУЮ ЯЧЕЙКУ ---
+    // 2. ВЫДЕЛЕНИЕ КЛИКОМ
     else if (isCellSelected) {
         painter->save();
         QColor selectColor = option.palette.color(QPalette::Highlight);
@@ -63,19 +60,16 @@ void PassEditDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
         painter->restore();
 
         opt.state &= ~QStyle::State_Selected;
-        opt.state &= ~QStyle::State_HasFocus;
         opt.backgroundBrush = Qt::transparent;
-
-        // Текст в этой конкретной ячейке делаем белым
-        opt.palette.setColor(QPalette::Text, Qt::white);
+        opt.palette.setColor(QPalette::Text, Qt::white); // Текст (звёздочки) станет белым
     }
-    // --- 3. ВСЕ ОСТАЛЬНЫЕ НЕВЫБРАННЫЕ ЯЧЕЙКИ СТРОКИ ---
+    // 3. ОБЫЧНОЕ СОСТОЯНИЕ
     else {
-        opt.state &= ~QStyle::State_HasFocus;
-        // Текст в остальных ячейках остается стандартным черным
+        opt.state &= ~QStyle::State_Selected;
         opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
     }
 
+    // Передаем opt с уже готовыми звёздочками в базовый отрисовщик
     QStyledItemDelegate::paint(painter, opt, index);
 }
 
@@ -93,7 +87,8 @@ QWidget *PassEditDelegate::createEditor(QWidget *parent, const QStyleOptionViewI
 void PassEditDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {
     if (index.column() == constants::pswd_column_idx) {
-        QString value = index.data(Qt::EditRole).toString();
+        // Читаем пароль
+        QString value = index.data(Qt::DisplayRole).toString();
         QLineEdit *lineEdit = qobject_cast<QLineEdit *>(editor);
         if (lineEdit) {
             lineEdit->setText(value);
@@ -103,36 +98,38 @@ void PassEditDelegate::setEditorData(QWidget *editor, const QModelIndex &index) 
     }
 }
 
-void PassEditDelegate::setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const
+void PassEditDelegate::setModelData(QWidget *editor,
+                                    QAbstractItemModel *model,
+                                    const QModelIndex &index) const
 {
     if (index.column() == constants::pswd_column_idx) {
         QLineEdit *lineEdit = qobject_cast<QLineEdit *>(editor);
         if (lineEdit) {
+            // Сохраняем пароль в обе роли стандартно
             model->setData(index, lineEdit->text(), Qt::EditRole);
             model->setData(index, lineEdit->text(), Qt::DisplayRole);
-            model->setData(index, lineEdit->text(), Qt::UserRole);
         }
     } else {
         QStyledItemDelegate::setModelData(editor, model, index);
     }
 }
 
-bool PassEditDelegate::helpEvent(QHelpEvent *event, QAbstractItemView *view,
-                                 const QStyleOptionViewItem &option, const QModelIndex &index)
+bool PassEditDelegate::helpEvent(QHelpEvent *event,
+                                 QAbstractItemView *view,
+                                 const QStyleOptionViewItem &option,
+                                 const QModelIndex &index)
 {
     if (event && event->type() == QEvent::ToolTip) {
-        // Извлекаем пароль из UserRole
-        QString password = index.data(Qt::UserRole).toString();
+        if (index.column() == constants::pswd_column_idx) {
+            // Читаем открытый пароль для тултипа
+            QString password = index.data(Qt::DisplayRole).toString();
 
-        if (!password.isEmpty()) {
-            // Явно приводим view к QWidget*, так как QToolTip::showText ожидает именно его
-            QWidget* viewport = (view) ? view->viewport() : nullptr;
-
-            // Используем viewport(), чтобы тултип был привязан к области данных, а не к заголовкам
-            QToolTip::showText(event->globalPos(), password, viewport);
-            return true;
+            if (!password.isEmpty()) {
+                QWidget *viewport = (view) ? view->viewport() : nullptr;
+                QToolTip::showText(event->globalPos(), password, viewport);
+                return true;
+            }
         }
     }
     return QStyledItemDelegate::helpEvent(event, view, option, index);
 }
-

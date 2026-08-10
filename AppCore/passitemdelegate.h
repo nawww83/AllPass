@@ -17,8 +17,6 @@ public:
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
                           const QModelIndex &index) const override;
 
-    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
-
     // Передает данные из модели в редактор
     void setEditorData(QWidget *editor, const QModelIndex &index) const override;
 
@@ -31,6 +29,8 @@ public:
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
+
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
 };
 
 #endif // PASSITEMDELEGATE_H
