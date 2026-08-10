@@ -110,6 +110,7 @@ void PassEditDelegate::setModelData(QWidget *editor, QAbstractItemModel *model, 
         if (lineEdit) {
             model->setData(index, lineEdit->text(), Qt::EditRole);
             model->setData(index, lineEdit->text(), Qt::DisplayRole);
+            model->setData(index, lineEdit->text(), Qt::UserRole);
         }
     } else {
         QStyledItemDelegate::setModelData(editor, model, index);
