@@ -383,7 +383,8 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
                 // Пользователь кликнул по ПУСТОМУ месту таблицы (ниже всех строк)
                 QModelIndex currentIndex = ui->tableWidget->currentIndex();
                 if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
-                    ui->tableWidget->closePersistentEditor(ui->tableWidget->itemFromIndex(currentIndex));
+                    ui->tableWidget->closePersistentEditor(
+                    ui->tableWidget->item(currentIndex.row(), currentIndex.column()));
                 }
 
                 // ИСПРАВЛЕНИЕ ДЛЯ ЧИСТОГО ВИДА: Сбрасываем выбранную строку в -1
@@ -400,7 +401,8 @@ bool Widget::eventFilter(QObject *object, QEvent *event)
         else if (object == this) {
             QModelIndex currentIndex = ui->tableWidget->currentIndex();
             if (currentIndex.isValid() && ui->tableWidget->indexWidget(currentIndex)) {
-                ui->tableWidget->closePersistentEditor(ui->tableWidget->itemFromIndex(currentIndex));
+                ui->tableWidget->closePersistentEditor(
+                    ui->tableWidget->item(currentIndex.row(), currentIndex.column()));
             }
             ui->tableWidget->clearSelection();
             ui->tableWidget->setCurrentItem(nullptr);
