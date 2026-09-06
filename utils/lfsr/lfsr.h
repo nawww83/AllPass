@@ -78,6 +78,14 @@ public:
         m_calculate_inverse_of_K();
     }
 
+    // Безопасная очистка внутреннего состояния генератора
+    void clear_state_safety() {
+        volatile auto* p_st = reinterpret_cast<volatile u16*>(m_state.data());
+        for (int i = 0; i < m_state.size(); ++i) {
+            p_st[i] = 0;
+        }
+    }
+
     /**
          * @brief Сделать шаг вперед (один такт генератора).
          * @param input Входной символ, который одинаково подается на оба генератора.

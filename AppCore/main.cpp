@@ -31,6 +31,7 @@ int main(int argc, char *argv[])
     parser.process(a);
 
     QString pin;
+    const auto& warning_text = QString::fromUtf8("PIN-код должен быть любым %1-значным числом").arg(constants::pin_code_len);
     // Проверяем, был ли вообще передан ключ --pin
     if (parser.isSet(pinOption)) {
         // Получаем значение как строку
@@ -40,7 +41,7 @@ int main(int argc, char *argv[])
         if (!isNumeric) {
             QMessageBox mb(QMessageBox::Critical,
                            QString::fromUtf8("Ошибка PIN-кода"),
-                           QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
+                           warning_text);
             mb.exec();
             return 1;
         }
@@ -51,7 +52,7 @@ int main(int argc, char *argv[])
 
     if (pin.isEmpty()) {
         QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
-        MyDialog dialog{QString::fromUtf8("Введите PIN-код (%1)").arg(current_version)};
+        MyDialog<constants::pin_code_len> dialog{QString::fromUtf8("Введите PIN-код (%1)").arg( current_version)};
         const int result = dialog.exec();
         if (result != QDialog::Accepted) {
             return 0;
@@ -63,7 +64,7 @@ int main(int argc, char *argv[])
     if (pin.size() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
-                       QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
+                       warning_text);
         mb.exec();
         return 1;
     }

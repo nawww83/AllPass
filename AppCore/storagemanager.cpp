@@ -21,8 +21,7 @@
 #include <random> // std::random_device
 
 static const QSet<QString> g_supported_as_version_1 {
-    QString("v2.00"),
-    QString("v2.01")
+    QString("v3.00")
 };
 
 #ifdef OS_Windows
@@ -37,21 +36,27 @@ static const QSet<QString> g_supported_as_version_1 {
 namespace api_v1
 {
 
-static void init_encryption(Encryption& enc, const QByteArray& salt1 = {}, uint salt2 = 0) {
-    enc.aligner64 = 0;
-    assert(enc.counter == 0);
-    const int steps = 256 + (int)utils::xor_val(salt1) + (salt2 % 65536);
-    for (int i = 0; i < steps; ++i) {
-        enc.gamma_gen.next_u64();
-        enc.counter++;
+static void finalize_encryption(Encryption& enc) {
+    while (enc.counter > 0) {
+        enc.gamma_gen.back_u64();
+        enc.counter--;
     }
+    enc.counter = 0;
+    enc.aligner64 = 0;
     enc.gamma = 0;
 }
 
-static void finalize_encryption(Encryption& enc) {
-    while (enc.counter != 0) {
-        enc.gamma_gen.back_u64();
-        enc.counter--;
+static void init_encryption(Encryption& enc, uint seed) {
+    enc.aligner64 = 0;
+    // Защита от повторной инициализации
+    if (enc.counter != 0) {
+        qDebug() << "Warning: enc.counter is not zero during init. Finalizing first.";
+        finalize_encryption(enc);
+    }
+    const int steps = 512 + (seed % 65536u);
+    for (int i = 0; i < steps; ++i) {
+        enc.gamma_gen.next_u64();
+        enc.counter++;
     }
     enc.gamma = 0;
 }
@@ -120,52 +125,49 @@ static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
     }
 }
 
-static void encode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
+static void encode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_byte) {
+    constexpr int p = 257;
     const int n = in.size();
     out.resize(n);
     const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = const_arr::goods[((int)xor_val - std::numeric_limits<char>::min()) % std::ssize(const_arr::goods)];
+
+    for (int i = 0; i < ch; ++i) {
+        // Уникальный генератор для каждого блока, скрытый от злоумышленника
+        uint8_t crypto_index = static_cast<uint8_t>(key_byte + i);
+        const int a = const_arr::goods[crypto_index % std::ssize(const_arr::goods)];
+
         int x = a;
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + x - 1] = in[i*(p-1) + counter - 1];
-                x *= a;
-                x %= p;
-            }
+        int counter = 0;
+        while (counter++ < (p - 1)) {
+            if (x <= 0 || x >= p) x = 1; // Защита от потенциального повреждения памяти
+
+            out[i * (p - 1) + x - 1] = in[i * (p - 1) + counter - 1];
+            x = (x * a) % p;
         }
     }
 }
 
-static void decode_dlog256(const QByteArray& in, QByteArray& out) {
-    constexpr int p = 257;  // prime, modulo.
+static void decode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_byte) {
+    constexpr int p = 257;
     const int n = in.size();
     if (n % (p - 1) != 0) {
-        qDebug() << "Decode dlog256 error\n";
+        qDebug() << "Decode dlog256 error: bad size";
         return;
     }
     out.resize(n);
     const int ch = n / (p - 1);
-    for (int i=0; i<ch; ++i) {
-        char xor_val = in[i*(p-1)];
-        for (int j=1; j<p-1; ++j) {
-            xor_val ^= in[i*(p-1) + j];
-        }
-        const int a = const_arr::goods[((int)xor_val - std::numeric_limits<char>::min()) % std::ssize(const_arr::goods)];
+
+    for (int i = 0; i < ch; ++i) {
+        uint8_t crypto_index = static_cast<uint8_t>(key_byte + i);
+        const int a = const_arr::goods[crypto_index % std::ssize(const_arr::goods)];
+
         int x = a;
-        {
-            int counter = 0;
-            while (counter++ < (p-1)) {
-                out[i*(p-1) + counter - 1] = in[i*(p-1) + x - 1];
-                x *= a;
-                x %= p;
-            }
+        int counter = 0;
+        while (counter++ < (p - 1)) {
+            if (x <= 0 || x >= p) x = 1;
+
+            out[i * (p - 1) + counter - 1] = in[i * (p - 1) + x - 1];
+            x = (x * a) % p;
         }
     }
 }
@@ -178,77 +180,90 @@ static void insert_hash128(QByteArray& bytes) {
     password::hash_gen.reset();
     lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 128;
+
+    // Вычисление хэша
     {
         const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
-            password::hash_gen.add_salt(original_size_salt);
-            for (size_t i = 0; i < n; ++i) {
-                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
-                auto inner_hash = hash128(password::hash_gen, chunk);
-                hash.first ^= inner_hash.first;
-                hash.second ^= inner_hash.second;
-            }
+        using namespace lfsr_hash;
+        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+        const size_t n = bytesRead / blockSize;
+        const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+        password::hash_gen.add_salt(original_size_salt);
+        for (size_t i = 0; i < n; ++i) {
+            auto chunk = bytes_span.subspan(i * blockSize, blockSize);
+            auto inner_hash = hash128(password::hash_gen, chunk);
+            hash.first ^= inner_hash.first;
+            hash.second ^= inner_hash.second;
         }
     }
-    const int num_of_bytes = sizeof(hash.first);
-    for (int i=0; i<num_of_bytes; ++i) {
-        bytes.append(char(hash.first));
-        hash.first >>= CHAR_BIT;
-    }
-    for (int i=0; i<num_of_bytes; ++i) {
-        bytes.append(char(hash.second));
-        hash.second >>= CHAR_BIT;
-    }
+
+    // БЕЗОПАСНАЯ И БЫСТРАЯ ЗАПИСЬ ДЛЯ C++:
+    const int current_size = bytes.size();
+    constexpr size_t hash_size = sizeof(lfsr_hash::u128); // 16 байт
+    bytes.resize(current_size + hash_size);
+
+    // Приводим указатель к типу std::byte* или char* и копируем N байт
+    std::copy_n(
+        reinterpret_cast<const char*>(&hash),
+        hash_size,
+        bytes.data() + current_size
+        );
 }
 
 static bool extract_and_check_hash128(QByteArray& bytes) {
-    #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-        MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-    #else
-        QByteArray& bytes_ref = bytes;
-    #endif
+#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
+    MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
+#else
+    QByteArray& bytes_ref = bytes;
+#endif
+
     if (bytes.size() % 16 != 0) {
         qDebug() << "Extract hash128 error: input size is not a 16*k bytes: " << bytes.size();
         return false;
     }
-    lfsr_hash::u128 extracted_hash = {0, 0};
-    const int num_of_bytes = sizeof(extracted_hash.first);
-    if (bytes.size() < 2*num_of_bytes) {
+
+    constexpr size_t hash_size = sizeof(lfsr_hash::u128); // 16 байт
+    if (bytes.size() < static_cast<int>(hash_size)) {
         qDebug() << "Small size while hash128 extracting: " << bytes.size();
         return false;
     }
-    for (int i=0; i<num_of_bytes; ++i) {
-        extracted_hash.second |= lfsr8::u64(uint8_t(bytes_ref.back())) << (num_of_bytes-1-i)*CHAR_BIT;
-        bytes_ref.removeLast();
-    }
-    for (int i=0; i<num_of_bytes; ++i) {
-        extracted_hash.first |= lfsr8::u64(uint8_t(bytes_ref.back())) << (num_of_bytes-1-i)*CHAR_BIT;
-        bytes_ref.removeLast();
-    }
+
+    // БЕЗОПАСНОЕ И БЫСТРОЕ ИЗВЛЕЧЕНИЕ ДЛЯ C++:
+    lfsr_hash::u128 extracted_hash;
+    const int hash_offset = bytes_ref.size() - hash_size;
+
+    // Копируем байты из хвоста массива в структуру extracted_hash
+    std::copy_n(
+        bytes_ref.constData() + hash_offset,
+        hash_size,
+        reinterpret_cast<char*>(&extracted_hash)
+        );
+
+    // Принудительно затираем нулями оригинальный хэш в ОЗУ перед удалением хвоста
+    std::memset(bytes_ref.data() + hash_offset, 0, hash_size);
+    bytes_ref.resize(hash_offset); // Отрезаем хэш от массива за один шаг O(1)
+
+    // Вычисляем хэш от оставшихся данных для проверки
     password::hash_gen.reset();
     lfsr_hash::u128 calculated_hash = {0, 0};
     constexpr size_t blockSize = 128;
     {
         const auto bytesRead = bytes.size();
-        {
-            using namespace lfsr_hash;
-            const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
-            const size_t n = bytesRead / blockSize;
-            const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
-            password::hash_gen.add_salt(original_size_salt);
-            for (size_t i = 0; i < n; ++i) {
-                auto chunk = bytes_span.subspan(i*blockSize, blockSize);
-                auto inner_hash = hash128(password::hash_gen, chunk);
-                calculated_hash.first ^= inner_hash.first;
-                calculated_hash.second ^= inner_hash.second;
-            }
+        using namespace lfsr_hash;
+        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+        const size_t n = bytesRead / blockSize;
+        const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+        password::hash_gen.add_salt(original_size_salt);
+        for (size_t i = 0; i < n; ++i) {
+            auto chunk = bytes_span.subspan(i * blockSize, blockSize);
+            auto inner_hash = hash128(password::hash_gen, chunk);
+            calculated_hash.first ^= inner_hash.first;
+            calculated_hash.second ^= inner_hash.second;
         }
     }
-    return extracted_hash == calculated_hash;
+
+    return extracted_hash.first == calculated_hash.first &&
+           extracted_hash.second == calculated_hash.second;
 }
 
 // S-Box для нелинейности
@@ -369,7 +384,7 @@ template <int version>
 QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& enc_inner) {
     QByteArray out;
     #define my_encode(ns, K, R) \
-    ns::init_encryption(enc); \
+    ns::init_encryption(enc, 0); \
     utils::padd<K>(encoded_string); \
     const int N = encoded_string.length(); \
     const int Q = N / K; \
@@ -385,11 +400,12 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
         return {}; \
     } \
     uint32_t seed2 = std::random_device{}(); \
-    ns::init_encryption(enc_inner, crc, seed2); \
+    ns::init_encryption(enc_inner, seed2); \
     QByteArray encrypted_inner; \
     ns::encrypt256_inner(encoded_string, encrypted_inner, enc_inner); \
     QByteArray permuted; \
-    ns::encode_dlog256(encrypted_inner, permuted); \
+    uint8_t dlog_key = static_cast<uint8_t>(seed2 & 0xFF); \
+    ns::encode_dlog256(encrypted_inner, permuted, dlog_key); \
     ns::insert_hash128(permuted); \
     crc = utils::xor_data_by_seed(crc, seed2); \
     permuted.append(crc); \
@@ -397,11 +413,15 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     permuted.append(seed_b); \
     ns::encrypt(permuted, out, enc); \
     ns::finalize_encryption(enc); \
-    ns::finalize_encryption(enc_inner);
+    ns::finalize_encryption(enc_inner); \
+    /* Затираем промежуточные секретные буферы перед выходом */ \
+    utils::erase_bytes(encrypted_inner); \
+    utils::erase_bytes(permuted);
 
     if constexpr (version == 1) {
         my_encode(api_v1, (256-17), 17);
     }
+    #undef my_encode
     return out;
 }
 
@@ -410,7 +430,7 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray decoded_data;
     #define my_decode(ns, K, R) \
     constexpr int hash_size = 16; \
-    ns::init_encryption(dec); \
+    ns::init_encryption(dec, 0); \
     QByteArray decrypted; \
     ns::decrypt(data, decrypted, dec); \
     uint32_t seed2 = 0; \
@@ -433,7 +453,12 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     QByteArray crc; \
     MyQByteArray& decrypted_ref = static_cast<MyQByteArray&>(decrypted); \
     for (int q=0; q<Q; ++q) { \
-        for (int i=0; i<R; ++i) {crc.push_back(decrypted_ref.back()); decrypted_ref.removeLast();}; \
+            for (int i=0; i<R; ++i) { \
+                crc.push_back(decrypted_ref.back()); \
+                /* Безопасно затираем байт в ОЗУ перед тем, как Qt его отсечет */ \
+                decrypted_ref.data()[decrypted_ref.size() - 1] = '\0'; \
+                decrypted_ref.removeLast(); \
+        } \
     } \
     std::reverse(crc.begin(), crc.end()); \
     if (!ns::extract_and_check_hash128(decrypted)) { \
@@ -442,8 +467,9 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     } \
     crc = utils::xor_data_by_seed(crc, seed2); \
     QByteArray depermuted; \
-    ns::decode_dlog256(decrypted, depermuted); \
-    ns::init_encryption(dec_inner, crc, seed2); \
+    uint8_t dlog_key = static_cast<uint8_t>(seed2 & 0xFF); \
+    ns::decode_dlog256(decrypted, depermuted, dlog_key); \
+    ns::init_encryption(dec_inner, seed2); \
     ns::decrypt256_inner(depermuted, decoded_data, dec_inner); \
     QByteArray crc_copy; \
     MyQByteArray& decoded_ref = static_cast<MyQByteArray&>(decoded_data); \
@@ -471,11 +497,19 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     } \
     utils::dpadd(decoded_data); \
     ns::finalize_encryption(dec); \
-    ns::finalize_encryption(dec_inner);
+    ns::finalize_encryption(dec_inner); \
+    /* ОЧИЩАЕМ ПАДДИНГ ISO ТУТ, когда данные полностью расшифрованы и проверены! */ \
+    utils::dpadd(decoded_data); \
+    ns::finalize_encryption(dec); \
+    ns::finalize_encryption(dec_inner); \
+    /* Затираем промежуточные бинарные буферы */ \
+    utils::erase_bytes(decrypted); \
+    utils::erase_bytes(depermuted);
 
     if constexpr (version == 1) {
         my_decode(api_v1, (256-17), 17);
     }
+    #undef my_decode
     return decoded_data;
 }
 
@@ -486,79 +520,86 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         qDebug() << "Empty storage.";
         return true;
     }
-    if (!mEnc.gamma_gen.is_succes()) {
-        qDebug() << "Empty encryption.";
-        return false;
-    }
-    if (!mEncInner.gamma_gen.is_succes()) {
-        qDebug() << "Empty inner encryption.";
+    if (!mEnc.gamma_gen.is_succes() || !mEncInner.gamma_gen.is_succes()) {
+        qDebug() << "Encryption generators are not ready.";
         return false;
     }
 
     QByteArray packed_data_bytes;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    auto fromUtf16 = QStringEncoder(QStringEncoder::Utf8);
-#endif
+    // Предварительно резервируем память для минимизации realloc в куче
+    packed_data_bytes.reserve(ro_table->rowCount() * ro_table->columnCount() * 16);
 
-    QString packed_data_str;
-    for (int row = 0; row < ro_table->rowCount(); ++row) {
-        QStringList data_rows;
-        for (int col = 0; col < ro_table->columnCount(); ++col) {
-            if (ro_table->item(row, col)) {
-                // --- ИСПРАВЛЕНИЕ: Теперь все роли синхронизированы ---
-                // Пароль хранится в открытом виде в DisplayRole, поэтому text()
-                // вернет чистый пароль для всех колонок одинаково.
-                const auto &txt = ro_table->item(row, col)->text();
-                data_rows << (txt.isEmpty() ? symbols::empty_item : txt);
-            } else {
-                data_rows << symbols::empty_item;
+    {
+        QDataStream stream(&packed_data_bytes, QIODevice::WriteOnly);
+
+        // Преобразуем управляющие символы в сырые UTF-8 байты
+        const char col_byte = static_cast<char>(symbols::col_delimiter.unicode()); // 0x1F (между ячейками)
+        const char row_byte = static_cast<char>(symbols::row_delimiter.unicode()); // 0x1E (между строками)
+        const char end_byte = static_cast<char>(symbols::end_message.unicode());   // 0x03 (конец сообщения)
+        const char empty_byte = static_cast<char>(symbols::empty_item.unicode());  // 0x08 (пустая ячейка)
+
+
+        for (int row = 0; row < ro_table->rowCount(); ++row) {
+            for (int col = 0; col < ro_table->columnCount(); ++col) {
+
+                if (ro_table->item(row, col)) {
+                    const QString &txt = ro_table->item(row, col)->text();
+                    if (txt.isEmpty()) {
+                        stream.writeRawData(&empty_byte, 1);
+                    } else {
+                        QByteArray cell_bytes = txt.toUtf8();
+                        stream.writeRawData(cell_bytes.constData(), cell_bytes.size());
+                        utils::erase_bytes(cell_bytes); // Сразу уничтожаем пароль ячейки в RAM!
+                    }
+                } else {
+                    stream.writeRawData(&empty_byte, 1);
+                }
+
+                // Разделитель КОЛОНОК (ячеек) внутри одной строки
+                if (col < ro_table->columnCount() - 1) {
+                    stream.writeRawData(&col_byte, 1);
+                }
+            }
+
+            // Разделитель СТРОК между строками таблицы
+            if (row < ro_table->rowCount() - 1) {
+                stream.writeRawData(&row_byte, 1);
             }
         }
-
-        // Формируем строку из ячеек
-        packed_data_str = data_rows.join(symbols::row_delimiter);
-
-        // Для всех строк, кроме ПОСЛЕДНЕЙ: добавляем разделитель строк и кодируем в байты
-        if (row < ro_table->rowCount() - 1) {
-            packed_data_str.append(symbols::col_delimiter);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-            packed_data_bytes.append(fromUtf16(packed_data_str));
-#else
-            packed_data_bytes.append(packed_data_str.toUtf8());
-#endif
-        }
+        // Записываем маркер конца сообщения
+        stream.writeRawData(&end_byte, 1);
     }
 
-    // Блок обработки ПОСЛЕДНЕЙ строки
-    // В переменной packed_data_str все еще лежит последняя строка таблицы.
-    { // Конец сообщения.
-        packed_data_str.append(symbols::end_message);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-        packed_data_bytes.append(fromUtf16(packed_data_str));
-#else
-        packed_data_bytes.append(packed_data_str.toUtf8());
-#endif
-    }
+    // --- СИСТЕМНАЯ ЛОГИКА (ШИФРОВАНИЕ) ---
 
-    // --- СИСТЕМНАЯ ЛОГИКА (ШИФРОВАНИЕ И ЗАПИСЬ) ---
     QByteArray encoded_data_bytes;
-    QFile file(file_name);
     QString current_version = QString::fromUtf8(VERSION_LABEL);
     current_version.remove(g_version_prefix);
+
     if (g_supported_as_version_1.contains(current_version)) {
+        // 2. Шифруем полностью выровненный блок
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
     }
+
+    // Очищаем временный буфер открытого текста
+    utils::erase_bytes(packed_data_bytes);
+
     if (encoded_data_bytes.isEmpty()) {
         return true;
     }
+
+    // 3. Дописываем ОТКРЫТУЮ версию в самый конец зашифрованного массива (как футер)
     encoded_data_bytes.append(VERSION_LABEL);
-    utils::padd<128>(encoded_data_bytes);
+
+    // 4. Запись в файл и создание бэкапа
+    QFile file(file_name);
     if (file.open(QFile::WriteOnly)) {
         file.write(encoded_data_bytes);
         file.close();
         if (save_to_tmp) {
             return true;
         }
+
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
@@ -595,39 +636,26 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 {
     const auto &file_name = [this, type]() -> QString {
         switch (type) {
-        case FileTypes::BACKUP:
-            return mStorageNameBackUp;
-            break;
-        case FileTypes::TEMPORARY:
-            return mStorageNameTmp;
-            break;
-        default:
-            return mStorageName;
-            break;
+        case FileTypes::BACKUP: return mStorageNameBackUp;
+        case FileTypes::TEMPORARY: return mStorageNameTmp;
+        default: return mStorageName;
         }
     }();
-    if (file_name.isEmpty()) {
-        qDebug() << "Empty storage.";
-        return Loading_Errors::EMPTY_STORAGE;
-    }
-    if (!mDec.gamma_gen.is_succes()) {
-        qDebug() << "Empty decryption.";
-        return Loading_Errors::EMPTY_ENCRYPTION;
-    }
-    if (!mDecInner.gamma_gen.is_succes()) {
-        qDebug() << "Empty inner decryption.";
-        return Loading_Errors::EMPTY_ENCRYPTION;
-    }
-    if (wr_table->rowCount() > 0) {
-        qDebug() << "Table is not empty.";
-        return Loading_Errors::TABLE_IS_NOT_EMPTY;
-    }
+
+    if (file_name.isEmpty()) return Loading_Errors::EMPTY_STORAGE;
+    if (!mDec.gamma_gen.is_succes() || !mDecInner.gamma_gen.is_succes()) return Loading_Errors::EMPTY_ENCRYPTION;
+    if (wr_table->rowCount() > 0) return Loading_Errors::TABLE_IS_NOT_EMPTY;
+
     QFile file(file_name);
     QByteArray decoded_data_bytes;
+
     if (file.open(QFile::ReadOnly)) {
         QByteArray raw_data = file.readAll();
         file.close();
-        utils::dpadd(raw_data);
+
+        if (raw_data.isEmpty()) return Loading_Errors::EMPTY_TABLE;
+
+        // 1. Отсекаем и считываем ОТКРЫТУЮ ВЕРСИЮ из конца файла
         QString read_version;
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
         MyQByteArray &raw_ref = static_cast<MyQByteArray &>(raw_data);
@@ -639,9 +667,11 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
             raw_ref.removeLast();
         }
         if (!raw_ref.isEmpty()) {
-            raw_ref.removeLast();
+            raw_ref.removeLast(); // Удаляем сам g_version_prefix
         }
         std::reverse(read_version.begin(), read_version.end());
+
+        // 2. Дешифруем массив, который теперь строго кратен размеру блока
         if (g_supported_as_version_1.contains(read_version)) {
             decoded_data_bytes = do_decode<1>(raw_ref, mDec, mDecInner);
             if (decoded_data_bytes.isEmpty()) {
@@ -651,57 +681,65 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
             return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
-        if (file.exists()) {
-            return Loading_Errors::CANNOT_BE_OPENED;
-        } else {
-            return Loading_Errors::NEW_STORAGE;
-        }
+        return file.exists() ? Loading_Errors::CANNOT_BE_OPENED : Loading_Errors::NEW_STORAGE;
     }
+
+    // 4. Переводим расшифрованные байты в строку UTF-16
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
     QString decoded_data_str = toUtf16(decoded_data_bytes);
 #else
-    QString decoded_data_str(decoded_data_bytes);
+    QString decoded_data_str = QString::fromUtf8(decoded_data_bytes);
 #endif
-    if (decoded_data_str.isEmpty()) {
-        qDebug() << "Unrecognized error while loading.";
+
+    // Сразу затираем открытый бинарный текст в памяти
+    utils::erase_bytes(decoded_data_bytes);
+
+    if (decoded_data_str.isEmpty()) return Loading_Errors::UNRECOGNIZED;
+
+    // 5. Валидация и удаление технического маркера конца сообщения
+    if (decoded_data_str.back() == symbols::end_message) {
+        decoded_data_str.chop(1);
+    } else {
         return Loading_Errors::UNRECOGNIZED;
     }
 
-    // Удаляем технический маркер конца сообщения (symbols::end_message)
-    decoded_data_str.remove(decoded_data_str.size() - 1, 1);
+    // Если после удаления маркера конца строка оказалась абсолютно пустой,
+    // это означает, что была сохранена пустая таблица. Завершаем работу без добавления строк.
+    if (decoded_data_str.isEmpty()) {
+        qDebug() << "Loaded storage is empty (0 rows).";
+        return Loading_Errors::OK; // Возвращаем успех, таблица остается чистой
+    }
 
-    QStringList data_rows;
-    data_rows = decoded_data_str.split(symbols::col_delimiter);
-    if (data_rows.isEmpty() || (!data_rows.isEmpty() && data_rows[0].isEmpty())) {
-        qDebug() << "Empty row data.";
+    // 6. Парсинг с восстановленной иерархией разделителей
+    // Разделяем монолит на СТРОКИ таблицы по row_delimiter (0x1E)
+    QStringList data_rows = decoded_data_str.split(symbols::row_delimiter);
+    if (data_rows.isEmpty()) {
         return Loading_Errors::EMPTY_TABLE;
     }
 
-    QStringList data_items;
-    for (int row = 0; row < data_rows.size(); row++) {
-        data_items = data_rows.at(row).split(symbols::row_delimiter);
+    for (int row = 0; row < data_rows.size(); ++row) {
+        // Каждую строку разделяем на ЯЧЕЙКИ (колонки) по col_delimiter (0x1F)
+        QStringList data_items = data_rows.at(row).split(symbols::col_delimiter);
+
         if (data_items.size() <= wr_table->columnCount()) {
             wr_table->insertRow(row);
         } else {
-            qDebug() << "Small column size in table: table: " << wr_table->columnCount()
-                     << " vs loaded data: " << data_items.size();
             return Loading_Errors::UNRECOGNIZED;
         }
-        for (int col = 0; col < data_items.size(); col++) {
-            const QString &row_str = data_items.at(col);
+
+        for (int col = 0; col < data_items.size(); ++col) {
+            const QString &cell_str = data_items.at(col);
             QTableWidgetItem *item = new QTableWidgetItem();
 
-            // --- Безопасное извлечение пустых значений ---
-            // Сначала проверяем на пустоту, чтобы row_str.at(0) не привел к падению приложения
+            // Извлечение пустых значений
             QString final_str = "";
-            if (!row_str.isEmpty() && row_str.at(0) != symbols::empty_item) {
-                final_str = row_str;
+            if (!cell_str.isEmpty() && cell_str.at(0) != symbols::empty_item) {
+                final_str = cell_str;
             }
 
             if (col == constants::pswd_column_idx) {
-                // Больше никаких физических звёздочек в модель ячеек.
-                // Записываем чистый прочитанный пароль в обе роли.
+                // Пишем чистый прочитанный пароль в обе роли модели
                 item->setData(Qt::DisplayRole, final_str);
                 item->setData(Qt::EditRole, final_str);
             } else {
@@ -711,7 +749,8 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
             wr_table->setItem(row, col, item);
         }
     }
-    qDebug() << "Table has been loaded!";
+
+    qDebug() << "Table has been successfully loaded!";
     return Loading_Errors::OK;
 }
 

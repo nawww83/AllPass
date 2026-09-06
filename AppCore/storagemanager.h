@@ -9,8 +9,8 @@ class QTableWidget;
 struct Encryption
 {
     lfsr_rng::Generators gamma_gen;
-    int aligner64 = 0;
-    long long counter = 0;
+    uint64_t aligner64 = 0;
+    uint64_t counter = 0;
     lfsr_rng::u64 gamma = 0;
 };
 

@@ -3,32 +3,26 @@
 
 #include <QString>
 
-namespace {
-    inline constexpr auto g_version_prefix = '#';
-    inline constexpr auto VERSION_LABEL = "#v2.01"; // ASCII.
-    namespace labels {
-        static inline const auto gen_pass_txt = QString::fromUtf8("Добавить запись");
-        static inline const auto recover_txt = QString::fromUtf8("\xE2\x86\xB6");
-        static inline const auto wait_txt = QString::fromUtf8("Подождите...");
-    }
-    namespace constants {
-        static inline const int pin_code_len = 4; // Длина пин-кода.
-        static inline const int password_len_step = 5; // Шаг изменения длины пароля.
-        static inline const int password_len_per_u32 = 5; // Количество символов, получаемое по 32-битному слову.
-        static inline const int password_len_per_u64 = 2 * password_len_per_u32; // Количество символов на 64-битное слово.
-        static inline const int num_of_passwords = 16; // Количество паролей в буфере после одного запроса.
+inline constexpr auto g_version_prefix = '#';
+inline constexpr auto VERSION_LABEL = "#v3.00"; // ASCII.
 
-        static inline const int login_column_idx = 0;
-        static inline const int pswd_column_idx = 1;
-        static inline const int comments_column_idx = 2;
-        static inline const int date_column_idx = 3;
-    }
-    namespace symbols {
-        static inline const auto end_message = QChar(0x0003);
-        static inline const auto empty_item = QChar(0x0008);
-        static inline const auto row_delimiter = QChar(0x001E);
-        static inline const auto col_delimiter = QChar(0x001F);
-    }
+namespace constants {
+    static inline const int pin_code_len = 5; // Длина пин-кода.
+    static inline const int password_len_step = 5; // Шаг изменения длины пароля.
+    static inline const int password_len_per_u32 = 5; // Количество символов, получаемое по 32-битному слову.
+    static inline const int password_len_per_u64 = 2 * password_len_per_u32; // Количество символов на 64-битное слово.
+    static inline const int num_of_passwords = 16; // Количество паролей в буфере после одного запроса.
+
+    static inline const int login_column_idx = 0;
+    static inline const int pswd_column_idx = 1;
+    static inline const int comments_column_idx = 2;
+    static inline const int date_column_idx = 3;
+}
+namespace symbols {
+    static inline const auto end_message = QChar(0x0003);
+    static inline const auto empty_item = QChar(0x0008);
+    static inline const auto row_delimiter = QChar(0x001E);
+    static inline const auto col_delimiter = QChar(0x001F);
 }
 
 #endif // CONSTANTS_H

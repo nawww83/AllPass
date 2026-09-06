@@ -38,8 +38,8 @@ if(NOT ANDROID AND NOT IOS)
 endif()
 # ------------------------------------------------
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 set(APP_DIR AppCore)
 set(UTILS_DIR utils)
@@ -78,6 +78,9 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
         ${app_icon_resource_windows}
+        AppCore/usbstorages.h AppCore/usbstorages.cpp
+        utils/collatz_cipher.h
+
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET AllPass APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -97,7 +100,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(AllPass PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_link_libraries(AllPass PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -112,6 +115,15 @@ set_target_properties(AllPass PROPERTIES
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
 )
+
+# Специфичные настройки линковки для Windows (требуются для WMI/COM)
+if(WIN32)
+    target_link_libraries(AllPass PRIVATE
+        wbemuuid
+        ole32
+        oleaut32
+    )
+endif()
 
 include(GNUInstallDirs)
 install(TARGETS AllPass

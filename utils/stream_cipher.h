@@ -40,10 +40,10 @@ static constexpr STATE K3 = {3, 2, 3, 4, 6, 2, 0, 7};    // p=17
 static constexpr STATE K4 = {2, 3, 1, 1, 2, 0, 1, 7};    // p=13
 
 // Периоды модулирующей "пилы": выбраны так, что периоды T = p^4 - 1 не делятся на соответствующие периоды нацело.
-static constexpr std::array<int, 4> primes {7, 11, 11, 11};
+static constexpr std::array<u16, 4> primes {7, 11, 11, 11};
 
 // Дубликаты простых периодов для упрощения кода.
-static constexpr std::array<int, 8> primes_duplicates {7, 7, 11, 11, 11, 11, 11, 11};
+static constexpr std::array<u16, 8> primes_duplicates {7, 7, 11, 11, 11, 11, 11, 11};
 
 static_assert((primes[0] == primes_duplicates[0]) && (primes[0] == primes_duplicates[1]));
 static_assert((primes[1] == primes_duplicates[2]) && (primes[1] == primes_duplicates[3]));
@@ -64,7 +64,6 @@ inline void operator^=(STATE& x, const STATE& y) {
     }
 }
 
-
 inline STATE operator%(const STATE& x, u32 p) {
     STATE st;
     for (int i=0; i<m; ++i) {
@@ -80,36 +79,30 @@ inline void operator%=(STATE& x, u32 p) {
 }
 
 template <size_t N>
-inline void sawtooth(std::array<u16, N>& v, const std::array<int, N>& p) {
-    size_t i = 0;
-    for (auto& el : v) {
-        el++;
-        el %= p[i];
-        i++;
+inline void sawtooth(std::array<u16, N>& v, const std::array<u16, N>& p) {
+    for (size_t i = 0; i < N; ++i) {
+        v[i] = (v[i] + 1) % p[i];
     }
 }
 
 template <size_t N>
-inline void undo_sawtooth(std::array<u16, N>& v, const std::array<int, N>& p) {
-    size_t i = 0;
-    for (auto& el : v) {
-        el = (el == 0) ? p[i] - 1 : el - 1;
-        el %= p[i];
-        i++;
+inline void undo_sawtooth(std::array<u16, N>& v, const std::array<u16, N>& p) {
+    for (size_t i = 0; i < N; ++i) {
+        v[i] = static_cast<u16>((v[i] + p[i] - 1) % p[i]);
     }
 }
 
 template <size_t N>
 inline void increment(std::array<u32, N>& v) {
-    for (auto& el : v) {
-        el++;
+    for (size_t i = 0; i < N; ++i) {
+        v[i]++;
     }
 }
 
 template <size_t N>
 inline void decrement(std::array<u32, N>& v) {
-    for (auto& el : v) {
-        el--;
+    for (size_t i = 0; i < N; ++i) {
+        v[i]--;
     }
 }
 
@@ -119,10 +112,10 @@ inline void decrement(std::array<u32, N>& v) {
  * @return НОК чисел массива.
  */
 template <size_t N>
-inline int my_lcm(const std::array<int, N>& v) {
-    int lcm_res = v[0];
+inline u64 my_lcm(const std::array<u16, N>& v) {
+    u64 lcm_res = v[0];
     for (size_t i=1; i<N; ++i) {
-        lcm_res = std::lcm(lcm_res, v[i]);
+        lcm_res = std::lcm(lcm_res, static_cast<u64>(v[i]));
     }
     return lcm_res;
 }
@@ -432,6 +425,13 @@ public:
         u64 x = next_u64();
         back_u64();
         return x;
+    }
+
+    void clear() {
+        this->gp1.clear_state_safety();
+        this->gp2.clear_state_safety();
+        this->gp3.clear_state_safety();
+        this->gp4.clear_state_safety();
     }
 };
 
