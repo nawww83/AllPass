@@ -38,3 +38,4 @@
 
 * 06/09/2026 - версия 3.00 с поддержкой usb-ключа.
 
+[Версия 3.00 под Windows 11](https://disk.yandex.ru/d/EKgK7yTbehzksA)
