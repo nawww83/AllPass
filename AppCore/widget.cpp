@@ -440,6 +440,7 @@ Widget::Widget(QString pin, QWidget *parent)
 
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::finish_password_generator);
 
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     UsbStorages usb_storages{pin};
     g_usb_hashes = usb_storages.tryToReadKey();
     if (!g_usb_hashes.isEmpty()) {
@@ -448,6 +449,7 @@ Widget::Widget(QString pin, QWidget *parent)
         g_use_usb_token = false;
         return;
     }
+#endif
     g_use_usb_token = false;
     QTimer::singleShot(0, this, [&]{ input_master_phrase(); });
 }
@@ -1411,7 +1413,9 @@ void Widget::update_table_info()
     btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist() || storage_manager->FileIsExist());
     btn_new_storage_with_transfer->setEnabled(true);
     btn_clear_table->setEnabled(true);
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     btn_create_usb_key->setEnabled(true);
+#endif
 
     storage_manager->RemoveTmpFile();
     storage_manager->SetTryToLoadFromTmp(false);

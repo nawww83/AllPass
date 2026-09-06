@@ -17,6 +17,10 @@ public:
     UsbStorages(const QString& pin, const QString& token_name, const QByteArray& data, QWidget *parent = nullptr);
     ~UsbStorages();
 
+    /**
+     * @brief Чтение ключа *.enc с usb-носителей (автовыбор носителя и файла в корне носителя).
+     * @return Валидный ключ, либо пустой массив если ключ не найден.
+     */
     QByteArray tryToReadKey();
 
 signals:
@@ -49,7 +53,7 @@ private:
     QString m_vid;
     QString m_pid;
 
-    void fill_usb_info(const QStorageInfo& storage);
+    void fill_usb_info(const QString &root_path);
 };
 
 #endif // USBSTORAGES_H

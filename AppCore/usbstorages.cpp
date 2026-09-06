@@ -2,12 +2,10 @@
 #include "collatz_cipher.h"
 #include "utils.h"
 
+#include <QSplashScreen>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QFileInfo>
-#include <QHBoxLayout>
 #include <QMessageBox>
-#include <QStorageInfo>
 #include <QVBoxLayout>
 #include <qevent.h>
 
@@ -18,28 +16,27 @@
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
-#elif defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+#elif defined(Q_OS_LINUX)
 #include <QProcess>
 #endif
 
 #include <QByteArray>
 #include <QPasswordDigestor>
 
-// Метод генерации 256-битного мастер-ключа на основе ПИН-кода и железа USB
+// Метод генерации 256-битного мастер-ключа на основе пин-кода и железа USB
 QString makePinTokenMasterKey(const QString &vid,
                               const QString &pid,
                               const QString &serial,
                               const QString &pinCode)
 {
-    // 1. Формируем уникальную криптографическую соль из железа флешки
+    // Формируем соль из железа флешки
     QString saltStr = QString("%1|%2|%3")
                           .arg(vid.trimmed().toUpper(), pid.trimmed().toUpper(), serial.trimmed());
 
     QByteArray salt = saltStr.toUtf8();
     QByteArray pin = pinCode.toUtf8();
 
-    // 2. Запускаем PBKDF2 (500 000 итераций)
-    // Функция вернет абсолютно уникальный 32-байтный (256 бит) массив
+    // Функция вернет 32-байтный (256 бит) массив
     QByteArray derivedKey
         = QPasswordDigestor::deriveKeyPbkdf2(QCryptographicHash::Sha256,
                                              pin,
@@ -48,7 +45,6 @@ QString makePinTokenMasterKey(const QString &vid,
                                              32      // Размер итогового ключа в байтах (256 бит)
                                              );
 
-    // Переводим в hex-строку, чтобы передать в наш CollatzCipher256
     return QString::fromUtf8(derivedKey.toHex());
 }
 
@@ -63,12 +59,10 @@ struct UsbDeviceDetails
     QString modelDescription;
 };
 
-UsbDeviceDetails getUsbDetails(const QString &rootPath)
+UsbDeviceDetails getUsbDetails(const QStorageInfo& storage)
 {
     UsbDeviceDetails details;
 
-    // 1. Берем имя устройства напрямую из Qt (замена findmnt)
-    QStorageInfo storage(rootPath);
     if (!storage.isValid() || !storage.isReady())
         return details;
 
@@ -76,13 +70,13 @@ UsbDeviceDetails getUsbDetails(const QString &rootPath)
     if (!devicePath.startsWith("/dev/"))
         return details;
 
-    // 2. Ваша родная и проверенная логика очистки имени (sdb1 -> sdb)
+    // Логика очистки имени (sdb1 -> sdb)
     QString devName = devicePath.mid(5);
     while (!devName.isEmpty() && devName.back().isDigit()) {
         devName.chop(1);
     }
 
-    // 3. Вызываем udevadm для очищенного имени диска
+    // Вызываем udevadm для очищенного имени диска
     QProcess udevadm;
     udevadm.start("udevadm", QStringList() << "info" << "--query=property" << "--name=" + devName);
 
@@ -130,18 +124,14 @@ UsbDeviceDetails getUsbDetails(const QString &rootPath)
 #endif
 
 
-void UsbStorages::fill_usb_info(const QStorageInfo& storage)
+void UsbStorages::fill_usb_info(const QString& root_path)
 {
-    const auto& root_path = storage.rootPath();
     m_hardwareSerial.clear();
     m_vid.clear();
     m_pid.clear();
-#if defined(Q_OS_WIN)
     QString driveLetter = root_path.left(2).toUpper(); // Например, "E:"
-
     // Инициализируем COM в режиме APARTMENTTHREADED (совместимом с главным потоком Qt)
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-
     // Переменная будет истинной, если COM успешно создана сейчас (S_OK) или уже была создана Qt ранее (S_FALSE)
     bool coInitialized = (hr == S_OK || hr == S_FALSE);
 
@@ -268,22 +258,18 @@ void UsbStorages::fill_usb_info(const QStorageInfo& storage)
             CoUninitialize();
         }
     }
-#elif defined(Q_OS_LINUX)
-    auto usb_details = getUsbDetails(root_path);
-    m_hardwareSerial = usb_details.serial;
-    m_vid = usb_details.vid;
-    m_pid = usb_details.pid;
-
-#elif defined(Q_OS_MAC)
-    return; // Не реализовано, потому что не на чем тестировать.
-#endif
 }
 
+/**
+ * @brief Прямое чтение токена.
+ * @param root_path Корень usb-токена.
+ * @return Прочитанная строка.
+ */
 static QString read_token(const QString& root_path)
 {
     QDir usbDir(root_path);
 
-    // 1. Фильтруем поиск только по файлам *.enc в корне диска
+    // Фильтруем поиск только по файлам *.enc в корне диска
     QStringList filters;
     filters << "*.enc";
     usbDir.setNameFilters(filters);
@@ -299,10 +285,9 @@ static QString read_token(const QString& root_path)
 
     QFile file(filePath);
     QString base64Text;
-    // 2. Считываем данные через QTextStream
-    if (file.open(QFile::ReadOnly | QFile::Text)) { // Флаг QFile::Text важен для корректного перевода строк (\r\n)
+    // Считываем данные через QTextStream
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream stream(&file);
-        // Читаем всё содержимое текстового файла в виде QString
         base64Text = stream.readAll();
         file.close();
     } else {
@@ -400,19 +385,17 @@ QByteArray UsbStorages::tryToReadKey()
         if (storage.rootPath().startsWith("/media") || storage.rootPath().startsWith("/run/media")) {
             isRemovable = true;
         }
-#elif defined(Q_OS_MAC)
-        if (storage.rootPath().startsWith("/Volumes") && storage.rootPath() != "/Volumes/Macintosh HD") {
-            isRemovable = true;
-        }
-#else
-        if (storage.isReadOnly()) {
-            isRemovable = true;
-        }
 #endif
-
         if (isRemovable) {
             m_rootPath = storage.rootPath();
-            fill_usb_info(storage);
+#if defined(Q_OS_LINUX)
+            auto usb_details = getUsbDetails(storage);
+            m_hardwareSerial = usb_details.serial;
+            m_vid = usb_details.vid;
+            m_pid = usb_details.pid;
+#else
+            fill_usb_info(m_rootPath);
+#endif
             QString usb_key = read_token(m_rootPath);
             QString strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinCode);
             QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
@@ -424,7 +407,7 @@ QByteArray UsbStorages::tryToReadKey()
             constexpr size_t crc_size = 32;                              // 32 байта (SHA-256)
             constexpr size_t expected_total_size = hashes_total_size + crc_size; // 80 байт
 
-            // 2. ВАЛИДАЦИЯ КОНТРОЛЬНОЙ СУММЫ (CRC)
+            // ВАЛИДАЦИЯ КОНТРОЛЬНОЙ СУММЫ (CRC)
             // Вырезаем первые 48 байт хэшей
             QByteArray data_part = data.left(hashes_total_size);
             // Вырезаем последние 32 байта сохраненного CRC
@@ -453,6 +436,14 @@ QByteArray UsbStorages::tryToReadKey()
 void UsbStorages::saveKey()
 {
     m_save_keyButton->setEnabled(false);
+    QSplashScreen* splash = new QSplashScreen();
+    QFont splashFont;
+    splashFont.setBold(true);
+    splashFont.setPixelSize(18);
+    splash->setFont(splashFont);
+    splash->setWindowFlags(splash->windowFlags() | Qt::WindowStaysOnTopHint);
+    splash->showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, Qt::blue);
+    splash->show();
     // Заставляем Qt немедленно перерисовать кнопку на экране.
     qApp->processEvents(QEventLoop::ExcludeUserInputEvents); // [Qt]
 
@@ -460,6 +451,9 @@ void UsbStorages::saveKey()
     QString strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinCode);
     QString usb_key = CollatzCipher256::encrypt(m_data, strongMasterKey);
     utils::erase_string(strongMasterKey);
+
+    splash->close();
+    splash->deleteLater();
 
     QString fullPath = QDir::cleanPath(m_rootPath + QDir::separator() + m_tokenName);
     QFile file(fullPath);
@@ -502,16 +496,7 @@ void UsbStorages::refreshDrives()
         if (storage.rootPath().startsWith("/media") || storage.rootPath().startsWith("/run/media")) {
             isRemovable = true;
         }
-#elif defined(Q_OS_MAC)
-        if (storage.rootPath().startsWith("/Volumes") && storage.rootPath() != "/Volumes/Macintosh HD") {
-            isRemovable = true;
-        }
-#else
-        if (storage.isReadOnly()) {
-            isRemovable = true;
-        }
 #endif
-
         if (isRemovable) {
             m_drives.append(storage);
 
@@ -541,7 +526,14 @@ void UsbStorages::onDriveSelected(int index)
     const QStorageInfo &storage = m_drives.at(index);
     m_rootPath = storage.rootPath(); // Например, "E:/"
 
-    fill_usb_info(storage);
+#if defined(Q_OS_LINUX)
+    auto usb_details = getUsbDetails(storage);
+    m_hardwareSerial = usb_details.serial;
+    m_vid = usb_details.vid;
+    m_pid = usb_details.pid;
+#else
+    fill_usb_info(m_rootPath);
+#endif
 
     // Формируем красивый HTML-блок с CSS-стилями и визуальными разделителями
     QString resultText
@@ -573,7 +565,6 @@ void UsbStorages::onDriveSelected(int index)
 
     m_serialLabel->setHtml(resultText);
 }
-
 
 bool UsbStorages::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
 {
