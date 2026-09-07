@@ -2,6 +2,7 @@
 
 #include <array> // std::array
 #include <cstring>
+#include <string.h>
 
 #include <QDebug>
 #include <QFutureWatcher>
@@ -87,21 +88,30 @@ namespace password {
 namespace utils {
 
 // Базовая функция очистки сырого буфера
-inline static void erase_bytes(uint8_t* b, int len) {
-    if (!b || len <= 0) return;
+inline static void erase_bytes(uint8_t *b, int len)
+{
+    if (!b || len <= 0)
+        return;
 
 #if defined(_WIN32)
-    // На Windows используем системную функцию, защищенную от оптимизаций
+    // На Windows используем системную функцию
     SecureZeroMemory(b, len);
-#elif defined(__STDC_LIB_EXT1__) || defined(__GLIBC__)
-    // Если доступен безопасный memset (C11)
+#elif defined(__linux__) || defined(__GLIBC__)
+    // В современных Linux / glibc используем explicit_bzero, защищенную от оптимизаций
+    explicit_bzero(b, len);
+#elif defined(__STDC_LIB_EXT1__) && defined(__STDC_WANT_LIB_EXT1__) && (__STDC_WANT_LIB_EXT1__ == 1)
+    // C11 безопасный memset_s (если реально поддерживается компилятором)
     memset_s(b, len, 0, len);
 #else
-    // Кроссплатформенный барьер для GCC/Clang через указатель на volatile
-    volatile uint8_t* p = b;
+    // Кроссплатформенный барьер через asm или volatile
+    volatile uint8_t *p = b;
     while (len--) {
         *p++ = 0;
     }
+// Сигнализируем компилятору, что память была изменена
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__("" : : "r"(b) : "memory");
+#endif
 #endif
 }
 

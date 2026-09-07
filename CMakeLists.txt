@@ -53,12 +53,14 @@ set(COMMON_SRC
     ${APP_DIR}/worker.cpp
     ${APP_DIR}/passitemdelegate.cpp
     ${APP_DIR}/storagemanager.cpp
+    ${APP_DIR}/usbstorages.cpp
     ${APP_DIR}/widget.ui
     ${APP_DIR}/images.qrc
     ${APP_DIR}/widget.h
     ${APP_DIR}/passitemdelegate.h
     ${APP_DIR}/worker.h
     ${APP_DIR}/storagemanager.h
+    ${APP_DIR}/usbstorages.h
     ${UTILS_DIR}/constants.h
     ${UTILS_DIR}/key.h
     ${UTILS_DIR}/stream_cipher.h

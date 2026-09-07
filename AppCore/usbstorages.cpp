@@ -2,11 +2,12 @@
 #include "collatz_cipher.h"
 #include "utils.h"
 
-#include <QSplashScreen>
 #include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QSplashScreen>
 #include <QVBoxLayout>
+#include <qapplication.h>
 #include <qevent.h>
 
 #if defined(Q_OS_WIN)
@@ -47,7 +48,6 @@ QString makePinTokenMasterKey(const QString &vid,
 
     return QString::fromUtf8(derivedKey.toHex());
 }
-
 
 #if defined(Q_OS_LINUX)
 
@@ -123,7 +123,7 @@ UsbDeviceDetails getUsbDetails(const QStorageInfo& storage)
 
 #endif
 
-
+#if defined(Q_OS_WIN)
 void UsbStorages::fill_usb_info(const QString& root_path)
 {
     m_hardwareSerial.clear();
@@ -259,6 +259,7 @@ void UsbStorages::fill_usb_info(const QString& root_path)
         }
     }
 }
+#endif
 
 /**
  * @brief Прямое чтение токена.
@@ -298,6 +299,7 @@ static QString read_token(const QString& root_path)
 
 #if defined(Q_OS_WIN)
 #include <dbt.h> // Необходим для макросов работы с устройствами
+#endif
 
 UsbStorages::UsbStorages(const QString &pin, QWidget *parent)
     : m_pinCode{pin},
@@ -566,6 +568,7 @@ void UsbStorages::onDriveSelected(int index)
     m_serialLabel->setHtml(resultText);
 }
 
+#if defined(Q_OS_WIN)
 bool UsbStorages::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
 {
     Q_UNUSED(eventType);
@@ -585,6 +588,7 @@ bool UsbStorages::nativeEvent(const QByteArray &eventType, void *message, qintpt
 
     return false; // Возвращаем false, чтобы Qt тоже мог обработать это событие, если нужно
 }
+#endif
 
 void UsbStorages::closeEvent(QCloseEvent *event)
 {
@@ -592,4 +596,3 @@ void UsbStorages::closeEvent(QCloseEvent *event)
     emit sig_finished();
     event->accept(); // Разрешаем закрытие окна
 }
-#endif
