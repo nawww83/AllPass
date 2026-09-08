@@ -19,7 +19,8 @@
 #include <QEvent>
 #include <vector>
 
-#include "stream_cipher.h"
+#include "global_data.h"
+#include "utils.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -32,7 +33,7 @@ class Widget : public QWidget
     Q_OBJECT
 
 public:
-    Widget(QString pin, QWidget *parent = nullptr);
+    Widget(QWidget *parent = nullptr);
     ~Widget();
 
     bool eventFilter(QObject *object, QEvent *event) override;
@@ -281,16 +282,30 @@ public:
         }
     }
 
-    QString get_pin() const {
-        QString fullPin;
-        for (const auto *le : pin_fields) {
-            fullPin.append(le->text());
+    // Возвращаем стековую структуру PinCode, избегая QString в куче
+    PinCode get_secure_pin() const
+    {
+        PinCode secure_pin;
+
+        for (size_t i = 0; i < pin_fields.size() && i < constants::pin_code_len; ++i) {
+            QString text = pin_fields[i]->text();
+
+            if (!text.isEmpty()) {
+                secure_pin.mPinCode[i] = text[0].digitValue();
+            } else {
+                secure_pin.mPinCode[i] = -1; // Признак пустого поля
+            }
+
+            // Немедленно затираем временную строку text внутри Qt
+            utils::erase_string(text);
         }
-        return fullPin;
+
+        return secure_pin;
     }
 
     void clear_pin() {
         for (auto *le : pin_fields) {
+            le->setText("0");
             le->clear();
         }
         if (!pin_fields.empty()) {
@@ -323,7 +338,7 @@ protected:
 private:
     void updateOkButtonState() {
         if (QPushButton *okButton = buttonBox->button(QDialogButtonBox::Ok)) {
-            okButton->setEnabled(get_pin().length() == pin_len);
+            okButton->setEnabled(get_secure_pin().length() == pin_len);
         }
     }
 

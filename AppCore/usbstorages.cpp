@@ -28,14 +28,14 @@
 QString makePinTokenMasterKey(const QString &vid,
                               const QString &pid,
                               const QString &serial,
-                              const QString &pinCode)
+                              std::string_view pinCode)
 {
     // Формируем соль из железа флешки
     QString saltStr = QString("%1|%2|%3")
                           .arg(vid.trimmed().toUpper(), pid.trimmed().toUpper(), serial.trimmed());
 
     QByteArray salt = saltStr.toUtf8();
-    QByteArray pin = pinCode.toUtf8();
+    QByteArray pin = QByteArray::fromRawData(pinCode.data(), static_cast<int>(pinCode.length()));
 
     // Функция вернет 32-байтный (256 бит) массив
     QByteArray derivedKey
@@ -301,17 +301,20 @@ static QString read_token(const QString& root_path)
 #include <dbt.h> // Необходим для макросов работы с устройствами
 #endif
 
-UsbStorages::UsbStorages(const QString &pin, QWidget *parent)
-    : m_pinCode{pin},
-    QMainWindow(parent)
+UsbStorages::UsbStorages(std::string_view pin, QWidget *parent)
+    : m_pinCode{pin}
+    , QMainWindow(parent)
 {
 }
 
-UsbStorages::UsbStorages(const QString &pin, const QString &token_name, const QByteArray &data, QWidget *parent)
-    : m_pinCode{pin},
-    m_tokenName{token_name},
-    m_data{data},
-    QMainWindow(parent)
+UsbStorages::UsbStorages(std::string_view pin,
+                         const QString &token_name,
+                         const QByteArray &data,
+                         QWidget *parent)
+    : m_pinCode{pin}
+    , m_tokenName{token_name}
+    , m_data{data}
+    , QMainWindow(parent)
 {
     setWindowTitle("USB-накопители");
     resize(400, 500);
@@ -363,7 +366,6 @@ UsbStorages::UsbStorages(const QString &pin, const QString &token_name, const QB
 
 UsbStorages::~UsbStorages()
 {
-    utils::erase_string(m_pinCode);
     utils::erase_string(m_hardwareSerial);
     utils::erase_bytes(m_data);
 }

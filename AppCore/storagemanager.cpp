@@ -1,6 +1,7 @@
 #include "storagemanager.h"
-#include "utils.h"
 #include "constants.h"
+#include "global_data.h"
+#include "utils.h"
 
 #ifdef __unix__
     #undef OS_Windows

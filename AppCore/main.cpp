@@ -1,3 +1,4 @@
+#include "utils_global.h"
 #include "widget.h"
 
 #include <QApplication>
@@ -30,38 +31,52 @@ int main(int argc, char *argv[])
     // Разбираем аргументы
     parser.process(a);
 
-    QString pin;
+    PinCode pin;
     const auto& warning_text = QString::fromUtf8("PIN-код должен быть любым %1-значным числом").arg(constants::pin_code_len);
     // Проверяем, был ли вообще передан ключ --pin
     if (parser.isSet(pinOption)) {
         // Получаем значение как строку
-        pin = parser.value(pinOption);
+        QString pin_str = parser.value(pinOption);
+
+        // Валидация: проверяем, что в строке ровно столько цифр, сколько нужно, и нет посторонних символов
         bool isNumeric;
-        pin.toLongLong(&isNumeric);
-        if (!isNumeric) {
+        pin_str.toLongLong(&isNumeric);
+
+        if (!isNumeric || pin_str.length() != constants::pin_code_len) {
+            // Перед выводом ошибки очищаем временную строку с неверным пином
+            utils::erase_string(pin_str);
+
             QMessageBox mb(QMessageBox::Critical,
                            QString::fromUtf8("Ошибка PIN-кода"),
                            warning_text);
             mb.exec();
             return 1;
         }
+        // Заполняем структуру PinCode посимвольно
+        for (int i = 0; i < constants::pin_code_len; ++i) {
+            // Переводим QChar в число (0-9)
+            pin.mPinCode[i] = pin_str.at(i).digitValue();
+        }
+
+        // Немедленно затираем исходную строку в куче
+        utils::erase_string(pin_str);
     } else {
         // Здесь можно либо показать справку, либо просто продолжить запуск окна
         // parser.showHelp(); // Раскомментируйте, если без пина запускать нельзя
     }
 
-    if (pin.isEmpty()) {
+    if (pin.length() == 0) {
         QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
         MyDialog<constants::pin_code_len> dialog{QString::fromUtf8("Введите PIN-код (%1)").arg( current_version)};
         const int result = dialog.exec();
         if (result != QDialog::Accepted) {
             return 0;
         }
-        pin = dialog.get_pin();
+        pin = dialog.get_secure_pin();
         dialog.clear_pin();
     }
 
-    if (pin.size() != constants::pin_code_len) {
+    if (pin.length() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
                        warning_text);
@@ -72,7 +87,10 @@ int main(int argc, char *argv[])
     splash.show();
     a.processEvents();
 
-    Widget w(std::move(pin));
+    utils_global::set_global_pin(pin);
+    pin.clear();
+
+    Widget w;
     w.show();
     splash.finish(&w);
     return a.exec();

@@ -13,8 +13,11 @@ class UsbStorages : public QMainWindow
 {
     Q_OBJECT
 public:
-    UsbStorages(const QString& pin, QWidget *parent = nullptr);
-    UsbStorages(const QString& pin, const QString& token_name, const QByteArray& data, QWidget *parent = nullptr);
+    UsbStorages(std::string_view pin, QWidget *parent = nullptr);
+    UsbStorages(std::string_view pin,
+                const QString &token_name,
+                const QByteArray &data,
+                QWidget *parent = nullptr);
     ~UsbStorages();
 
     /**
@@ -45,7 +48,7 @@ private:
     QList<QStorageInfo> m_drives;
 
     QString m_rootPath;
-    QString m_pinCode;
+    std::string_view m_pinCode;
     const QString m_tokenName;
     QByteArray m_data;
 

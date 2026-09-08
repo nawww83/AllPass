@@ -18,17 +18,16 @@
 
 #include "AppCore/ui_widget.h"
 #include "passitemdelegate.h"
-#include "utils.h"
 #include "storagemanager.h"
 #include "usbstorages.h"
-
+#include "utils_global.h"
 
 static int g_current_password_len;
 static int g_new_storage_with_transfer_mode = false;
 static int g_table_is_loading = false;
 static int g_use_usb_token = false;
-static QByteArray g_usb_hashes;
-Q_GLOBAL_STATIC( StorageManager, storage_manager);
+Q_GLOBAL_STATIC(QByteArray, g_usb_hashes);
+Q_GLOBAL_STATIC(StorageManager, storage_manager);
 
 /**
  * @brief Создавать перед массовым обновлением таблицы.
@@ -377,9 +376,7 @@ static int run_test() {
 }
 #endif
 
-
-
-Widget::Widget(QString pin, QWidget *parent)
+Widget::Widget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
@@ -391,7 +388,6 @@ Widget::Widget(QString pin, QWidget *parent)
     }
     #endif
 
-    utils::fill_pin(pin);
     ui->setupUi(this);
     QString app_title = QString::fromUtf8("AllPass 128-bit ");
     QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
@@ -441,9 +437,17 @@ Widget::Widget(QString pin, QWidget *parent)
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::finish_password_generator);
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
-    UsbStorages usb_storages{pin};
-    g_usb_hashes = usb_storages.tryToReadKey();
-    if (!g_usb_hashes.isEmpty()) {
+    QString temp_pin_str;
+    for (int i = 0; i < constants::pin_code_len; ++i) {
+        if (password::pin_code.mPinCode.at(i) >= 0) {
+            temp_pin_str.append(QString::number(password::pin_code.mPinCode.at(i)));
+        }
+    }
+    auto stack_pin_str = password::pin_code.to_numeric_string();
+    UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()}};
+    *g_usb_hashes = usb_storages.tryToReadKey();
+    stack_pin_str.fill('\0');
+    if (!g_usb_hashes->isEmpty()) {
         g_use_usb_token = true;
         update_master_phrase();
         g_use_usb_token = false;
@@ -724,7 +728,7 @@ void Widget::update_pass()
         const int pass_level = ui->cmbbx_password_level->currentIndex();
 
         // Запрашиваем пароль из буфера
-        QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+        QString pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
 
         // Если буфер пуст или вернул обрубок,
         // полностью сбрасываем строку перед повторным запросом
@@ -732,10 +736,10 @@ void Widget::update_pass()
             utils::erase_string(pswd); // Уничтожаем дефектную строку
 
             // Наполняем буфер заново (синхронно дожидаясь через waitForFinished)
-            utils::request_passwords(watcher_passwords, g_current_password_len);
+            utils_global::request_passwords(watcher_passwords, g_current_password_len);
 
             // Пробуем получить пароль еще раз в чистую строку
-            pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+            pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
         }
 
         // Записываем чистый пароль в модель ячейки
@@ -847,7 +851,7 @@ void Widget::update_master_phrase()
     constexpr size_t total_expected_size = 3 * single_hash_size; // 48 байт
 
     DecoupledHashes result = { {0,0}, {0,0}, {0,0} };
-    const char* src_ptr = g_usb_hashes.constData();
+    const char *src_ptr = g_usb_hashes->constData();
 
     // Извлекаем первый хэш (Хэш Хранилища) — смещение 0 байт
     std::copy_n(src_ptr, single_hash_size, reinterpret_cast<char*>(&result.storage));
@@ -860,24 +864,32 @@ void Widget::update_master_phrase()
 
     storage_manager->BeforeUpdate();
     {
-        lfsr_hash::u128 hash = utils::gen_hash_for_pass_gen(text, std::random_device{}()); // каждый раз разный
-        utils::fill_key_by_hash128(hash);
+        lfsr_hash::u128 hash
+            = utils_global::gen_hash_for_pass_gen(text, std::random_device{}()); // каждый раз разный
+        utils_global::fill_key_by_hash128(hash);
         utils::clear_lfsr_hash(hash);
     }
     {
-        lfsr_hash::u128 hash_fs = g_use_usb_token ? result.storage : utils::gen_hash_for_storage(text); // на usb-токен
-        const auto& name = utils::generate_storage_name(hash_fs);
+        lfsr_hash::u128 hash_fs = g_use_usb_token
+                                      ? result.storage
+                                      : utils_global::gen_hash_for_storage(text); // на usb-токен
+        const auto &name = utils_global::generate_storage_name(hash_fs);
         storage_manager->SetName( name );
         storage_manager->SetTmpName( name );
         utils::clear_lfsr_hash(hash_fs);
     }
     {
-        lfsr_hash::u128 hash_enc = g_use_usb_token ? result.encryption : utils::gen_hash_for_encryption(text); // на usb-токен
+        lfsr_hash::u128 hash_enc = g_use_usb_token
+                                       ? result.encryption
+                                       : utils_global::gen_hash_for_encryption(text); // на usb-токен
         lfsr_rng::STATE state = utils::fill_state_by_hash(hash_enc);
         watcher_seed_enc_gen.setFuture(password::worker->seed(state));
         watcher_seed_dec_gen.setFuture(password::worker->seed(state));
 
-        lfsr_hash::u128 hash_enc_inner = g_use_usb_token ? result.inner_encryption : utils::gen_hash_for_inner_encryption(text); // на usb-токен
+        lfsr_hash::u128 hash_enc_inner = g_use_usb_token
+                                             ? result.inner_encryption
+                                             : utils_global::gen_hash_for_inner_encryption(
+                                                   text); // на usb-токен
         lfsr_rng::STATE state_inner = utils::fill_state_by_hash(hash_enc_inner);
         watcher_seed_enc_inner_gen.setFuture(password::worker->seed(state_inner));
         watcher_seed_dec_inner_gen.setFuture(password::worker->seed(state_inner));
@@ -905,7 +917,7 @@ void Widget::update_master_phrase()
     }
 
     utils::erase_string(text);
-    utils::erase_bytes(g_usb_hashes);
+    utils::erase_bytes(*g_usb_hashes);
     utils::clear_lfsr_hash(result.encryption);
     utils::clear_lfsr_hash(result.inner_encryption);
     utils::clear_lfsr_hash(result.storage);
@@ -919,7 +931,7 @@ void Widget::set_master_key()
         state[i] = password::key->get_key(i);
     }
     watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
-    utils::clear_main_key();
+    password::key->clear();
     utils::clear_lfsr_rng_state(state);
     emit master_key_set();
 }
@@ -929,7 +941,7 @@ void Widget::discard_master_key()
     if (g_new_storage_with_transfer_mode) {
         warning_message_box(QString::fromUtf8(""),
                             QString::fromUtf8("Ввод мастер-фразы был отменен. Изменений не будет."));
-        utils::restore_pin();
+        utils_global::restore_pin();
     }
     g_new_storage_with_transfer_mode = false;
 }
@@ -937,11 +949,11 @@ void Widget::discard_master_key()
 void Widget::insert_new_password()
 {
     const int pass_level = ui->cmbbx_password_level->currentIndex();
-    QString pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+    QString pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
 
     if (pswd.length() < g_current_password_len) {
-        utils::request_passwords(watcher_passwords, g_current_password_len);
-        pswd = utils::try_to_get_password(g_current_password_len, pass_level);
+        utils_global::request_passwords(watcher_passwords, g_current_password_len);
+        pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
     }
 
     ui->tableWidget->insertRow(ui->tableWidget->rowCount());
@@ -1207,11 +1219,12 @@ void Widget::btn_recover_from_backup_clicked()
     } else {
         return;
     }
-    QString pin {dialog.get_pin()};
+    PinCode pin{dialog.get_secure_pin()};
     dialog.clear_pin();
-    if (!utils::check_pin(std::move(pin))) {
+    if (!utils_global::check_pin(pin)) {
         warning_message_box(QString::fromUtf8(""),
                             QString::fromUtf8("Введен неверный пин-код. Изменений не будет."));
+        pin.clear();
         return;
     }
 
@@ -1257,9 +1270,9 @@ void Widget::btn_new_storage_with_transfer_clicked() {
                             QString::fromUtf8("Ввод пин-кода был отменен. Изменений не будет."));
         return;
     }
-    QString pin {dialog.get_pin()};
+    PinCode pin{dialog.get_secure_pin()};
     dialog.clear_pin();
-    if (pin.size() != constants::pin_code_len) {
+    if (pin.length() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
                        QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
@@ -1268,8 +1281,9 @@ void Widget::btn_new_storage_with_transfer_clicked() {
     }
 
     g_new_storage_with_transfer_mode = true;
-    utils::back_up_pin();
-    utils::fill_pin(std::move(pin));
+    utils_global::back_up_pin();
+    utils_global::set_global_pin(pin);
+    pin.clear();
 
     warning_message_box(QString::fromUtf8(""),
                             QString::fromUtf8("После ввода новой мастер-фразы будет активировано новое хранилище."
@@ -1287,30 +1301,32 @@ void Widget::btn_create_usb_key_clicked()
         ;
     } else {
         return;
-    }
-    QString pin_code {dialog.get_pin()};
+    }    
+    PinCode pin{dialog.get_secure_pin()};
     dialog.clear_pin();
-    if (!utils::check_pin(pin_code)) {
-        warning_message_box(QString::fromUtf8(""),
-                            QString::fromUtf8("Введен неверный пин-код."));
+    if (!utils_global::check_pin(pin)) {
+        warning_message_box(QString::fromUtf8(""), QString::fromUtf8("Введен неверный пин-код."));
         return;
     }
+    pin.clear();
 
-    warning_message_box(QString::fromUtf8(""),
-                            QString::fromUtf8("Подготовьте usb-носитель. После подтверждения мастер-фразы будет предложено"
-                                              "окно выбора usb-носителя. Если фраза введена не будет, то ничего не произойдет."));
+    warning_message_box(
+        QString::fromUtf8(""),
+        QString::fromUtf8(
+            "Подготовьте usb-носитель. После подтверждения мастер-фразы будет предложено"
+            "окно выбора usb-носителя. Если фраза введена не будет, то ничего не произойдет."));
 
     if (m_masterPhraseConn) {
         QObject::disconnect(m_masterPhraseConn);
     }
-    m_tempConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, [pin_code, this]() {
+    m_tempConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, [this]() {
         QString text {pointers::txt_edit_master_phrase->toPlainText()};
         pointers::txt_edit_master_phrase->clear();
 
         if (!text.isEmpty()) {
-            auto hash_storage = utils::gen_hash_for_storage(text);
-            auto hash_enc = utils::gen_hash_for_encryption(text);
-            auto hash_inn_enc = utils::gen_hash_for_inner_encryption(text);
+            auto hash_storage = utils_global::gen_hash_for_storage(text);
+            auto hash_enc = utils_global::gen_hash_for_encryption(text);
+            auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(text);
 
             utils::erase_string(text);
 
@@ -1333,8 +1349,12 @@ void Widget::btn_create_usb_key_clicked()
 
             QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
             data.append(crc256);
+            utils::erase_bytes(crc256);
 
-            UsbStorages usb_storages{pin_code, QString::fromUtf8("all_pass_token.enc"), data};
+            auto stack_pin_str = password::pin_code.to_numeric_string();
+            UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()},
+                                     QString::fromUtf8("all_pass_token.enc"),
+                                     data};
 
             // Делаем главное окно токена модальным (блокирует клики по родительскому окну Widget)
             usb_storages.setWindowModality(Qt::ApplicationModal);
@@ -1354,6 +1374,10 @@ void Widget::btn_create_usb_key_clicked()
             // до того как начнется деструкция стека
             QObject::connect(&usb_storages, &UsbStorages::sig_finished, &loop, &QEventLoop::quit);
             loop.exec();
+
+            stack_pin_str.fill('\0');
+
+            utils::erase_bytes(data);
 
             QObject::disconnect(m_tempConn);
 
@@ -1382,11 +1406,12 @@ void Widget::btn_clear_table_clicked()
     } else {
         return;
     }
-    QString pin {dialog.get_pin()};
+    PinCode pin{dialog.get_secure_pin()};
     dialog.clear_pin();
-    if (!utils::check_pin(std::move(pin))) {
+    if (!utils_global::check_pin(pin)) {
         warning_message_box(QString::fromUtf8(""),
                             QString::fromUtf8("Введен неверный пин-код. Изменений не будет."));
+        pin.clear();
         return;
     }
     clear_table(ui->tableWidget);
