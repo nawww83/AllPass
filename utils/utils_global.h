@@ -393,7 +393,7 @@ inline static QString generate_storage_name(lfsr_hash::u128 hash)
     const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(b_), buffer_len);
     password::hash_gen.add_salt(utils::hash_to_salt(hash));
     u128 hash2 = hash128(password::hash_gen, bytes_span);
-    QString name{};
+    QString name;
     for (int i = 0; i < 8; ++i) {
         name.push_back(allowed[(hash2.first >> 8 * i) % 36]);
         name.push_back(allowed[(hash2.second >> 8 * i) % 36]);

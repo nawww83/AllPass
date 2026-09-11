@@ -437,12 +437,6 @@ Widget::Widget(QWidget *parent)
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::finish_password_generator);
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
-    QString temp_pin_str;
-    for (int i = 0; i < constants::pin_code_len; ++i) {
-        if (password::pin_code.mPinCode.at(i) >= 0) {
-            temp_pin_str.append(QString::number(password::pin_code.mPinCode.at(i)));
-        }
-    }
     auto stack_pin_str = password::pin_code.to_numeric_string();
     UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()}};
     *g_usb_hashes = usb_storages.tryToReadKey();
@@ -1328,6 +1322,8 @@ void Widget::btn_create_usb_key_clicked()
             auto hash_enc = utils_global::gen_hash_for_encryption(text);
             auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(text);
 
+            const auto file_name = utils_global::generate_storage_name(hash_storage).append(".enc");
+
             utils::erase_string(text);
 
             // 1. Выделяем память под итоговый массив ровно один раз (16 * 3 = 48 байт, 32 байта crc )
@@ -1353,7 +1349,7 @@ void Widget::btn_create_usb_key_clicked()
 
             auto stack_pin_str = password::pin_code.to_numeric_string();
             UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()},
-                                     QString::fromUtf8("all_pass_token.enc"),
+                                     file_name,
                                      data};
 
             // Делаем главное окно токена модальным (блокирует клики по родительскому окну Widget)
