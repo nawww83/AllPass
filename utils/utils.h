@@ -1,8 +1,5 @@
 #pragma once
 
-#include <cstring>
-#include <string.h>
-
 #include <QDebug>
 #include <QFutureWatcher>
 #include <QByteArray>
@@ -16,6 +13,8 @@
 #include <QString>
 #include <cstdint>
 #include <algorithm>
+#include <cstring>
+#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -24,17 +23,6 @@
 #include "constants.h"
 #include "lfsr_hash.h"
 #include "stream_cipher.h"
-
-namespace const_arr {
-    static inline constexpr int goods[] = {3, 5, 6, 7, 10, 12, 14, 19, 20, 24, 27, 28, 33, 37, 38, 39,
-                             40, 41, 43, 45, 47, 48, 51, 53, 54, 55, 56, 63, 65, 66, 69, 71,
-                             74, 75, 76, 77, 78, 80, 82, 83, 85, 86, 87, 90, 91, 93, 94, 96,
-                             97, 101, 102, 103, 105, 106, 107, 108, 109, 110, 112, 115, 119, 125, 126, 127,
-                             130, 131, 132, 138, 142, 145, 147, 148, 149, 150, 151, 152, 154, 155, 156, 160,
-                             161, 163, 164, 166, 167, 170, 171, 172, 174, 175, 177, 179, 180, 181, 182, 183,
-                             186, 188, 191, 192, 194, 201, 202, 203, 204, 206, 209, 210, 212, 214, 216, 217,
-                             218, 219, 220, 224, 229, 230, 233, 237, 238, 243, 245, 247, 250, 251, 252, 254};
-}
 
 class MyQByteArray : public QByteArray {
 public:
@@ -66,7 +54,7 @@ public:
 namespace utils {
 
 // Базовая функция очистки сырого буфера
-inline static void erase_bytes(uint8_t *b, std::size_t len)
+inline void erase_bytes(uint8_t *b, std::size_t len)
 {
     if (!b || len == 0)
         return;
@@ -92,7 +80,7 @@ inline static void erase_bytes(uint8_t *b, std::size_t len)
 }
 
 // Функция очистки QByteArray
-inline static void erase_bytes(QByteArray& b) {
+inline void erase_bytes(QByteArray& b) {
     if (b.isEmpty()) return;
 
     // Передаем указатель на внутренний неконстантный буфер Qt
@@ -101,7 +89,7 @@ inline static void erase_bytes(QByteArray& b) {
 }
 
 // Функция очистки QString (UTF-16)
-inline static void erase_string(QString& str) {
+inline void erase_string(QString& str) {
     if (str.isEmpty()) return;
 
     // Размер в байтах для UTF-16 — это количество символов * 2
@@ -111,8 +99,8 @@ inline static void erase_string(QString& str) {
     str.clear(); // Безопасно очищаем объект Qt
 }
 
-// Инициализация стейта ГПСЧ
-inline static lfsr_rng::STATE fill_state_by_hash(lfsr_hash::u128 hash) {
+// Инициализация состояния генератора ПСЧ
+inline lfsr_rng::STATE fill_state_by_hash(lfsr_hash::u128 hash) {
     lfsr_rng::STATE st;
     for (int i = 0; i < 8; ++i) {
         lfsr_hash::u16 byte_1 = 255 & (hash.first >> (8 * i));
@@ -123,19 +111,19 @@ inline static lfsr_rng::STATE fill_state_by_hash(lfsr_hash::u128 hash) {
 }
 
 // Безопасная очистка 128-битного хэша по ССЫЛКЕ
-inline static void clear_lfsr_hash(lfsr_hash::u128 &hash)
+inline void clear_lfsr_hash(lfsr_hash::u128 &hash)
 {
     erase_bytes(reinterpret_cast<uint8_t *>(&hash), sizeof(hash));
 }
 
 // Безопасная очистка внутреннего состояния генератора (массива std::array)
-inline static void clear_lfsr_rng_state(lfsr_rng::STATE &st)
+inline void clear_lfsr_rng_state(lfsr_rng::STATE &st)
 {
     // Безопасно затираем всё состояние rng, используя sizeof для точного размера
     erase_bytes(reinterpret_cast<uint8_t *>(&st), sizeof(st));
 }
 
-inline static char xor_val(const QByteArray& data) {
+inline char xor_val(const QByteArray& data) {
     if (data.isEmpty()) return '\0';
 
     const char* ptr = data.constData();
@@ -147,7 +135,7 @@ inline static char xor_val(const QByteArray& data) {
     return result;
 }
 
-inline static QByteArray xor_bytes(const QByteArray& data_1, const QByteArray& data_2) {
+inline QByteArray xor_bytes(const QByteArray& data_1, const QByteArray& data_2) {
     const int min_size = std::min(data_1.size(), data_2.size());
     QByteArray result;
     result.resize(min_size);
@@ -200,7 +188,7 @@ inline uint32_t seed_from_bytes_pop_back(QByteArray& data) {
     return seed;
 }
 
-inline static QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed) {
+inline QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed) {
     QByteArray result;
     const int size = data.size();
     result.resize(size); // Выделяем память под массив ОДИН раз
@@ -226,7 +214,7 @@ inline static QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed)
 
 
 template <int block_size>
-inline static void padd(QByteArray& data) {
+inline void padd(QByteArray& data) {
 #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
     MyQByteArray& data_ref = static_cast<MyQByteArray&>(data);
 #else
@@ -243,7 +231,7 @@ inline static void padd(QByteArray& data) {
     data_ref[old_size] = static_cast<char>(0x80); // Ставим маркер конца реальных данных
 }
 
-inline static void dpadd(QByteArray& data) {
+inline void dpadd(QByteArray& data) {
     if (data.isEmpty()) {
         return;
     }
@@ -269,21 +257,21 @@ inline static void dpadd(QByteArray& data) {
     // Если маркер не найден — данные повреждены или не имели паддинга, не трогаем их
 }
 
-inline static uint8_t rotl8(uint8_t value, unsigned int count)
+inline uint8_t rotl8(uint8_t value, unsigned int count)
 {
     const unsigned int mask = CHAR_BIT*sizeof(value) - 1;
     count &= mask;
     return (value << count) | (value >> ( (-count) & mask ));
 }
 
-inline static uint8_t rotr8(uint8_t value, unsigned int count)
+inline uint8_t rotr8(uint8_t value, unsigned int count)
 {
     const unsigned int mask = CHAR_BIT*sizeof(value) - 1;
     count &= mask;
     return (value >> count) | (value << ( (-count) & mask ));
 }
 
-inline static QString encode_u32_simple_level(lfsr8::u32 sample)
+inline QString encode_u32_simple_level(lfsr8::u32 sample)
 {
     //constants::password_len_per_u32 обычно равен 4 или 5 в зависимости от архитектуры
     QString word(constants::password_len_per_u32, '\0');
@@ -302,7 +290,7 @@ inline static QString encode_u32_simple_level(lfsr8::u32 sample)
     return word;
 }
 
-inline static QString encode_u32_hard_level(lfsr8::u32 sample)
+inline QString encode_u32_hard_level(lfsr8::u32 sample)
 {
     QString word(constants::password_len_per_u32, '\0');
     bool has_special_symbol = false;
@@ -333,7 +321,7 @@ inline static QString encode_u32_hard_level(lfsr8::u32 sample)
     return word;
 }
 
-inline static QByteArray lfsr_hash_to_bytes(lfsr_hash::u128 hash)
+inline QByteArray lfsr_hash_to_bytes(lfsr_hash::u128 hash)
 {
     QByteArray output;
     constexpr size_t hash_size = sizeof(hash); // Ровно 16 байт (2 * sizeof(uint64_t))
@@ -351,12 +339,12 @@ inline static QByteArray lfsr_hash_to_bytes(lfsr_hash::u128 hash)
     return output;
 }
 
-inline static lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray& input)
+inline lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray& input)
 {
     constexpr size_t hash_size = sizeof(lfsr_hash::u128); // Ровно 16 байт
     lfsr_hash::u128 hash = {0, 0}; // Инициализируем дефолтными нулями
 
-    // КРИТИЧЕСКАЯ ЗАЩИТА: Проверяем, что входной массив содержит достаточно байт.
+    // Проверяем, что входной массив содержит достаточно байт.
     // Если байт меньше 16, чтение памяти приведет к аварийному падению (Crash).
     if (input.size() < static_cast<int>(hash_size)) {
         qDebug() << "Error: QByteArray size is too small to restore u128 hash: " << input.size();
@@ -373,7 +361,7 @@ inline static lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray& input)
     return hash;
 }
 
-inline static lfsr_hash::salt hash_to_salt(lfsr_hash::u128 hash)
+inline lfsr_hash::salt hash_to_salt(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
 
@@ -397,7 +385,7 @@ inline static lfsr_hash::salt hash_to_salt(lfsr_hash::u128 hash)
     return { q, s0, s1 };
 }
 
-inline static lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
+inline lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
 

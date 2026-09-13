@@ -133,7 +133,7 @@ static void encode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_by
     const int ch = n / (p - 1);
 
     for (int i = 0; i < ch; ++i) {
-        // Уникальный генератор для каждого блока, скрытый от злоумышленника
+        // Уникальный генератор для каждого блока
         uint8_t crypto_index = static_cast<uint8_t>(key_byte + i);
         const int a = const_arr::goods[crypto_index % std::ssize(const_arr::goods)];
 
@@ -332,7 +332,7 @@ struct CRCProcessor {
 };
 
 static QByteArray encode_crc(const QByteArray& data) {
-    // 1. Создаем кортеж со всеми 16 процессорами.
+    // Создаем кортеж со всеми 16 процессорами.
     auto processors = std::make_tuple(
         CRCProcessor(119, 140, false, 10), CRCProcessor(15, 106, false, 10),
         CRCProcessor(20, 74, false, 10),  CRCProcessor(65, 41, false, 10),
@@ -347,7 +347,7 @@ static QByteArray encode_crc(const QByteArray& data) {
 
     uchar c1 = SECRET_SALT ^ 0xFF;
 
-    // 2. ЕДИНСТВЕННЫЙ проход по данным
+    // Единственный проход по данным
     for (int i = 1; i <= data.size(); ++i) {
         uchar byte = static_cast<uchar>(data.at(i - 1));
         c1 = SBOX[c1 ^ byte];
@@ -358,7 +358,7 @@ static QByteArray encode_crc(const QByteArray& data) {
         }, processors);
     }
 
-    // 3. Сборка результата
+    // Сборка результата
     QByteArray out;
     out.reserve(17);
     out.append(static_cast<char>(c1));
@@ -372,8 +372,6 @@ static QByteArray encode_crc(const QByteArray& data) {
 
 static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
     if (received_crc.size() != 17) return false;
-
-    // Прямое сравнение - единственный надежный способ для нелинейного хеша
     return (encode_crc(data) == received_crc);
 }
 
@@ -456,7 +454,7 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     for (int q=0; q<Q; ++q) { \
             for (int i=0; i<R; ++i) { \
                 crc.push_back(decrypted_ref.back()); \
-                /* Безопасно затираем байт в ОЗУ перед тем, как Qt его отсечет */ \
+                /* Безопасно затираем байт в RAM перед тем, как Qt его отсечет */ \
                 decrypted_ref.data()[decrypted_ref.size() - 1] = '\0'; \
                 decrypted_ref.removeLast(); \
         } \
@@ -499,7 +497,7 @@ QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
     utils::dpadd(decoded_data); \
     ns::finalize_encryption(dec); \
     ns::finalize_encryption(dec_inner); \
-    /* ОЧИЩАЕМ ПАДДИНГ ISO ТУТ, когда данные полностью расшифрованы и проверены! */ \
+    /* Снимаем paddingГ ISO здесь, когда данные полностью расшифрованы и проверены */ \
     utils::dpadd(decoded_data); \
     ns::finalize_encryption(dec); \
     ns::finalize_encryption(dec_inner); \
@@ -550,19 +548,19 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
                     } else {
                         QByteArray cell_bytes = txt.toUtf8();
                         stream.writeRawData(cell_bytes.constData(), cell_bytes.size());
-                        utils::erase_bytes(cell_bytes); // Сразу уничтожаем пароль ячейки в RAM!
+                        utils::erase_bytes(cell_bytes); // Сразу уничтожаем пароль ячейки в RAM.
                     }
                 } else {
                     stream.writeRawData(&empty_byte, 1);
                 }
 
-                // Разделитель КОЛОНОК (ячеек) внутри одной строки
+                // Разделитель колонок (ячеек) внутри одной строки
                 if (col < ro_table->columnCount() - 1) {
                     stream.writeRawData(&col_byte, 1);
                 }
             }
 
-            // Разделитель СТРОК между строками таблицы
+            // Разделитель строк между строками таблицы
             if (row < ro_table->rowCount() - 1) {
                 stream.writeRawData(&row_byte, 1);
             }
@@ -571,14 +569,14 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         stream.writeRawData(&end_byte, 1);
     }
 
-    // --- СИСТЕМНАЯ ЛОГИКА (ШИФРОВАНИЕ) ---
+    // --- ШИФРОВАНИЕ ---
 
     QByteArray encoded_data_bytes;
-    QString current_version = QString::fromUtf8(VERSION_LABEL);
-    current_version.remove(g_version_prefix);
+    QString current_version = QString::fromUtf8(G_VERSION_LABEL);
+    current_version.remove(G_VERSION_PREFIX);
 
     if (g_supported_as_version_1.contains(current_version)) {
-        // 2. Шифруем полностью выровненный блок
+        // Шифруем полностью выровненный блок
         encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
     }
 
@@ -589,10 +587,10 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         return true;
     }
 
-    // 3. Дописываем ОТКРЫТУЮ версию в самый конец зашифрованного массива (как футер)
-    encoded_data_bytes.append(VERSION_LABEL);
+    // Дописываем версию в самый конец зашифрованного массива
+    encoded_data_bytes.append(G_VERSION_LABEL);
 
-    // 4. Запись в файл и создание бэкапа
+    // Запись в файл и создание бэкапа
     QFile file(file_name);
     if (file.open(QFile::WriteOnly)) {
         file.write(encoded_data_bytes);
@@ -656,23 +654,23 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
         if (raw_data.isEmpty()) return Loading_Errors::EMPTY_TABLE;
 
-        // 1. Отсекаем и считываем ОТКРЫТУЮ ВЕРСИЮ из конца файла
+        // Отсекаем и считываем версию из конца файла
         QString read_version;
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
         MyQByteArray &raw_ref = static_cast<MyQByteArray &>(raw_data);
 #else
         QByteArray &raw_ref = raw_data;
 #endif
-        while (!raw_ref.isEmpty() && raw_ref.back() != g_version_prefix) {
+        while (!raw_ref.isEmpty() && raw_ref.back() != G_VERSION_PREFIX) {
             read_version.push_back(raw_ref.back());
             raw_ref.removeLast();
         }
         if (!raw_ref.isEmpty()) {
-            raw_ref.removeLast(); // Удаляем сам g_version_prefix
+            raw_ref.removeLast(); // Удаляем префикс
         }
         std::reverse(read_version.begin(), read_version.end());
 
-        // 2. Дешифруем массив, который теперь строго кратен размеру блока
+        // Дешифруем массив, который теперь строго кратен размеру блока
         if (g_supported_as_version_1.contains(read_version)) {
             decoded_data_bytes = do_decode<1>(raw_ref, mDec, mDecInner);
             if (decoded_data_bytes.isEmpty()) {
@@ -685,7 +683,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         return file.exists() ? Loading_Errors::CANNOT_BE_OPENED : Loading_Errors::NEW_STORAGE;
     }
 
-    // 4. Переводим расшифрованные байты в строку UTF-16
+    // Переводим расшифрованные байты в строку UTF-16
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
     QString decoded_data_str = toUtf16(decoded_data_bytes);
@@ -698,7 +696,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
     if (decoded_data_str.isEmpty()) return Loading_Errors::UNRECOGNIZED;
 
-    // 5. Валидация и удаление технического маркера конца сообщения
+    // Валидация и удаление технического маркера конца сообщения
     if (decoded_data_str.back() == symbols::end_message) {
         decoded_data_str.chop(1);
     } else {
@@ -712,7 +710,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         return Loading_Errors::OK; // Возвращаем успех, таблица остается чистой
     }
 
-    // 6. Парсинг с восстановленной иерархией разделителей
+    // Парсинг с восстановленной иерархией разделителей
     // Разделяем монолит на СТРОКИ таблицы по row_delimiter (0x1E)
     QStringList data_rows = decoded_data_str.split(symbols::row_delimiter);
     if (data_rows.isEmpty()) {

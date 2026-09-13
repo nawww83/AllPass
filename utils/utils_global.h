@@ -8,27 +8,27 @@ namespace utils_global {
 
 using namespace utils;
 
-inline static void set_global_pin(const PinCode &pin)
+inline void set_global_pin(const PinCode &pin)
 {
     using namespace password;
     pin_code = pin;
 }
 
-inline static void back_up_pin()
+inline void back_up_pin()
 {
     using namespace password;
     if (pin_code.length() != 0)
         old_pin_code = pin_code;
 }
 
-inline static void restore_pin()
+inline void restore_pin()
 {
     using namespace password;
     if (old_pin_code.length() != 0)
         pin_code = old_pin_code;
 }
 
-inline static bool check_pin(const PinCode &pin)
+inline bool check_pin(const PinCode &pin)
 {
     using namespace password;
     if (pin_code.mPinCode.size() != pin.mPinCode.size()) {
@@ -43,14 +43,14 @@ inline static bool check_pin(const PinCode &pin)
 }
 
 // Инициализация ключей
-inline static void fill_key_by_hash128(lfsr_hash::u128 hash)
+inline void fill_key_by_hash128(lfsr_hash::u128 hash)
 {
     auto x = hash.first;
     auto y = hash.second;
 
     {
         using password::key;
-        // Операция & 0xFFFF (маска) эквивалентна % 65536, но выполняется процессором мгновенно
+        // Операция & 0xFFFF (маска) эквивалентна % 65536.
         key->set_key(x & 0xFFFF, 3);
         key->set_key((x >> 16) & 0xFFFF, 2);
         key->set_key((x >> 32) & 0xFFFF, 1);
@@ -62,32 +62,31 @@ inline static void fill_key_by_hash128(lfsr_hash::u128 hash)
         key->set_key((y >> 48) & 0xFFFF, 4);
     }
 
-    // Кроссплатформенное затирание локальной копии hash на GCC/Clang/MSVC
     volatile uint64_t *px = &x;
     volatile uint64_t *py = &y;
     *px = 0;
     *py = 0;
 }
 
-inline static void fill_buffer_from_pin(uint8_t (&buffer)[64])
+inline void fill_buffer_from_pin(uint8_t (&buffer)[64])
 {
     const auto &code = password::pin_code.mPinCode;
 
-    // 1. Упаковываем ПИН-код в массив байт
+    // Упаковываем пин-код в массив байт
     QByteArray inputBytes;
     QDataStream writer(&inputBytes, QIODevice::WriteOnly);
     for (int i = 0; i < constants::pin_code_len; ++i) {
         writer << static_cast<char>('0' + code.at(i));
     }
 
-    // 2. Хэшируем с помощью SHA-512 (результат — ровно 64 байта)
+    // Хэшируем с помощью SHA-512 (результат — 64 байта)
     QByteArray hashResult = QCryptographicHash::hash(inputBytes, QCryptographicHash::Sha512);
 
-    // 3. Безопасно копируем 64 байта в целевой массив
+    // Безопасно копируем 64 байта в целевой массив
     std::copy_n(reinterpret_cast<const uint8_t *>(hashResult.constData()), 64, buffer);
 }
 
-inline static lfsr_hash::salt pin_to_salt(const QByteArray &inner_salt)
+inline lfsr_hash::salt pin_to_salt(const QByteArray &inner_salt)
 {
     using namespace lfsr_hash;
     QByteArray inputBuffer;
@@ -109,18 +108,19 @@ inline static lfsr_hash::salt pin_to_salt(const QByteArray &inner_salt)
     return {q, raw_s0, raw_s1};
 }
 
-inline static lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
+inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
 {
     using namespace lfsr_hash;
-    uint8_t b_[64];
+    constexpr size_t blockSize = 64;
+    uint8_t b_[blockSize];
     fill_buffer_from_pin(b_);
     password::hash_gen.add_salt(pin_to_salt(inner_salt));
     const auto hash = hash128(password::hash_gen, std::as_bytes(std::span(b_)));
-    utils::erase_bytes(b_, 64);
+    utils::erase_bytes(b_, blockSize);
     return hash;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString &text, uint seed)
+inline lfsr_hash::u128 gen_hash_for_pass_gen(const QString &text, uint seed)
 {
     password::hash_gen.reset();
     lfsr_hash::u128 hash = utils_global::pin_to_hash(text.toUtf8());
@@ -153,7 +153,7 @@ inline static lfsr_hash::u128 gen_hash_for_pass_gen(const QString &text, uint se
     return hash;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_storage(const QString &text)
+inline lfsr_hash::u128 gen_hash_for_storage(const QString &text)
 {
     password::hash_gen.reset();
 
@@ -193,7 +193,7 @@ inline static lfsr_hash::u128 gen_hash_for_storage(const QString &text)
     return hash_fs;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_encryption(const QString &text)
+inline lfsr_hash::u128 gen_hash_for_encryption(const QString &text)
 {
     password::hash_gen.reset();
     constexpr size_t blockSize = 128;
@@ -244,21 +244,21 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString &text)
     password::hash_gen.reset();
     constexpr size_t blockSize = 96;
 
-    // 1. Делаем конвертацию ОДИН раз
+    // Делаем конвертацию один раз
     auto bytes = text.toUtf8();
 
-    // 2. Рассчитываем размер с учетом паддинга ISO/IEC 9797-1 заранее!
+    //Рассчитываем размер с учетом паддинга ISO/IEC 9797-1 заранее
     const int old_size = bytes.size();
     const int res = (old_size + 1) % blockSize;
     const int padding_needed = 1 + (res != 0 ? blockSize - res : 0);
 
-    // Резервируем память ДО заполнения данными, чтобы избежать realloc в куче
+    // Резервируем память до заполнения данными, чтобы избежать realloc в куче
     bytes.reserve(old_size + padding_needed);
 
-    // 3. Сначала считаем базовый хэш по еще не дополненным байтам (вместо text.toUtf8())
+    // Сначала считаем базовый хэш по еще не дополненным байтам
     lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(bytes);
 
-    // 4. Применяем паддинг (теперь resize не вызовет перевыделения памяти, так как есть reserve)
+    // Применяем паддинг
     padd<blockSize>(bytes);
     const auto bytesRead = bytes.size();
 
@@ -278,14 +278,11 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString &text)
             hash_enc.second ^= inner_hash.second;
         }
     }
-
-    // 5. Теперь эта очистка гарантированно сотрет ЕДИНСТВЕННУЮ UTF-8 копию пароля
     utils::erase_bytes(bytes);
-
     return hash_enc;
 }
 
-inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watcher, int password_len)
+inline void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watcher, int password_len)
 {
     const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_u64
                    + 1;
@@ -308,7 +305,7 @@ inline static void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watche
     qDebug() << "Passwords were requested.";
 }
 
-inline static QString try_to_get_password(int len, int level)
+inline QString try_to_get_password(int len, int level)
 {
     auto *buffer = password::pswd_buff();
     QMutexLocker locker(&buffer->mMutex);
@@ -317,7 +314,7 @@ inline static QString try_to_get_password(int len, int level)
     if (len <= 0)
         return pswd;
 
-    // ОПТИМИЗАЦИЯ: Резервируем память под строку пароля заранее,
+    // Резервируем память под строку пароля заранее,
     // чтобы избежать перевыделений в куче внутри цикла while
     pswd.reserve(len);
 
@@ -329,17 +326,17 @@ inline static QString try_to_get_password(int len, int level)
             return {};
         }
 
-        // КРИПТО-ИСПРАВЛЕНИЕ: Безопасное извлечение с занулением памяти в векторе
-        lfsr8::u64 raw64 = buffer->mPasswords.last(); // Берем число
+        // Безопасное извлечение с занулением памяти в векторе
+        lfsr8::u64 raw64 = buffer->mPasswords.last();
 
         // Затираем ячейку прямо в куче вектора mPasswords через volatile
         volatile lfsr8::u64 *cell_ptr = reinterpret_cast<volatile lfsr8::u64 *>(
             &buffer->mPasswords.last());
         *cell_ptr = 0;
 
-        buffer->mPasswords.removeLast(); // Теперь Qt может безопасно уменьшить размер
+        buffer->mPasswords.removeLast();
 
-        // Разделение разрядов (побитовые операции эффективны)
+        // Разделение разрядов
         uint32_t high = static_cast<uint32_t>(raw64 >> 32);
         uint32_t low = static_cast<uint32_t>(raw64 & 0xFFFFFFFF);
 
@@ -366,7 +363,7 @@ inline static QString try_to_get_password(int len, int level)
     return pswd;
 }
 
-inline static QString generate_storage_name(lfsr_hash::u128 hash)
+inline QString generate_storage_name(lfsr_hash::u128 hash)
 {
     using namespace lfsr_hash;
     password::hash_gen.reset();

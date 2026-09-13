@@ -390,7 +390,7 @@ Widget::Widget(QWidget *parent)
 
     ui->setupUi(this);
     QString app_title = QString::fromUtf8("AllPass 128-bit ");
-    QString current_version = QString(VERSION_LABEL).remove(g_version_prefix);
+    QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
     app_title.append(current_version);
     app_title.append(QString::fromUtf8(" - Менеджер паролей"));
     this->setWindowTitle( app_title );

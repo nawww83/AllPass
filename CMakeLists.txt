@@ -68,6 +68,7 @@ set(COMMON_SRC
     ${UTILS_DIR}/key.h
     ${UTILS_DIR}/stream_cipher.h
     ${UTILS_DIR}/utils.h
+    ${UTILS_DIR}/utils_global.h
     ${UTILS_DIR}/global_data.h
     ${LFSR_DIR}/lfsr.h
     ${LFSR_DIR}/lfsr_hash.h
