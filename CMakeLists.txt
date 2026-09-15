@@ -21,6 +21,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         else()
             # Оптимизации для GCC / Clang / MinGW (стандарт для Qt)
             add_compile_options("-O3") # Максимальная скорость
+            add_compile_options("-mssse3")
             add_compile_options("-msse4.1") # Гарантированная поддержка SSE4.1 для нашего LFSR
 
             # Проверка и включение -march=native только если компилятор поддерживает
@@ -132,6 +133,11 @@ if(WIN32)
         ole32
         oleaut32
     )
+endif()
+
+# Исправление сборки в режиме Debug для GCC/Clang/MinGW
+if(NOT MSVC AND NOT ANDROID AND NOT IOS)
+    target_compile_options(AllPass PRIVATE "-mssse3" "-msse4.1")
 endif()
 
 include(GNUInstallDirs)

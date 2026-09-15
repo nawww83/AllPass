@@ -21,7 +21,8 @@
 #include <QProcess>
 #endif
 
-#include <QByteArray>
+#include <QVector>
+#include <QString>
 #include <QPasswordDigestor>
 
 // Метод генерации 256-битного мастер-ключа на основе пин-кода и железа USB
@@ -266,9 +267,10 @@ void UsbStorages::fill_usb_info(const QString& root_path)
  * @param root_path Корень usb-токена.
  * @return Прочитанная строка.
  */
-static QString read_token(const QString& root_path)
+static QVector<QString> read_tokens(const QString& root_path)
 {
     QDir usbDir(root_path);
+    QVector<QString> tokens;
 
     // Фильтруем поиск только по файлам *.enc в корне диска
     QStringList filters;
@@ -278,23 +280,23 @@ static QString read_token(const QString& root_path)
 
     QFileInfoList fileList = usbDir.entryInfoList();
     if (fileList.isEmpty()) {
-        return QString();
+        return tokens;
     }
 
     // Берем первый подходящий файл
-    QString filePath = fileList.first().absoluteFilePath();
-
-    QFile file(filePath);
-    QString base64Text;
-    // Считываем данные через QTextStream
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream stream(&file);
-        base64Text = stream.readAll();
-        file.close();
-    } else {
-        return QString();
+    for (auto& file_info : std::as_const(fileList)) {
+        QString filePath = file_info.absoluteFilePath();
+        QFile file(filePath);
+        QString base64Text;
+        // Считываем данные через QTextStream
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream stream(&file);
+            base64Text = stream.readAll();
+            file.close();
+            tokens.append(base64Text);
+        }
     }
-    return base64Text;
+    return tokens;
 }
 
 #if defined(Q_OS_WIN)
@@ -370,9 +372,10 @@ UsbStorages::~UsbStorages()
     utils::erase_bytes(m_data);
 }
 
-QByteArray UsbStorages::tryToReadKey()
+QVector<QByteArray> UsbStorages::tryToReadKey()
 {
     auto allDrives = QStorageInfo::mountedVolumes();
+    QVector<QByteArray> tokens;
 
     for (const QStorageInfo &storage : std::as_const( allDrives )) {
         if (!storage.isValid() || !storage.isReady())
@@ -400,41 +403,48 @@ QByteArray UsbStorages::tryToReadKey()
 #else
             fill_usb_info(m_rootPath);
 #endif
-            QString usb_key = read_token(m_rootPath);
+            QVector<QString> usb_keys = read_tokens(m_rootPath);
             QString strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinCode);
-            QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
-            utils::erase_string(strongMasterKey);
-            utils::erase_string(usb_key);
+            for (auto& usb_key : std::as_const(usb_keys)) {
+                QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
 
-            constexpr size_t single_hash_size = sizeof(lfsr_hash::u128); // 16 байт
-            constexpr size_t hashes_total_size = 3 * single_hash_size;   // 48 байт
-            constexpr size_t crc_size = 32;                              // 32 байта (SHA-256)
-            constexpr size_t expected_total_size = hashes_total_size + crc_size; // 80 байт
+                constexpr size_t single_hash_size = sizeof(lfsr_hash::u128); // 16 байт
+                constexpr size_t hashes_total_size = 3 * single_hash_size;   // 48 байт
+                constexpr size_t crc_size = 32;                              // 32 байта (SHA-256)
 
-            // ВАЛИДАЦИЯ КОНТРОЛЬНОЙ СУММЫ (CRC)
-            // Вырезаем первые 48 байт хэшей
-            QByteArray data_part = data.left(hashes_total_size);
-            // Вырезаем последние 32 байта сохраненного CRC
-            QByteArray saved_crc = data.right(crc_size);
+                // Вычисляем размер переменной части данных
+                int variable_data_size = data.size() - hashes_total_size - crc_size;
+                // Вырезаем первые 48 байт хэшей
+                QByteArray data_part;
+                data_part.reserve(hashes_total_size + variable_data_size);
+                data_part = data.left(hashes_total_size);
+                data_part.append( data.mid(hashes_total_size, variable_data_size) );
 
-            // Вычисляем SHA-256 от прочитанных хэшей
-            QByteArray calculated_crc = QCryptographicHash::hash(data_part, QCryptographicHash::Sha256);
+                // Вырезаем последние 32 байта сохраненного CRC
+                QByteArray saved_crc = data.right(crc_size);
 
-            // Сверяем контрольные суммы
-            if (saved_crc != calculated_crc) {
-                utils::erase_bytes(data_part);
+                // Вычисляем SHA-256 от прочитанных хэшей
+                QByteArray calculated_crc = QCryptographicHash::hash(data_part, QCryptographicHash::Sha256);
+
+                // Сверяем контрольные суммы
+                if (saved_crc != calculated_crc) {
+                    utils::erase_bytes(data_part);
+                    utils::erase_bytes(data);
+                    utils::erase_bytes(saved_crc);
+                    utils::erase_bytes(calculated_crc);
+                    continue;
+                }
+
                 utils::erase_bytes(saved_crc);
                 utils::erase_bytes(calculated_crc);
-                continue;
-            }
-
-            // Выжигаем временные проверочные массивы из ОЗУ
-            utils::erase_bytes(saved_crc);
-            utils::erase_bytes(calculated_crc);
-            return data_part;
-        }
-    } // loop
-    return QByteArray();
+                tokens.append(data_part);
+                utils::erase_bytes(data_part);
+                utils::erase_bytes(data);
+            } // file loop
+            utils::erase_string(strongMasterKey);
+        } // if removable
+    } // storage loop
+    return tokens;
 }
 
 void UsbStorages::saveKey()

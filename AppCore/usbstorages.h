@@ -8,12 +8,27 @@
 #include <QPushButton>
 #include <QList>
 #include <QTextBrowser>
+#include <QByteArray>
+#include <QVector>
 
 class UsbStorages : public QMainWindow
 {
     Q_OBJECT
 public:
+    /**
+     * @brief Конструктор на чтение токена.
+     * @param pin
+     * @param parent
+     */
     UsbStorages(std::string_view pin, QWidget *parent = nullptr);
+
+    /**
+     * @brief Конструктор на запись токена.
+     * @param pin
+     * @param token_name
+     * @param data
+     * @param parent
+     */
     UsbStorages(std::string_view pin,
                 const QString &token_name,
                 const QByteArray &data,
@@ -21,10 +36,10 @@ public:
     ~UsbStorages();
 
     /**
-     * @brief Чтение ключа *.enc с usb-носителей (автовыбор носителя и файла в корне носителя).
-     * @return Валидный ключ, либо пустой массив если ключ не найден.
+     * @brief Чтение ключей *.enc с usb-носителей (автовыбор носителя и файла в корне носителя).
+     * @return Валидные (прошедшие CRC) ключи.
      */
-    QByteArray tryToReadKey();
+    QVector<QByteArray> tryToReadKey();
 
 signals:
     void sig_finished();

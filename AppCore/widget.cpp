@@ -15,6 +15,8 @@
 #include <QClipboard>
 #include <QDate>
 #include <QElapsedTimer>
+#include <QInputDialog>
+#include <QStringList>
 
 #include "AppCore/ui_widget.h"
 #include "passitemdelegate.h"
@@ -26,7 +28,7 @@ static int g_current_password_len;
 static int g_new_storage_with_transfer_mode = false;
 static int g_table_is_loading = false;
 static int g_use_usb_token = false;
-Q_GLOBAL_STATIC(QByteArray, g_usb_hashes);
+Q_GLOBAL_STATIC(QVector<QByteArray>, g_usb_hashes);
 Q_GLOBAL_STATIC(StorageManager, storage_manager);
 
 /**
@@ -444,8 +446,10 @@ Widget::Widget(QWidget *parent)
     if (!g_usb_hashes->isEmpty()) {
         g_use_usb_token = true;
         update_master_phrase();
-        g_use_usb_token = false;
-        return;
+        if (g_use_usb_token) { // Пользователь выбрал ключ.
+            g_use_usb_token = false;
+            return;
+        }
     }
 #endif
     g_use_usb_token = false;
@@ -779,9 +783,6 @@ void Widget::finish_master_key()
 {
     QString storage_name = storage_manager->Name();
     if (!storage_name.isEmpty() && storage_manager->IsSuccess()) {
-        information_message_box(QString::fromUtf8("Успех"),
-                                QString::fromUtf8("Ключ был установлен"));
-
         storage_manager->RemoveTmpFile();
 
         load_storage();
@@ -840,21 +841,82 @@ void Widget::update_master_phrase()
         lfsr_hash::u128 storage;
         lfsr_hash::u128 encryption;
         lfsr_hash::u128 inner_encryption;
+        QString key_name;
     };
     constexpr size_t single_hash_size = sizeof(lfsr_hash::u128); // 16 байт
-    constexpr size_t total_expected_size = 3 * single_hash_size; // 48 байт
-
     DecoupledHashes result = { {0,0}, {0,0}, {0,0} };
-    const char *src_ptr = g_usb_hashes->constData();
 
-    // Извлекаем первый хэш (Хэш Хранилища) — смещение 0 байт
-    std::copy_n(src_ptr, single_hash_size, reinterpret_cast<char*>(&result.storage));
+    if (g_use_usb_token)
+    {
+        // Подготавливаем список имён
+        QStringList items;
+        for (auto& data : std::as_const(*g_usb_hashes)) {
+            const auto total_bytes = data.size();
+            const char *src_ptr = data.constData();
+            // Извлекаем имя ключа
+            if (total_bytes > 3 * single_hash_size) {
+                int offset = 3 * single_hash_size;
+                int data_length = total_bytes - offset;
+                // Безопасно создаем QString прямо из участка памяти
+                items << QString::fromUtf8(src_ptr + offset, data_length);
+            }
+        }
 
-    // Извлекаем второй хэш (Хэш Шифрования) — смещение 16 байт
-    std::copy_n(src_ptr + single_hash_size, single_hash_size, reinterpret_cast<char*>(&result.encryption));
+        QInputDialog dialog(this);
+        dialog.setWindowTitle(tr("Выбор ключа (токена)"));
+        dialog.setLabelText(tr("Выберите ключ из списка:"));
+        dialog.setComboBoxItems(items);
+        dialog.setComboBoxEditable(false);
 
-    // Извлекаем третий хэш (Внутренний Хэш Шифрования) — смещение 32 байта
-    std::copy_n(src_ptr + (2 * single_hash_size), single_hash_size, reinterpret_cast<char*>(&result.inner_encryption));
+        // Возвращаем стандартные кнопки и системный крестик
+        dialog.setOkButtonText(tr("Выбрать"));
+        dialog.setCancelButtonText(tr("Отмена"));
+        // Гарантируем, что системные флаги окна стандартные (крестик на месте)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt::WindowCloseButtonHint);
+
+        if (QDialogButtonBox* buttonBox = dialog.findChild<QDialogButtonBox*>()) {
+            if (QPushButton* cancelBtn = buttonBox->button(QDialogButtonBox::Cancel)) {
+                cancelBtn->setToolTip(tr("Будет предложен ввод мастер-фразы"));
+            }
+        }
+
+        QString selected_item;
+        // Запускаем окно и проверяем, что нажал пользователь
+        if (dialog.exec() == QDialog::Accepted) {
+            // Пользователь выбрал элемент и нажал "Выбрать" (или Enter)
+            selected_item = dialog.textValue();
+            // Передаем строку дальше в вашу логику
+            QMessageBox::information(this, "Успех", "Вы выбрали: " + selected_item);
+        } else {
+            g_use_usb_token = false;
+            return;
+        }
+
+        for (auto& data : std::as_const(*g_usb_hashes)) {
+            const auto total_bytes = data.size();
+            const char *src_ptr = data.constData();
+
+            // Извлекаем первый хэш (Хэш Хранилища) — смещение 0 байт
+            std::copy_n(src_ptr, single_hash_size, reinterpret_cast<char*>(&result.storage));
+
+            // Извлекаем второй хэш (Хэш Шифрования) — смещение 16 байт
+            std::copy_n(src_ptr + single_hash_size, single_hash_size, reinterpret_cast<char*>(&result.encryption));
+
+            // Извлекаем третий хэш (Внутренний Хэш Шифрования) — смещение 32 байта
+            std::copy_n(src_ptr + (2 * single_hash_size), single_hash_size, reinterpret_cast<char*>(&result.inner_encryption));
+
+            // Извлекаем имя ключа
+            if (total_bytes > 3 * single_hash_size) {
+                int offset = 3 * single_hash_size;
+                int data_length = total_bytes - offset;
+                // Выбор имени токена совпал.
+                if ( selected_item == QString::fromUtf8(src_ptr + offset, data_length)) {
+                    result.key_name = selected_item;
+                    break;
+                }
+            }
+        }
+    } // use usb token
 
     storage_manager->BeforeUpdate();
     {
@@ -911,7 +973,9 @@ void Widget::update_master_phrase()
     }
 
     utils::erase_string(text);
-    utils::erase_bytes(*g_usb_hashes);
+    for (auto& h : *g_usb_hashes) {
+        utils::erase_bytes(h);
+    }
     utils::clear_lfsr_hash(result.encryption);
     utils::clear_lfsr_hash(result.inner_encryption);
     utils::clear_lfsr_hash(result.storage);
@@ -1304,6 +1368,30 @@ void Widget::btn_create_usb_key_clicked()
     }
     pin.clear();
 
+    bool ok;
+    QString key_name = QInputDialog::getText(
+        this,
+        tr("Ввод названия"),         // Заголовок окна
+        tr("Введите имя ключа (не более 20 символов):"), // Текст-подсказка внутри окна
+        QLineEdit::Normal,           // Режим отображения (обычный текст)
+        QString::fromUtf8("Дефолтный ключ"),                   // Текст по умолчанию
+        &ok                          // Сюда запишется true, если нажали OK, или false, если Cancel
+        );
+
+    if (ok && !key_name.isEmpty()) {
+        // Ограничиваем длину
+        if (key_name.length() > 20) {
+            key_name = key_name.left(20); // обрезаем или выводим ошибку
+        }
+    }
+
+    if (key_name.isEmpty()) {
+        critical_message_box(
+            QString::fromUtf8("Ошибка имени ключа"),
+            QString::fromUtf8("Не задано имя ключа."));
+        return;
+    }
+
     warning_message_box(
         QString::fromUtf8(""),
         QString::fromUtf8(
@@ -1313,7 +1401,7 @@ void Widget::btn_create_usb_key_clicked()
     if (m_masterPhraseConn) {
         QObject::disconnect(m_masterPhraseConn);
     }
-    m_tempConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, [this]() {
+    m_tempConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, [this, key_name]() {
         QString text {pointers::txt_edit_master_phrase->toPlainText()};
         pointers::txt_edit_master_phrase->clear();
 
@@ -1326,22 +1414,28 @@ void Widget::btn_create_usb_key_clicked()
 
             utils::erase_string(text);
 
-            // 1. Выделяем память под итоговый массив ровно один раз (16 * 3 = 48 байт, 32 байта crc )
-            QByteArray data;
-            data.reserve(3 * sizeof(lfsr_hash::u128) + 32);
+            QByteArray tmp4 = key_name.toUtf8();
 
-            // 2. Поочередно конвертируем и сразу вшиваем хэши в монолитный буфер
+            // Выделяем память под итоговый массив один раз (16 * 3 = 48 байт, имя ключа, 32 байта crc)
+            QByteArray data;
+            data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
+
+            // Поочередно конвертируем и сразу вшиваем хэши в буфер
             QByteArray tmp1 = utils::lfsr_hash_to_bytes(hash_storage);
             data.append(tmp1);
-            utils::erase_bytes(tmp1); // Тут же сжигаем временную копию в ОЗУ!
+            utils::erase_bytes(tmp1);
 
             QByteArray tmp2 = utils::lfsr_hash_to_bytes(hash_enc);
             data.append(tmp2);
-            utils::erase_bytes(tmp2); // Сжигаем хэш шифрования
+            utils::erase_bytes(tmp2);
 
             QByteArray tmp3 = utils::lfsr_hash_to_bytes(hash_inn_enc);
             data.append(tmp3);
-            utils::erase_bytes(tmp3); // Сжигаем внутренний хэш шифрования
+            utils::erase_bytes(tmp3);
+
+            data.append(tmp4);
+            utils::erase_bytes(tmp4);
+
 
             QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
             data.append(crc256);
@@ -1366,7 +1460,7 @@ void Widget::btn_create_usb_key_clicked()
             // Создаем локальный цикл ожидания событий Qt
             QEventLoop loop;
 
-            // Теперь цикл событий закроется СТРОГО в момент нажатия на крестик окна,
+            // Теперь цикл событий закроется строго в момент нажатия на крестик окна,
             // до того как начнется деструкция стека
             QObject::connect(&usb_storages, &UsbStorages::sig_finished, &loop, &QEventLoop::quit);
             loop.exec();
