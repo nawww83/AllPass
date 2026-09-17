@@ -63,7 +63,7 @@ private:
     QList<QStorageInfo> m_drives;
 
     QString m_rootPath;
-    std::string_view m_pinCode;
+    QByteArray m_pinBuffer;
     const QString m_tokenName;
     QByteArray m_data;
 

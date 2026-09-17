@@ -99,10 +99,10 @@ private:
     }
 
     // Генерация раундовых ключей из мастер-ключа с помощью SHA-256
-    static std::vector<Block256> deriveRoundKeys(const QString &keyStr)
+    static std::vector<Block256> deriveRoundKeys(const QByteArray &keyBytes)
     {
         std::vector<Block256> roundKeys(ROUNDS);
-        QByteArray baseHash = QCryptographicHash::hash(keyStr.toUtf8(), QCryptographicHash::Sha256);
+        QByteArray baseHash = QCryptographicHash::hash(keyBytes, QCryptographicHash::Sha256);
 
         // Используем базовый хэш для генерации уникальных ключей под каждый раунд
         for (int r = 0; r < ROUNDS; ++r) {
@@ -118,8 +118,20 @@ private:
         return roundKeys;
     }
 
+    // Вспомогательный метод для безопасного удаления временных раундовых ключей из RAM
+    static void secureClearRoundKeys(std::vector<Block256> &roundKeys)
+    {
+        if (roundKeys.empty())
+            return;
+        volatile uint64_t *ptr = reinterpret_cast<volatile uint64_t *>(roundKeys.data());
+        size_t totalWords = roundKeys.size() * 4; // 4 поля по 64 бита в Block256
+        for (size_t i = 0; i < totalWords; ++i) {
+            ptr[i] = 0;
+        }
+    }
+
 public:
-    static QString encrypt(QByteArray data, const QString &key)
+    static QString encrypt(QByteArray data, const QByteArray &key)
     {
         auto roundKeys = deriveRoundKeys(key);
 
@@ -150,10 +162,13 @@ public:
             std::memcpy(ciphertext.data() + i + 24, &block.D, 8);
         }
 
+        // Очищаем раундовые ключи в памяти процесса
+        secureClearRoundKeys(roundKeys);
+
         return QString::fromUtf8(ciphertext.toBase64());
     }
 
-    static QByteArray decrypt(const QString &b64Ciphertext, const QString &key)
+    static QByteArray decrypt(const QString &b64Ciphertext, const QByteArray &key)
     {
         auto roundKeys = deriveRoundKeys(key);
         QByteArray ciphertext = QByteArray::fromBase64(b64Ciphertext.toUtf8());
@@ -182,6 +197,9 @@ public:
             std::memcpy(decryptedData.data() + i + 16, &block.C, 8);
             std::memcpy(decryptedData.data() + i + 24, &block.D, 8);
         }
+
+        // Очищаем раундовые ключи в памяти процесса
+        secureClearRoundKeys(roundKeys);
 
         // Проверка и удаление паддинга PKCS#7
         int paddingValue = static_cast<uint8_t>(decryptedData.at(decryptedData.size() - 1));

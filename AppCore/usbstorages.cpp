@@ -26,28 +26,27 @@
 #include <QPasswordDigestor>
 
 // Метод генерации 256-битного мастер-ключа на основе пин-кода и железа USB
-QString makePinTokenMasterKey(const QString &vid,
-                              const QString &pid,
-                              const QString &serial,
-                              std::string_view pinCode)
+static QByteArray makePinTokenMasterKey(const QString &vid,
+                                        const QString &pid,
+                                        const QString &serial,
+                                        const QByteArray &pinCode)
 {
     // Формируем соль из железа флешки
     QString saltStr = QString("%1|%2|%3")
                           .arg(vid.trimmed().toUpper(), pid.trimmed().toUpper(), serial.trimmed());
 
     QByteArray salt = saltStr.toUtf8();
-    QByteArray pin = QByteArray::fromRawData(pinCode.data(), static_cast<int>(pinCode.length()));
 
     // Функция вернет 32-байтный (256 бит) массив
     QByteArray derivedKey
         = QPasswordDigestor::deriveKeyPbkdf2(QCryptographicHash::Sha256,
-                                             pin,
+                                             pinCode,
                                              salt,
                                              500000, // Количество раундов замедления
                                              32      // Размер итогового ключа в байтах (256 бит)
-                                             );
+        );
 
-    return QString::fromUtf8(derivedKey.toHex());
+    return derivedKey;
 }
 
 #if defined(Q_OS_LINUX)
@@ -304,20 +303,21 @@ static QVector<QString> read_tokens(const QString& root_path)
 #endif
 
 UsbStorages::UsbStorages(std::string_view pin, QWidget *parent)
-    : m_pinCode{pin}
-    , QMainWindow(parent)
+    : QMainWindow(parent)
 {
+    m_pinBuffer = QByteArray(pin.data(), static_cast<int>(pin.length()));
 }
 
 UsbStorages::UsbStorages(std::string_view pin,
                          const QString &token_name,
                          const QByteArray &data,
                          QWidget *parent)
-    : m_pinCode{pin}
-    , m_tokenName{token_name}
+    : m_tokenName{token_name}
     , m_data{data}
     , QMainWindow(parent)
 {
+    m_pinBuffer = QByteArray(pin.data(), static_cast<int>(pin.length()));
+
     setWindowTitle("USB-накопители");
     resize(400, 500);
 
@@ -370,6 +370,7 @@ UsbStorages::~UsbStorages()
 {
     utils::erase_string(m_hardwareSerial);
     utils::erase_bytes(m_data);
+    utils::erase_bytes(m_pinBuffer);
 }
 
 QVector<QByteArray> UsbStorages::tryToReadKey()
@@ -404,7 +405,10 @@ QVector<QByteArray> UsbStorages::tryToReadKey()
             fill_usb_info(m_rootPath);
 #endif
             QVector<QString> usb_keys = read_tokens(m_rootPath);
-            QString strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinCode);
+            QByteArray strongMasterKey = makePinTokenMasterKey(m_vid,
+                                                               m_pid,
+                                                               m_hardwareSerial,
+                                                               m_pinBuffer);
             for (auto& usb_key : std::as_const(usb_keys)) {
                 QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
 
@@ -441,7 +445,7 @@ QVector<QByteArray> UsbStorages::tryToReadKey()
                 utils::erase_bytes(data_part);
                 utils::erase_bytes(data);
             } // file loop
-            utils::erase_string(strongMasterKey);
+            utils::erase_bytes(strongMasterKey);
         } // if removable
     } // storage loop
     return tokens;
@@ -462,9 +466,9 @@ void UsbStorages::saveKey()
     qApp->processEvents(QEventLoop::ExcludeUserInputEvents); // [Qt]
 
     // Генерируем 256-битный мастер-ключ через PBKDF2
-    QString strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinCode);
+    QByteArray strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinBuffer);
     QString usb_key = CollatzCipher256::encrypt(m_data, strongMasterKey);
-    utils::erase_string(strongMasterKey);
+    utils::erase_bytes(strongMasterKey);
 
     splash->close();
     splash->deleteLater();
