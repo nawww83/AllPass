@@ -24,63 +24,38 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("Менеджер паролей");
     parser.addHelpOption(); // Добавляет стандартные -h и --help
 
-    // Определяем опцию --pin, которая принимает значение
-    QCommandLineOption pinOption("pin", "Введите PIN-код (опционально)", "value");
-    parser.addOption(pinOption);
-
-    // Разбираем аргументы
+    // Разбираем стандартные аргументы (--help)
     parser.process(a);
 
     PinCode pin;
     const auto& warning_text = QString::fromUtf8("PIN-код должен быть любым %1-значным числом").arg(constants::pin_code_len);
-    // Проверяем, был ли вообще передан ключ --pin
-    if (parser.isSet(pinOption)) {
-        // Получаем значение как строку
-        QString pin_str = parser.value(pinOption);
-
-        // Валидация: проверяем, что в строке ровно столько цифр, сколько нужно, и нет посторонних символов
-        bool isNumeric;
-        pin_str.toLongLong(&isNumeric);
-
-        if (!isNumeric || pin_str.length() != constants::pin_code_len) {
-            // Перед выводом ошибки очищаем временную строку с неверным пином
-            utils::erase_string(pin_str);
-
-            QMessageBox mb(QMessageBox::Critical,
-                           QString::fromUtf8("Ошибка PIN-кода"),
-                           warning_text);
-            mb.exec();
-            return 1;
-        }
-        // Заполняем структуру PinCode посимвольно
-        for (int i = 0; i < constants::pin_code_len; ++i) {
-            // Переводим QChar в число (0-9)
-            pin.mPinCode[i] = pin_str.at(i).digitValue();
-        }
-
-        // Немедленно затираем исходную строку в куче
-        utils::erase_string(pin_str);
-    } else {
-        // Здесь можно либо показать справку, либо просто продолжить запуск окна
-        // parser.showHelp(); // Раскомментируйте, если без пина запускать нельзя
-    }
-
+    // БЕЗОПАСНОСТЬ: Ввод ПИН-кода осуществляется СТРОГО через диалоговое окно MyDialog.
+    // Это исключает утечку ПИН-кода через историю терминала и системные утилиты типа ps/procfs.
     if (pin.length() == 0) {
         QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
-        MyDialog<constants::pin_code_len> dialog{QString::fromUtf8("Введите PIN-код (%1)").arg( current_version)};
+        MyDialog<constants::pin_code_len> dialog{
+            QString::fromUtf8("Введите PIN-код (%1)").arg(current_version)};
+
         const int result = dialog.exec();
         if (result != QDialog::Accepted) {
+            // Если пользователь нажал Cancel, завершаем работу без утечек
+            dialog.clear_pin();
             return 0;
         }
+
+        // Безопасно извлекаем ПИН-код в стековую структуру
         pin = dialog.get_secure_pin();
+
+        // КРИТИЧЕСКИ ВАЖНО: Принудительно затираем внутренности QLineEdit-полей диалога
+        // ПЕРЕД тем, как объект dialog выйдет из области видимости
         dialog.clear_pin();
     }
 
+    // Финальная валидация длины структуры ПИН-кода
     if (pin.length() != constants::pin_code_len) {
-        QMessageBox mb(QMessageBox::Critical,
-                       QString::fromUtf8("Ошибка PIN-кода"),
-                       warning_text);
+        QMessageBox mb(QMessageBox::Critical, QString::fromUtf8("Ошибка PIN-кода"), warning_text);
         mb.exec();
+        pin.clear(); // Стираем мусор в стеке в случае ошибки
         return 1;
     }
 

@@ -92,6 +92,8 @@ inline void erase_bytes(QByteArray& b) {
 inline void erase_string(QString& str) {
     if (str.isEmpty()) return;
 
+    str.detach();
+
     // Размер в байтах для UTF-16 — это количество символов * 2
     int size_in_bytes = str.size() * sizeof(char16_t);
 

@@ -1,6 +1,10 @@
 #ifndef UTILS_GLOBAL_H
 #define UTILS_GLOBAL_H
 
+#include <QCryptographicHash>
+#include <QRandomGenerator>
+
+#include "collatz_cipher.h" // Используем шифр для локального шифрования ПИНа в RAM
 #include "global_data.h"
 #include "utils.h"
 
@@ -11,34 +15,100 @@ using namespace utils;
 inline void set_global_pin(const PinCode &pin)
 {
     using namespace password;
-    pin_code = pin;
+
+    // Инициализируем сеансовую соль, если она пустая
+    if (global_session_salt.isEmpty()) {
+        global_session_salt.resize(32);
+        QRandomGenerator::securelySeeded().fillRange(reinterpret_cast<quint32 *>(
+                                                         global_session_salt.data()),
+                                                     global_session_salt.size() / sizeof(quint32));
+    }
+
+    // Создаем локальный QByteArray для ASCII-символов
+    QByteArray rawPinBytes;
+    pin.to_numeric_bytes(rawPinBytes); // Заполняем его символами '0'..'9'
+
+    // Хэшируем для верификации
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    hasher.addData(rawPinBytes);
+    hasher.addData(global_session_salt);
+    hashed_pin_verify = hasher.result();
+
+    // Шифруем тело ПИН-кода для хранения в RAM
+    QString encryptedB64 = CollatzCipher256::encrypt(rawPinBytes, global_session_salt);
+    encrypted_raw_pin = encryptedB64.toUtf8();
+
+    // Теперь мы можем честно затереть этот буфер
+    utils::erase_bytes(rawPinBytes);
+}
+
+inline QByteArray get_global_pin_decrypted()
+{
+    using namespace password;
+    if (encrypted_raw_pin.isEmpty() || global_session_salt.isEmpty()) {
+        return QByteArray();
+    }
+
+    // Расшифровываем ПИН-код сеансовой солью на долю секунды
+    QByteArray decryptedPin = CollatzCipher256::decrypt(QString::fromUtf8(encrypted_raw_pin),
+                                                        global_session_salt);
+
+    // Возвращаем сырые байты (вызывающий код обязан очистить их после использования!)
+    return decryptedPin;
 }
 
 inline void back_up_pin()
 {
     using namespace password;
-    if (pin_code.length() != 0)
-        old_pin_code = pin_code;
+
+    // Проверяем, что ПИН-код был успешно инициализирован в сессии
+    if (!hashed_pin_verify.isEmpty() && !encrypted_raw_pin.isEmpty()) {
+        old_hashed_pin_verify = hashed_pin_verify;
+        old_encrypted_raw_pin = encrypted_raw_pin;
+    }
 }
 
 inline void restore_pin()
 {
     using namespace password;
-    if (old_pin_code.length() != 0)
-        pin_code = old_pin_code;
+
+    // Проверяем, что в бэкапе есть сохраненные данные
+    if (!old_hashed_pin_verify.isEmpty() && !old_encrypted_raw_pin.isEmpty()) {
+        hashed_pin_verify = old_hashed_pin_verify;
+        encrypted_raw_pin = old_encrypted_raw_pin;
+    }
 }
 
+// Безопасная проверка введенного ПИН-кода на соответствие хэшу сессии
 inline bool check_pin(const PinCode &pin)
 {
     using namespace password;
-    if (pin_code.mPinCode.size() != pin.mPinCode.size()) {
+    if (hashed_pin_verify.isEmpty() || global_session_salt.isEmpty())
+        return false;
+
+    // 1. Заполняем временный буфер символами
+    QByteArray rawPinBytes;
+    pin.to_numeric_bytes(rawPinBytes);
+
+    // 2. Считаем хэш проверяемого ПИНа
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    hasher.addData(rawPinBytes);
+    hasher.addData(global_session_salt);
+    QByteArray calculated_hash = hasher.result();
+
+    // 3. Сразу же уничтожаем открытые символы ПИНа в RAM
+    utils::erase_bytes(rawPinBytes);
+
+    // 4. Побайтовое constant-time сравнение хэшей...
+    if (calculated_hash.size() != hashed_pin_verify.size()) {
+        utils::erase_bytes(calculated_hash);
         return false;
     }
     int diff = 0;
-    for (std::size_t i = 0; i < pin_code.mPinCode.size(); ++i) {
-        // Побитовое ИЛИ накапливает любые различия между элементами
-        diff |= (pin_code.mPinCode.at(i) - pin.mPinCode.at(i));
+    for (int i = 0; i < calculated_hash.size(); ++i) {
+        diff |= (calculated_hash.at(i) - hashed_pin_verify.at(i));
     }
+    utils::erase_bytes(calculated_hash);
     return diff == 0;
 }
 
@@ -70,42 +140,53 @@ inline void fill_key_by_hash128(lfsr_hash::u128 hash)
 
 inline void fill_buffer_from_pin(uint8_t (&buffer)[64])
 {
-    const auto &code = password::pin_code.mPinCode;
+    // 1. Обнуляем целевой буфер перед заполнением для безопасности
+    std::memset(buffer, 0, sizeof(buffer));
 
-    // Упаковываем пин-код в массив байт
-    QByteArray inputBytes;
-    QDataStream writer(&inputBytes, QIODevice::WriteOnly);
-    for (int i = 0; i < constants::pin_code_len; ++i) {
-        writer << static_cast<char>('0' + code.at(i));
+    // 2. Безопасно расшифровываем оригинальный ПИН-код из сеансового хранилища
+    QByteArray decryptedPinBytes = get_global_pin_decrypted();
+
+    if (decryptedPinBytes.isEmpty()) {
+        return; // Если ПИН не задан, выходим (буфер останется заполнен нулями)
     }
 
-    // Хэшируем с помощью SHA-512 (результат — 64 байта)
-    QByteArray hashResult = QCryptographicHash::hash(inputBytes, QCryptographicHash::Sha512);
+    // 3. Копируем ПИН-код в ваш массив (буфер)
+    // Так как размер буфера 64 байта, а ПИН-код намного короче, используем безопасный размер
+    std::size_t bytesToCopy = std::min(static_cast<std::size_t>(decryptedPinBytes.size()),
+                                       sizeof(buffer));
+    std::memcpy(buffer, decryptedPinBytes.constData(), bytesToCopy);
 
-    // Безопасно копируем 64 байта в целевой массив
-    std::copy_n(reinterpret_cast<const uint8_t *>(hashResult.constData()), 64, buffer);
+    // 4. Немедленно уничтожаем временную сырую копию ПИН-кода в оперативной памяти
+    utils::erase_bytes(decryptedPinBytes);
 }
 
-inline lfsr_hash::salt pin_to_salt(const QByteArray &inner_salt)
+inline lfsr_hash::salt pin_to_salt(const QByteArray &inputSalt)
 {
-    using namespace lfsr_hash;
-    QByteArray inputBuffer;
-    QDataStream writer(&inputBuffer, QIODevice::WriteOnly);
-    const auto &code = password::pin_code.mPinCode;
+    // 1. Инициализируем пустую структуру соли по умолчанию
+    lfsr_hash::salt result;
+    std::memset(&result, 0, sizeof(result));
 
-    for (int i = 0; i < constants::pin_code_len; ++i) {
-        writer << static_cast<char>('0' + code.at(i));
+    // 2. Безопасно расшифровываем оригинальный ПИН-код из сеансового хранилища
+    QByteArray decryptedPinBytes = get_global_pin_decrypted();
+    if (decryptedPinBytes.isEmpty()) {
+        return result;
     }
-    writer << inner_salt;
-    QByteArray hashResult = QCryptographicHash::hash(inputBuffer, QCryptographicHash::Sha256);
 
-    QDataStream reader(hashResult);
-    int raw_q;
-    u16 raw_s0;
-    u16 raw_s1;
-    reader >> raw_q >> raw_s0 >> raw_s1;
-    int q = 32 + (std::abs(raw_q) % 32);
-    return {q, raw_s0, raw_s1};
+    // 3. Вычисляем хэш от ПИН-кода и переданной входной соли (как это требовалось вашей логике)
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    hasher.addData(decryptedPinBytes);
+    hasher.addData(inputSalt);
+    QByteArray hashRes = hasher.result();
+
+    // 4. Копируем результат хэширования в целевую структуру lfsr_hash::salt
+    std::size_t bytesToCopy = std::min(static_cast<std::size_t>(hashRes.size()), sizeof(result));
+    std::memcpy(&result, hashRes.constData(), bytesToCopy);
+
+    // 5. Немедленно уничтожаем временную сырую копию ПИН-кода и хэша в RAM
+    utils::erase_bytes(decryptedPinBytes);
+    utils::erase_bytes(hashRes);
+
+    return result;
 }
 
 inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)

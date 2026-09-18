@@ -119,15 +119,35 @@ private:
     }
 
     // Вспомогательный метод для безопасного удаления временных раундовых ключей из RAM
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
     static void secureClearRoundKeys(std::vector<Block256> &roundKeys)
     {
         if (roundKeys.empty())
             return;
-        volatile uint64_t *ptr = reinterpret_cast<volatile uint64_t *>(roundKeys.data());
-        size_t totalWords = roundKeys.size() * 4; // 4 поля по 64 бита в Block256
-        for (size_t i = 0; i < totalWords; ++i) {
-            ptr[i] = 0;
+
+        size_t totalBytes = roundKeys.size() * sizeof(Block256);
+        void *ptr = roundKeys.data();
+
+#if defined(Q_OS_WIN)
+        // Кроссплатформенный стандарт для Windows (гарантирует невырезание)
+        SecureZeroMemory(ptr, totalBytes);
+#elif defined(__STDC_LIB_EXT1__) || defined(__GLIBC__)
+        // Для Linux систем с поддержкой безопасных функций C11 / GLIBC 2.25+
+        explicit_bzero(ptr, totalBytes);
+#else
+        // Жесткий fallback для старых Linux/Unix систем, обманывающий компилятор:
+        // Мы заставляем его думать, что указатель используется внешней ассемблерной функцией
+        volatile char *p = static_cast<volatile char *>(ptr);
+        while (totalBytes--) {
+            *p++ = 0;
         }
+// Этот барьер запрещает компилятору выбрасывать операции записи до него
+#if defined(__GNUC__) || defined(__clang__)
+        __asm__ __volatile__("" : : "g"(ptr) : "memory");
+#endif
+#endif
     }
 
 public:

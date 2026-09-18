@@ -439,10 +439,12 @@ Widget::Widget(QWidget *parent)
     connect(&watcher_seed_pass_gen, &QFutureWatcher<lfsr_rng::Generators>::finished, this, &Widget::finish_password_generator);
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
-    auto stack_pin_str = password::pin_code.to_numeric_string();
-    UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()}};
+    auto decryptedPinBytes = utils_global::get_global_pin_decrypted();
+    std::string_view pinView(decryptedPinBytes.constData(), decryptedPinBytes.size());
+
+    UsbStorages usb_storages{pinView};
     *g_usb_hashes = usb_storages.tryToReadKey();
-    stack_pin_str.fill('\0');
+    utils::erase_bytes(decryptedPinBytes);
     if (!g_usb_hashes->isEmpty()) {
         g_use_usb_token = true;
         update_master_phrase();
@@ -1441,10 +1443,18 @@ void Widget::btn_create_usb_key_clicked()
             data.append(crc256);
             utils::erase_bytes(crc256);
 
-            auto stack_pin_str = password::pin_code.to_numeric_string();
-            UsbStorages usb_storages{std::string_view{stack_pin_str.data(), stack_pin_str.size()},
-                                     file_name,
-                                     data};
+            // 1. Безопасно расшифровываем оригинальный ПИН-код из сеансового хранилища на долю секунды
+            QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
+
+            // 2. Оборачиваем выделенную память в std::string_view для конструктора
+            std::string_view pin_view(stack_pin_bytes.constData(),
+                                      static_cast<size_t>(stack_pin_bytes.size()));
+
+            // 3. Создаем окно работы с токенами (конструктор скопирует данные в свой безопасный m_pinBuffer)
+            UsbStorages usb_storages{pin_view, file_name, data};
+
+            // 4. Немедленно уничтожаем временную сырую копию ПИН-кода в текущем методе UI
+            utils::erase_bytes(stack_pin_bytes);
 
             // Делаем главное окно токена модальным (блокирует клики по родительскому окну Widget)
             usb_storages.setWindowModality(Qt::ApplicationModal);
@@ -1464,8 +1474,6 @@ void Widget::btn_create_usb_key_clicked()
             // до того как начнется деструкция стека
             QObject::connect(&usb_storages, &UsbStorages::sig_finished, &loop, &QEventLoop::quit);
             loop.exec();
-
-            stack_pin_str.fill('\0');
 
             utils::erase_bytes(data);
 

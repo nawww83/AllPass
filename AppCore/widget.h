@@ -155,51 +155,46 @@ protected:
     }
 };
 
-
-template <int pin_len>
+template<int pin_len>
 class MyDialog : public QDialog
 {
 public:
-    MyDialog(const QString& title = QString::fromUtf8("Введите PIN-код"), QWidget *parent = nullptr)
+    MyDialog(const QString &title = QString::fromUtf8("Введите PIN-код"), QWidget *parent = nullptr)
         : QDialog(parent)
     {
         static_assert(pin_len > 0, "PIN length must be greater than 0");
 
         setWindowTitle(title);
-
-        // Стилизуем само диалоговое окно (опционально)
         this->setStyleSheet("QDialog { background-color: #F8F9FA; }");
 
         QVBoxLayout *mainLayout = new QVBoxLayout(this);
-        mainLayout->setContentsMargins(24, 24, 24, 24); // Отступы от краев окна
+        mainLayout->setContentsMargins(24, 24, 24, 24);
         mainLayout->setSpacing(20);
 
         QHBoxLayout *pinLayout = new QHBoxLayout();
-        pinLayout->setSpacing(8); // Расстояние между ячейками
+        pinLayout->setSpacing(8);
 
         QRegularExpression rgx(R"(^[0-9]$)");
         QRegularExpressionValidator *digitValidator = new QRegularExpressionValidator(rgx, this);
 
         pin_fields.reserve(pin_len);
 
-        // CSS-стиль для ячеек ввода
-        QString lineEditStyle =
-            "QLineEdit {"
-            "    border: 2px solid #D0D5DD;" // Серый бордюр в обычном состоянии
-            "    border-radius: 8px;"        // Скругление углов
-            "    background-color: #FFFFFF;" // Белый фон
-            "    color: #1D2939;"            // Цвет символа
-            "    font-size: 18px;"           // Крупный шрифт (точки пароля будут четкими)
-            "    font-weight: bold;"
-            "}"
-            "QLineEdit:focus {"
-            "    border: 2px solid #7F56D9;" // Фиолетовая подсветка при фокусе
-            "    background-color: #F9F5FF;" // Едва заметный фоновый оттенок при фокусе
-            "}"
-            "QLineEdit:disabled {"
-            "    background-color: #F2F4F7;" // Цвет, если поле заблокировано
-            "    border-color: #EAECF0;"
-            "}";
+        QString lineEditStyle = "QLineEdit {"
+                                "    border: 2px solid #D0D5DD;"
+                                "    border-radius: 8px;"
+                                "    background-color: #FFFFFF;"
+                                "    color: #1D2939;"
+                                "    font-size: 18px;"
+                                "    font-weight: bold;"
+                                "}"
+                                "QLineEdit:focus {"
+                                "    border: 2px solid #7F56D9;"
+                                "    background-color: #F9F5FF;"
+                                "}"
+                                "QLineEdit:disabled {"
+                                "    background-color: #F2F4F7;"
+                                "    border-color: #EAECF0;"
+                                "}";
 
         for (int i = 0; i < pin_len; ++i) {
             QLineEdit *le = new QLineEdit(this);
@@ -207,15 +202,16 @@ public:
             le->setValidator(digitValidator);
             le->setAlignment(Qt::AlignCenter);
             le->setMaxLength(1);
-
-            // Задаем комфортный размер ячейки (чуть больше, чтобы CSS смотрелся хорошо)
             le->setFixedSize(40, 48);
-
-            // Применяем CSS-стиль к каждой ячейке
             le->setStyleSheet(lineEditStyle);
 
+            // Отключаем контекстное меню, чтобы ПИН-код
+            // нельзя было скопировать или вызвать стандартные действия Undo/Redo мыщью
+            le->setContextMenuPolicy(Qt::NoContextMenu);
             le->installEventFilter(this);
 
+            // Валидация кнопки OK теперь проверяет isEmpty() полей напрямую,
+            // не считывая текст в кучу и не размножая копии ПИН-кода в RAM.
             connect(le, &QLineEdit::textChanged, this, [this, i](const QString &text) {
                 updateOkButtonState();
                 if (!text.isEmpty() && i < pin_len - 1) {
@@ -233,7 +229,6 @@ public:
 
         buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
 
-        // Стилизуем кнопки Ok и Cancel, чтобы они соответствовали дизайну
         buttonBox->setStyleSheet(
             "QPushButton {"
             "    padding: 6px 16px;"
@@ -241,34 +236,18 @@ public:
             "    font-size: 14px;"
             "    font-weight: 500;"
             "}"
-            "QPushButton[text='OK'] {" // Стиль для кнопки подтверждения
-            "    background-color: #7F56D9;"
-            "    color: white;"
-            "    border: none;"
-            "}"
-            "QPushButton[text='OK']:hover {"
-            "    background-color: #6941C6;"
-            "}"
-            "QPushButton[text='OK']:disabled {"
-            "    background-color: #E4E7EC;"
-            "    color: #98A2B3;"
-            "}"
-            "QPushButton[text='Cancel'] {" // Стиль для кнопки отмены
-            "    background-color: white;"
-            "    color: #344054;"
-            "    border: 1px solid #D0D5DD;"
-            "}"
-            "QPushButton[text='Cancel']:hover {"
-            "    background-color: #F9FAFB;"
-            "}"
-            );
+            "QPushButton[text='OK'] { background-color: #7F56D9; color: white; border: none; }"
+            "QPushButton[text='OK']:hover { background-color: #6941C6; }"
+            "QPushButton[text='OK']:disabled { background-color: #E4E7EC; color: #98A2B3; }"
+            "QPushButton[text='Cancel'] { background-color: white; color: #344054; border: 1px "
+            "solid #D0D5DD; }"
+            "QPushButton[text='Cancel']:hover { background-color: #F9FAFB; }");
 
         connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
         connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
         mainLayout->addWidget(buttonBox);
 
-        // Расчет ширины окна под заголовок (с учетом увеличенных полей)
         QFontMetrics fm(this->font());
         int titleWidth = fm.horizontalAdvance(title) + 100;
         if (titleWidth > this->sizeHint().width()) {
@@ -282,7 +261,7 @@ public:
         }
     }
 
-    // Возвращаем стековую структуру PinCode, избегая QString в куче
+    // Безопасное извлечение ПИН-кода (вызывается строго один раз при нажатии OK)
     PinCode get_secure_pin() const
     {
         PinCode secure_pin;
@@ -293,31 +272,37 @@ public:
             if (!text.isEmpty()) {
                 secure_pin.mPinCode[i] = text[0].digitValue();
             } else {
-                secure_pin.mPinCode[i] = -1; // Признак пустого поля
+                secure_pin.mPinCode[i] = -1;
             }
 
-            // Немедленно затираем временную строку text внутри Qt
             utils::erase_string(text);
         }
 
         return secure_pin;
     }
 
-    void clear_pin() {
+    // Безопасное затирание визуальных полей
+    void clear_pin()
+    {
         for (auto *le : pin_fields) {
-            le->setText("0");
+            // Принудительно забиваем внутренний буфер виджета нулями перед очисткой
+            QString zeroStr("0");
+            le->setText(zeroStr);
             le->clear();
+            utils::erase_string(zeroStr);
         }
         if (!pin_fields.empty()) {
             pin_fields[0]->setFocus();
         }
+        updateOkButtonState();
     }
 
 protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
         if (event->type() == QEvent::KeyPress) {
-            QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
-            QLineEdit *currentLe = qobject_cast<QLineEdit*>(watched);
+            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+            QLineEdit *currentLe = qobject_cast<QLineEdit *>(watched);
 
             if (currentLe && keyEvent->key() == Qt::Key_Backspace) {
                 auto it = std::find(pin_fields.begin(), pin_fields.end(), currentLe);
@@ -336,13 +321,22 @@ protected:
     }
 
 private:
-    void updateOkButtonState() {
+    // Функция не плодит скрытые копии строк в RAM
+    void updateOkButtonState()
+    {
         if (QPushButton *okButton = buttonBox->button(QDialogButtonBox::Ok)) {
-            okButton->setEnabled(get_secure_pin().length() == pin_len);
+            bool allFilled = true;
+            for (const auto *le : pin_fields) {
+                if (le->text().isEmpty()) {
+                    allFilled = false;
+                    break;
+                }
+            }
+            okButton->setEnabled(allFilled);
         }
     }
 
-    std::vector<QLineEdit*> pin_fields;
+    std::vector<QLineEdit *> pin_fields;
     QDialogButtonBox *buttonBox = nullptr;
 };
 
