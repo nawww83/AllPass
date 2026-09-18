@@ -24,33 +24,6 @@
 #include "lfsr_hash.h"
 #include "stream_cipher.h"
 
-class MyQByteArray : public QByteArray {
-public:
-    explicit MyQByteArray(QByteArray * parent): QByteArray(*parent) {}
-    char back() const {
-        return this->at(size() - 1);
-    }
-    char& back() {
-        return this->data()[size() - 1];
-    }
-    MyQByteArray& removeLast() {
-        if (!this->isEmpty())
-            this->remove(size() - 1, 1);
-        return *this;
-    }
-    MyQByteArray& resize(int new_size, char filler = '\0') {
-        if (new_size >= 0) {
-            while (size() > new_size) {
-                this->removeLast();
-            }
-            while (size() < new_size) {
-                this->push_back(filler);
-            }
-        }
-        return *this;
-    }
-};
-
 namespace utils {
 
 // Базовая функция очистки сырого буфера
@@ -82,6 +55,10 @@ inline void erase_bytes(uint8_t *b, std::size_t len)
 // Функция очистки QByteArray
 inline void erase_bytes(QByteArray& b) {
     if (b.isEmpty()) return;
+
+    // Принудительно делаем буфер уникальным, гарантируя,
+    // что мы очищаем единственный экземпляр данных
+    b.detach();
 
     // Передаем указатель на внутренний неконстантный буфер Qt
     erase_bytes(reinterpret_cast<uint8_t*>(b.data()), b.size());
@@ -165,98 +142,150 @@ inline QByteArray seed_to_bytes(uint32_t seed) {
     return result;
 }
 
-inline uint32_t seed_from_bytes_pop_back(QByteArray& data) {
+inline uint32_t seed_from_bytes_pop_back(QByteArray &data)
+{
     uint32_t seed = 0;
-    if (data.size() < static_cast<int>(sizeof(uint32_t))) {
+    constexpr size_t seed_size = sizeof(uint32_t); // 4 байта
+
+    if (data.size() < static_cast<int>(seed_size)) {
         return seed;
     }
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-    MyQByteArray& data_ref = static_cast<MyQByteArray&>(data);
-#else
-    QByteArray& data_ref = data;
-#endif
+    // 1. Гарантируем монопольное владение буфером перед изменением
+    data.detach();
 
-    // Добавляем обязательное затирание извлекаемого сида в ОЗУ
-    for (size_t i = 0; i < sizeof(uint32_t); ++i) {
-        const auto b = static_cast<uint8_t>(data_ref.back());
+    const int seed_offset = data.size() - static_cast<int>(seed_size);
+    const uint8_t *const src_ptr = reinterpret_cast<const uint8_t *>(data.constData())
+                                   + seed_offset;
 
-        // Перезаписываем байт перед удалением
-        data_ref.data()[data_ref.size() - 1] = '\0';
-        data_ref.removeLast();
+    // 2. Точно восстанавливаем Little-Endian seed, записанный функцией seed_to_bytes,
+    // считывая его с конца массива (от seed_offset до конца)
+    seed = static_cast<uint32_t>(src_ptr[0]) | (static_cast<uint32_t>(src_ptr[1]) << 8)
+           | (static_cast<uint32_t>(src_ptr[2]) << 16) | (static_cast<uint32_t>(src_ptr[3]) << 24);
 
-        seed |= (static_cast<uint32_t>(b) << (8 * sizeof(uint32_t) - 8 - 8 * i));
-    }
+    // 3. ГАРАНТИРОВАННО выжигаем извлекаемый сид в ОЗУ перед обрезкой массива.
+    // Используем системно-защищенный erase_bytes вместо ручного std::memset/цикла.
+    uint8_t *tail_ptr = reinterpret_cast<uint8_t *>(data.data()) + seed_offset;
+    utils::erase_bytes(tail_ptr, seed_size);
+
+    // 4. Отрезаем хвост за один шаг O(1).
+    // Метод resize() одинаков для всех версий Qt. В хвосте кучи остаются только честные нули.
+    data.resize(seed_offset);
+
     return seed;
 }
 
-inline QByteArray xor_data_by_seed(const QByteArray& data, uint32_t seed) {
+inline QByteArray xor_data_by_seed(const QByteArray &data, uint32_t seed)
+{
     QByteArray result;
     const int size = data.size();
-    result.resize(size); // Выделяем память под массив ОДИН раз
+    if (size <= 0)
+        return result;
 
-    const char* src = data.constData();
-    char* dest = result.data();
+    result.resize(size);
 
-    // Раскладываем seed на массив байт в соответствии с Little-Endian упаковкой seed_to_bytes
-    const uint8_t seed_bytes[4] = {
-        static_cast<uint8_t>(seed & 0xFF),
-        static_cast<uint8_t>((seed >> 8) & 0xFF),
-        static_cast<uint8_t>((seed >> 16) & 0xFF),
-        static_cast<uint8_t>((seed >> 24) & 0xFF)
-    };
+    const char *src = data.constData();
+    char *dest = result.data();
 
-    // Линейный XOR без создания временных QByteArray (устраняет утечки памяти и вылеты)
-    for (int i = 0; i < size; ++i) {
-        dest[i] = src[i] ^ static_cast<char>(seed_bytes[i % 4]);
+    // 1. Готовим буфер под внутреннее состояние генератора гаммы
+    QByteArray stateBuffer;
+    stateBuffer.resize(sizeof(uint32_t) + sizeof(uint32_t)); // 8 байт
+
+    // Записываем seed в первые 4 байта состояния
+    std::memcpy(stateBuffer.data(), &seed, sizeof(uint32_t));
+
+    uint32_t counter = 0;
+    int processed = 0;
+
+    // Временный буфер для текущего блока гаммы SHA-256 (32 байта)
+    QByteArray currentGammaBlock;
+
+    // 2. Потоковое гаммирование блоками по 32 байта
+    while (processed < size) {
+        // Записываем постоянно увеличивающийся счетчик в оставшиеся 4 байта состояния
+        std::memcpy(stateBuffer.data() + sizeof(uint32_t), &counter, sizeof(uint32_t));
+
+        // Генерируем 32 байта криптографически стойкой гаммы на основе SHA-256
+        currentGammaBlock = QCryptographicHash::hash(stateBuffer, QCryptographicHash::Sha256);
+
+        const char *gammaPtr = currentGammaBlock.constData();
+        int chunk_size = std::min(32, size - processed);
+
+        // Накладываем XOR
+        for (int i = 0; i < chunk_size; ++i) {
+            dest[processed + i] = src[processed + i] ^ gammaPtr[i];
+        }
+
+        processed += chunk_size;
+        counter++;
     }
+
+    // 3. Гарантированно выжигаем ключевой материал в RAM перед выходом
+    utils::erase_bytes(stateBuffer);
+    utils::erase_bytes(currentGammaBlock);
+    volatile uint32_t *p_seed = &seed;
+    *p_seed = 0;
 
     return result;
 }
 
-
-template <int block_size>
-inline void padd(QByteArray& data) {
-#if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-    MyQByteArray& data_ref = static_cast<MyQByteArray&>(data);
-#else
-    QByteArray& data_ref = data;
-#endif
+template<int block_size>
+inline void padd(QByteArray &data)
+{
+    // Гарантируем монопольное владение буфером
+    data.detach();
 
     const int old_size = data.size();
 
-    // По стандарту ISO маркер 0x80 добавляется ВСЕГДА, поэтому +1
+    // Расчет размера по стандарту ISO/IEC 9797-1
     const int res = (old_size + 1) % block_size;
-    const int new_size = (old_size + 1) + (res != 0 ? block_size - res : 0);
+    const int padding_needed = 1 + (res != 0 ? block_size - res : 0);
+    const int new_size = old_size + padding_needed;
 
-    data_ref.resize(new_size, '\0');
-    data_ref[old_size] = static_cast<char>(0x80); // Ставим маркер конца реальных данных
+    // Метод fill() работает одинаково во всех версиях Qt (и в Qt 5, и в Qt 6).
+    // Он сразу выделяет нужный объем памяти и гарантированно заполняет его нулями.
+    QByteArray clean_padded_buffer;
+    clean_padded_buffer.fill('\0', new_size);
+
+    // Копируем исходные конфиденциальные данные
+    std::memcpy(clean_padded_buffer.data(), data.constData(), old_size);
+
+    // Жестко выжигаем старый незануленный буфер в куче перед заменой
+    utils::erase_bytes(data);
+
+    // Подменяем буфер и выставляем ISO-маркер 0x80
+    data = std::move(clean_padded_buffer);
+    data[old_size] = static_cast<char>(0x80);
 }
 
-inline void dpadd(QByteArray& data) {
+inline void dpadd(QByteArray &data)
+{
     if (data.isEmpty()) {
         return;
     }
-#if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
-    MyQByteArray& data_ref = static_cast<MyQByteArray&>(data);
-#else
-    QByteArray& data_ref = data;
-#endif
 
-    const char* const begin = data_ref.constData();
-    const char* ptr = begin + data_ref.size() - 1;
+    data.detach();
 
-    // Быстро пропускаем нули с конца без вызова тяжелых методов Qt
+    const char *const begin = data.constData();
+    const char *ptr = begin + data.size() - 1;
+
+    // Пропускаем нули с конца
     while (ptr >= begin && *ptr == '\0') {
         --ptr;
     }
 
-    // Если нашли наш маркер 0x80, отрезаем всё лишнее за один шаг
     if (ptr >= begin && *ptr == static_cast<char>(0x80)) {
         const int real_size = static_cast<int>(ptr - begin);
-        data_ref.resize(real_size);
+        const int padding_size = data.size() - real_size;
+
+        // Перед уменьшением размера затираем отсекаемую область памяти (включая 0x80),
+        // чтобы расшифрованные данные не оставались в Heap-мусоре.
+        uint8_t *padding_start = reinterpret_cast<uint8_t *>(data.data() + real_size);
+        utils::erase_bytes(padding_start, padding_size);
+
+        // Стандартный resize() для уменьшения размера работает одинаково во всех версиях Qt
+        data.resize(real_size);
     }
-    // Если маркер не найден — данные повреждены или не имели паддинга, не трогаем их
 }
 
 inline uint8_t rotl8(uint8_t value, unsigned int count)

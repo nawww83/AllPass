@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QCryptographicHash>
 #include <QString>
+#include "utils.h"
 #include <cstdint>
 #include <cstring> // std::memcpy
 #include <vector>
@@ -159,6 +160,9 @@ public:
         int paddingRequired = 32 - (data.size() % 32);
         if (paddingRequired == 0)
             paddingRequired = 32;
+
+        // Гарантируем монопольное владение перед изменением, чтобы не затереть чужие разделяемые копии
+        data.detach();
         data.append(paddingRequired, static_cast<char>(paddingRequired));
 
         QByteArray ciphertext;
@@ -182,8 +186,16 @@ public:
             std::memcpy(ciphertext.data() + i + 24, &block.D, 8);
         }
 
-        // Очищаем раундовые ключи в памяти процесса
+        // =========================================================================
+        // КРИТИЧЕСКИ ВАЖНО ДЛЯ БЕЗОПАСНОСТИ RAM:
+        // =========================================================================
+        // 1. Очищаем раундовые ключи в памяти процесса
         secureClearRoundKeys(roundKeys);
+
+        // 2. Жестко выжигаем локальную копию открытых данных (ПИН/пароль) в RAM,
+        // так как деструктор Qt этого сам не сделает.
+        utils::erase_bytes(data);
+        // =========================================================================
 
         return QString::fromUtf8(ciphertext.toBase64());
     }
@@ -222,13 +234,39 @@ public:
         secureClearRoundKeys(roundKeys);
 
         // Проверка и удаление паддинга PKCS#7
-        int paddingValue = static_cast<uint8_t>(decryptedData.at(decryptedData.size() - 1));
-        if (paddingValue > 0 && paddingValue <= 32) {
-            decryptedData.chop(paddingValue);
-        } else {
+        // 1. Защита от пустой строки (на всякий случай)
+        if (decryptedData.isEmpty()) {
             return QByteArray();
         }
 
+        // 2. Читаем значение последнего байта (это предполагаемая длина паддинга)
+        int paddingValue = static_cast<uint8_t>(decryptedData.at(decryptedData.size() - 1));
+
+        // 3. Строгая валидация: паддинг для 32-байтного блока обязан быть от 1 до 32,
+        // и общий размер данных не может быть меньше этого паддинга
+        if (paddingValue < 1 || paddingValue > 32 || decryptedData.size() < paddingValue) {
+            utils::erase_bytes(decryptedData); // Выжигаем мусор в RAM ради безопасности
+            return QByteArray();
+        }
+
+        // 4. Полноценная проверка PKCS#7: ВСЕ N последних байт должны быть равны значению N
+        const int size = decryptedData.size();
+        bool isValidPadding = true;
+        for (int i = size - paddingValue; i < size; ++i) {
+            if (static_cast<uint8_t>(decryptedData.at(i)) != paddingValue) {
+                isValidPadding = false;
+                break;
+            }
+        }
+
+        // 5. Если хотя бы один байт паддинга не совпал — это 100% неверный ключ или мусор
+        if (!isValidPadding) {
+            utils::erase_bytes(decryptedData);
+            return QByteArray();
+        }
+
+        // 6. Только теперь безопасно отсекаем проверенный паддинг
+        decryptedData.chop(paddingValue);
         return decryptedData;
     }
 };

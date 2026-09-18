@@ -106,14 +106,15 @@ inline bool check_pin(const PinCode &pin)
     }
     int diff = 0;
     for (int i = 0; i < calculated_hash.size(); ++i) {
-        diff |= (calculated_hash.at(i) - hashed_pin_verify.at(i));
+        diff |= (static_cast<uint8_t>(calculated_hash.at(i))
+                 ^ static_cast<uint8_t>(hashed_pin_verify.at(i)));
     }
     utils::erase_bytes(calculated_hash);
     return diff == 0;
 }
 
 // Инициализация ключей
-inline void fill_key_by_hash128(lfsr_hash::u128 hash)
+inline void fill_key_by_hash128(const lfsr_hash::u128 &hash)
 {
     auto x = hash.first;
     auto y = hash.second;
@@ -201,18 +202,34 @@ inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_pass_gen(const QString &text, uint seed)
+inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint seed)
 {
     password::hash_gen.reset();
-    lfsr_hash::u128 hash = utils_global::pin_to_hash(text.toUtf8());
+
+    // Передаем сырые байты напрямую вместо text.toUtf8()
+    lfsr_hash::u128 hash = utils_global::pin_to_hash(textBytes);
     constexpr size_t blockSize = 64;
     {
-        auto bytes = text.toUtf8();
-        for (int i = 0; i < sizeof(uint); ++i) {
-            bytes.push_back(static_cast<char>(seed % 256));
+        const int old_size = textBytes.size();
+        const int size_with_seed = old_size + static_cast<int>(sizeof(uint));
+
+        const int res = (size_with_seed + 1) % blockSize;
+        const int padding_needed = 1 + (res != 0 ? blockSize - res : 0);
+        const int final_size = size_with_seed + padding_needed;
+
+        QByteArray bytes;
+        bytes.fill('\0', final_size);
+        std::memcpy(bytes.data(), textBytes.constData(), old_size);
+
+        // Вшиваем сид сразу по нужному смещению
+        char *data_ptr = bytes.data() + old_size;
+        for (size_t i = 0; i < sizeof(uint); ++i) {
+            data_ptr[i] = static_cast<char>(seed & 0xFF);
             seed >>= 8;
         }
-        padd<blockSize>(bytes);
+
+        bytes[size_with_seed] = static_cast<char>(0x80);
+
         const auto bytesRead = bytes.size();
         {
             using namespace lfsr_hash;
@@ -229,30 +246,38 @@ inline lfsr_hash::u128 gen_hash_for_pass_gen(const QString &text, uint seed)
                 hash.second ^= inner_hash.second;
             }
         }
+        // Гарантированно выжигаем локальный рабочий буфер
         utils::erase_bytes(bytes);
     }
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_storage(const QString &text)
+inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes)
 {
     password::hash_gen.reset();
-
     constexpr size_t blockSize = 72;
 
-    auto bytes = text.toUtf8();
+    const int old_size = textBytes.size();
 
-    // Рассчитываем размер с учетом паддинга ISO/IEC 9797-1 заранее!
-    const int old_size = bytes.size();
+    // 1. Рассчитываем итоговый размер с паддингом ISO/IEC 9797-1 заранее
     const int res = (old_size + 1) % blockSize;
     const int padding_needed = 1 + (res != 0 ? blockSize - res : 0);
+    const int final_size = old_size + padding_needed;
 
-    // Резервируем память ДО заполнения данными, чтобы избежать realloc в куче
-    bytes.reserve(old_size + padding_needed);
+    // 2. Выделяем память один раз.
+    QByteArray bytes;
+    bytes.fill('\0', final_size);
 
-    lfsr_hash::u128 hash_fs = utils_global::pin_to_hash(bytes);
+    // 3. Копируем мастер-фразу в начало буфера (без realloc!)
+    std::memcpy(bytes.data(), textBytes.constData(), old_size);
 
-    padd<blockSize>(bytes);
+    // 4. Считаем промежуточный хэш от исходных данных (до паддинга)
+    // Чтобы pin_to_hash не вызвал realloc внутри, передаем ему textBytes
+    lfsr_hash::u128 hash_fs = utils_global::pin_to_hash(textBytes);
+
+    // 5. Ручной ISO/IEC 9797-1 padd
+    bytes[old_size] = static_cast<char>(0x80);
+
     const auto bytesRead = bytes.size();
     {
         using namespace lfsr_hash;
@@ -270,33 +295,28 @@ inline lfsr_hash::u128 gen_hash_for_storage(const QString &text)
     }
 
     utils::erase_bytes(bytes);
-
     return hash_fs;
 }
 
-inline lfsr_hash::u128 gen_hash_for_encryption(const QString &text)
+inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes)
 {
     password::hash_gen.reset();
     constexpr size_t blockSize = 128;
 
-    // 1. Делаем конвертацию ОДИН раз
-    auto bytes = text.toUtf8();
-
-    // 2. Рассчитываем размер с учетом паддинга ISO/IEC 9797-1 заранее!
-    const int old_size = bytes.size();
+    const int old_size = textBytes.size();
     const int res = (old_size + 1) % blockSize;
     const int padding_needed = 1 + (res != 0 ? blockSize - res : 0);
+    const int final_size = old_size + padding_needed;
 
-    // Резервируем память ДО заполнения данными, чтобы избежать realloc в куче
-    bytes.reserve(old_size + padding_needed);
+    QByteArray bytes;
+    bytes.fill('\0', final_size);
+    std::memcpy(bytes.data(), textBytes.constData(), old_size);
 
-    // 3. Сначала считаем базовый хэш по еще не дополненным байтам (вместо text.toUtf8())
-    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(bytes);
+    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(textBytes);
 
-    // 4. Применяем паддинг (теперь resize не вызовет перевыделения памяти, так как есть reserve)
-    padd<blockSize>(bytes);
+    bytes[old_size] = static_cast<char>(0x80);
+
     const auto bytesRead = bytes.size();
-
     {
         using namespace lfsr_hash;
         const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
@@ -314,35 +334,29 @@ inline lfsr_hash::u128 gen_hash_for_encryption(const QString &text)
         }
     }
 
-    // 5. Теперь эта очистка гарантированно сотрет ЕДИНСТВЕННУЮ UTF-8 копию пароля
     utils::erase_bytes(bytes);
-
     return hash_enc;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QString &text)
+inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &textBytes)
 {
     password::hash_gen.reset();
     constexpr size_t blockSize = 96;
 
-    // Делаем конвертацию один раз
-    auto bytes = text.toUtf8();
-
-    //Рассчитываем размер с учетом паддинга ISO/IEC 9797-1 заранее
-    const int old_size = bytes.size();
+    const int old_size = textBytes.size();
     const int res = (old_size + 1) % blockSize;
     const int padding_needed = 1 + (res != 0 ? blockSize - res : 0);
+    const int final_size = old_size + padding_needed;
 
-    // Резервируем память до заполнения данными, чтобы избежать realloc в куче
-    bytes.reserve(old_size + padding_needed);
+    QByteArray bytes;
+    bytes.fill('\0', final_size);
+    std::memcpy(bytes.data(), textBytes.constData(), old_size);
 
-    // Сначала считаем базовый хэш по еще не дополненным байтам
-    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(bytes);
+    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(textBytes);
 
-    // Применяем паддинг
-    padd<blockSize>(bytes);
+    bytes[old_size] = static_cast<char>(0x80);
+
     const auto bytesRead = bytes.size();
-
     {
         using namespace lfsr_hash;
         const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
@@ -444,7 +458,7 @@ inline QString try_to_get_password(int len, int level)
     return pswd;
 }
 
-inline QString generate_storage_name(lfsr_hash::u128 hash)
+inline QString generate_storage_name(const lfsr_hash::u128 &hash)
 {
     using namespace lfsr_hash;
     password::hash_gen.reset();

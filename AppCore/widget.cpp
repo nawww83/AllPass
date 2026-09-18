@@ -43,8 +43,8 @@ public:
 
 namespace {
     namespace pointers {
-        MyTextEdit* txt_edit_master_phrase = nullptr;
-        QTableWidgetItem* selected_context_table_item = nullptr;
+    SecureTextEdit *txt_edit_master_phrase = nullptr;
+    QTableWidgetItem *selected_context_table_item = nullptr;
     }
 }
 
@@ -397,12 +397,20 @@ Widget::Widget(QWidget *parent)
     app_title.append(QString::fromUtf8(" - Менеджер паролей"));
     this->setWindowTitle( app_title );
 
-    pointers::txt_edit_master_phrase = new MyTextEdit();
+    pointers::txt_edit_master_phrase = new SecureTextEdit();
     pointers::txt_edit_master_phrase->setWindowTitle(QString::fromUtf8("Ввод мастер-фразы"));
     pointers::txt_edit_master_phrase->setStyleSheet("color: white; background-color: black; font: 14px;");
     pointers::txt_edit_master_phrase->setVisible(false);
+    pointers::txt_edit_master_phrase->setContextMenuPolicy(Qt::NoContextMenu);
+    pointers::txt_edit_master_phrase->document()->setUndoRedoEnabled(false);
+    pointers::txt_edit_master_phrase->setAcceptDrops(false);
+    pointers::txt_edit_master_phrase->setAccessibleDescription(QString());
+    pointers::txt_edit_master_phrase->setAccessibleName(QString());
 
-    m_masterPhraseConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, &Widget::update_master_phrase);
+    m_masterPhraseConn = connect(pointers::txt_edit_master_phrase,
+                                 &SecureTextEdit::sig_closing,
+                                 this,
+                                 &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
     connect(this, &Widget::master_key_set, this, &Widget::finish_master_key);
     connect(this, &Widget::master_phrase_discarded, this, &Widget::discard_master_key);
@@ -829,11 +837,16 @@ void Widget::input_master_phrase()
 
 void Widget::update_master_phrase()
 {
-    QString text;
+    QByteArray textBytes; // Переменная для хранения сырых UTF-8 байт фразы
+
     if (!g_use_usb_token) {
-        text = pointers::txt_edit_master_phrase->toPlainText();
-        pointers::txt_edit_master_phrase->clear();
-        if (text.isEmpty()) {
+        // Извлекаем фразу напрямую в байтах
+        textBytes = pointers::txt_edit_master_phrase->getSecureData();
+
+        // Сразу же полностью выжигаем буферы внутри виджета
+        pointers::txt_edit_master_phrase->secureClear();
+
+        if (textBytes.isEmpty()) {
             emit master_phrase_discarded();
             return;
         }
@@ -923,23 +936,24 @@ void Widget::update_master_phrase()
     storage_manager->BeforeUpdate();
     {
         lfsr_hash::u128 hash
-            = utils_global::gen_hash_for_pass_gen(text, std::random_device{}()); // каждый раз разный
+            = utils_global::gen_hash_for_pass_gen(textBytes,
+                                                  std::random_device{}()); // каждый раз разный
         utils_global::fill_key_by_hash128(hash);
         utils::clear_lfsr_hash(hash);
     }
     {
-        lfsr_hash::u128 hash_fs = g_use_usb_token
-                                      ? result.storage
-                                      : utils_global::gen_hash_for_storage(text); // на usb-токен
+        lfsr_hash::u128 hash_fs = g_use_usb_token ? result.storage
+                                                  : utils_global::gen_hash_for_storage(
+                                                        textBytes); // на usb-токен
         const auto &name = utils_global::generate_storage_name(hash_fs);
         storage_manager->SetName( name );
         storage_manager->SetTmpName( name );
         utils::clear_lfsr_hash(hash_fs);
     }
     {
-        lfsr_hash::u128 hash_enc = g_use_usb_token
-                                       ? result.encryption
-                                       : utils_global::gen_hash_for_encryption(text); // на usb-токен
+        lfsr_hash::u128 hash_enc = g_use_usb_token ? result.encryption
+                                                   : utils_global::gen_hash_for_encryption(
+                                                         textBytes); // на usb-токен
         lfsr_rng::STATE state = utils::fill_state_by_hash(hash_enc);
         watcher_seed_enc_gen.setFuture(password::worker->seed(state));
         watcher_seed_dec_gen.setFuture(password::worker->seed(state));
@@ -947,7 +961,7 @@ void Widget::update_master_phrase()
         lfsr_hash::u128 hash_enc_inner = g_use_usb_token
                                              ? result.inner_encryption
                                              : utils_global::gen_hash_for_inner_encryption(
-                                                   text); // на usb-токен
+                                                   textBytes); // на usb-токен
         lfsr_rng::STATE state_inner = utils::fill_state_by_hash(hash_enc_inner);
         watcher_seed_enc_inner_gen.setFuture(password::worker->seed(state_inner));
         watcher_seed_dec_inner_gen.setFuture(password::worker->seed(state_inner));
@@ -974,7 +988,7 @@ void Widget::update_master_phrase()
         g_new_storage_with_transfer_mode = false;
     }
 
-    utils::erase_string(text);
+    utils::erase_bytes(textBytes);
     for (auto& h : *g_usb_hashes) {
         utils::erase_bytes(h);
     }
@@ -1081,7 +1095,7 @@ void Widget::on_spbx_pass_len_editingFinished()
 
 void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
 {
-    // Получаем индекс строго по координатам клика
+    // Получаем индекс по координатам клика
     QModelIndex index = ui->tableWidget->indexAt(pos);
 
     // Привязываем элемент, по которому кликнули (будет nullptr, если клик по пустому месту)
@@ -1403,86 +1417,83 @@ void Widget::btn_create_usb_key_clicked()
     if (m_masterPhraseConn) {
         QObject::disconnect(m_masterPhraseConn);
     }
-    m_tempConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing, this, [this, key_name]() {
-        QString text {pointers::txt_edit_master_phrase->toPlainText()};
-        pointers::txt_edit_master_phrase->clear();
+    m_tempConn = connect(
+        pointers::txt_edit_master_phrase, &SecureTextEdit::sig_closing, this, [this, key_name]() {
+            // 1. Безопасно извлекаем байты
+            QByteArray textBytes = pointers::txt_edit_master_phrase->getSecureData();
 
-        if (!text.isEmpty()) {
-            auto hash_storage = utils_global::gen_hash_for_storage(text);
-            auto hash_enc = utils_global::gen_hash_for_encryption(text);
-            auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(text);
+            // 2. Выжигаем внутренности виджета SecureTextEdit в RAM
+            pointers::txt_edit_master_phrase->secureClear();
 
-            const auto file_name = utils_global::generate_storage_name(hash_storage).append(".enc");
+            if (!textBytes.isEmpty()) {
+                auto hash_storage = utils_global::gen_hash_for_storage(textBytes);
+                auto hash_enc = utils_global::gen_hash_for_encryption(textBytes);
+                auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(textBytes);
 
-            utils::erase_string(text);
+                const auto file_name = utils_global::generate_storage_name(hash_storage)
+                                           .append(".enc");
 
-            QByteArray tmp4 = key_name.toUtf8();
+                // Затираем мастер-фразу немедленно, так как хэши уже получены!
+                utils::erase_bytes(textBytes);
 
-            // Выделяем память под итоговый массив один раз (16 * 3 = 48 байт, имя ключа, 32 байта crc)
-            QByteArray data;
-            data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
+                QByteArray tmp4 = key_name.toUtf8();
+                QByteArray data;
+                data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
 
-            // Поочередно конвертируем и сразу вшиваем хэши в буфер
-            QByteArray tmp1 = utils::lfsr_hash_to_bytes(hash_storage);
-            data.append(tmp1);
-            utils::erase_bytes(tmp1);
+                QByteArray tmp1 = utils::lfsr_hash_to_bytes(hash_storage);
+                data.append(tmp1);
+                utils::erase_bytes(tmp1);
 
-            QByteArray tmp2 = utils::lfsr_hash_to_bytes(hash_enc);
-            data.append(tmp2);
-            utils::erase_bytes(tmp2);
+                QByteArray tmp2 = utils::lfsr_hash_to_bytes(hash_enc);
+                data.append(tmp2);
+                utils::erase_bytes(tmp2);
 
-            QByteArray tmp3 = utils::lfsr_hash_to_bytes(hash_inn_enc);
-            data.append(tmp3);
-            utils::erase_bytes(tmp3);
+                QByteArray tmp3 = utils::lfsr_hash_to_bytes(hash_inn_enc);
+                data.append(tmp3);
+                utils::erase_bytes(tmp3);
 
-            data.append(tmp4);
-            utils::erase_bytes(tmp4);
+                data.append(tmp4);
+                utils::erase_bytes(tmp4);
 
+                QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
+                data.append(crc256);
+                utils::erase_bytes(crc256);
 
-            QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
-            data.append(crc256);
-            utils::erase_bytes(crc256);
+                QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
+                std::string_view pin_view(stack_pin_bytes.constData(),
+                                          static_cast<size_t>(stack_pin_bytes.size()));
 
-            // 1. Безопасно расшифровываем оригинальный ПИН-код из сеансового хранилища на долю секунды
-            QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
+                UsbStorages usb_storages{pin_view, file_name, data};
+                utils::erase_bytes(stack_pin_bytes);
 
-            // 2. Оборачиваем выделенную память в std::string_view для конструктора
-            std::string_view pin_view(stack_pin_bytes.constData(),
-                                      static_cast<size_t>(stack_pin_bytes.size()));
+                usb_storages.setWindowModality(Qt::ApplicationModal);
+                usb_storages.setAttribute(Qt::WA_DeleteOnClose, false);
 
-            // 3. Создаем окно работы с токенами (конструктор скопирует данные в свой безопасный m_pinBuffer)
-            UsbStorages usb_storages{pin_view, file_name, data};
+                usb_storages.show();
+                usb_storages.raise();
+                usb_storages.activateWindow();
+                usb_storages.setFocus();
 
-            // 4. Немедленно уничтожаем временную сырую копию ПИН-кода в текущем методе UI
-            utils::erase_bytes(stack_pin_bytes);
+                QEventLoop loop;
+                QObject::connect(&usb_storages,
+                                 &UsbStorages::sig_finished,
+                                 &loop,
+                                 &QEventLoop::quit);
+                loop.exec();
 
-            // Делаем главное окно токена модальным (блокирует клики по родительскому окну Widget)
-            usb_storages.setWindowModality(Qt::ApplicationModal);
+                utils::erase_bytes(data);
+            } else {
+                // На всякий случай зачищаем буфер, если он зашел пустым
+                utils::erase_bytes(textBytes);
+            }
 
-            // Настраиваем автоматическую отправку сигнала destroyed при закрытии окна
-            usb_storages.setAttribute(Qt::WA_DeleteOnClose, false); // Важно: false, так как объект на стеке!
-
-            usb_storages.show();
-            usb_storages.raise(); // Выводим окно на передний план
-            usb_storages.activateWindow();
-            usb_storages.setFocus();
-
-            // Создаем локальный цикл ожидания событий Qt
-            QEventLoop loop;
-
-            // Теперь цикл событий закроется строго в момент нажатия на крестик окна,
-            // до того как начнется деструкция стека
-            QObject::connect(&usb_storages, &UsbStorages::sig_finished, &loop, &QEventLoop::quit);
-            loop.exec();
-
-            utils::erase_bytes(data);
-
+            // Восстанавливаем сигналы
             QObject::disconnect(m_tempConn);
-
-            m_masterPhraseConn = connect(pointers::txt_edit_master_phrase, &MyTextEdit::sig_closing,
-                                         this, &Widget::update_master_phrase);
-        }
-    });
+            m_masterPhraseConn = connect(pointers::txt_edit_master_phrase,
+                                         &SecureTextEdit::sig_closing,
+                                         this,
+                                         &Widget::update_master_phrase);
+        });
 
     input_master_phrase();
 }

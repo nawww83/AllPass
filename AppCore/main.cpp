@@ -2,14 +2,41 @@
 #include "widget.h"
 
 #include <QApplication>
+#include <QLoggingCategory>
 #include <QSplashScreen>
 #include <qcommandlineparser.h>
 #include <qmessagebox.h>
 
+// #ifdef Q_OS_LINUX
+// #include <iostream>
+// #endif
+
 #include "constants.h"
+
+// #ifdef Q_OS_LINUX
+// void linuxMessageOutput(QtMsgType /*type*/,
+//                         const QMessageLogContext & /*context*/,
+//                         const QString &msg)
+// {
+//     // Пишем напрямую в стандартный вывод Linux в обход системного journald
+//     std::cout << msg.toStdString() << std::endl;
+// }
+// #endif
 
 int main(int argc, char *argv[])
 {
+    // #ifdef Q_OS_LINUX
+    //     // Выключаем вообще всю отладку Qt, информацию и предупреждения фреймворка.
+    //     // Оставляем включенным ТОЛЬКО дефолтный пользовательский qDebug.
+    //     QLoggingCategory::setFilterRules(
+    //         QStringLiteral("qt.*=false\n"          // Выключаем абсолютно всё от Qt
+    //                        "*.info=false\n"        // Выключаем любые info
+    //                        "*.warning=false\n"     // Выключаем любые warning
+    //                        "default.debug=true")); // Включаем ваш стандартный qDebug
+
+    //     qInstallMessageHandler(linuxMessageOutput);
+    // #endif
+
     QApplication a(argc, argv);
 
     QSplashScreen splash;
@@ -29,7 +56,7 @@ int main(int argc, char *argv[])
 
     PinCode pin;
     const auto& warning_text = QString::fromUtf8("PIN-код должен быть любым %1-значным числом").arg(constants::pin_code_len);
-    // БЕЗОПАСНОСТЬ: Ввод ПИН-кода осуществляется СТРОГО через диалоговое окно MyDialog.
+    // Ввод ПИН-кода осуществляется через диалоговое окно MyDialog.
     // Это исключает утечку ПИН-кода через историю терминала и системные утилиты типа ps/procfs.
     if (pin.length() == 0) {
         QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
@@ -46,8 +73,8 @@ int main(int argc, char *argv[])
         // Безопасно извлекаем ПИН-код в стековую структуру
         pin = dialog.get_secure_pin();
 
-        // КРИТИЧЕСКИ ВАЖНО: Принудительно затираем внутренности QLineEdit-полей диалога
-        // ПЕРЕД тем, как объект dialog выйдет из области видимости
+        // Принудительно затираем внутренности QLineEdit-полей диалога
+        // перед тем, как объект dialog выйдет из области видимости
         dialog.clear_pin();
     }
 

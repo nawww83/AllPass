@@ -63,7 +63,7 @@ Q_GLOBAL_STATIC(key::Key, key);
 Q_GLOBAL_STATIC(PasswordBuffer, pswd_buff);
 
 inline QByteArray global_session_salt; // Сеансовая соль (32 байта)
-inline QByteArray hashed_pin_verify;   // Хэш СТРОГО для проверки введенного пина в check_pin
+inline QByteArray hashed_pin_verify;   // Хэш для проверки введенного пина в check_pin
 inline QByteArray encrypted_raw_pin;   // Сам ПИН-код, зашифрованный сеансовой солью
 
 // Переменные для резервного копирования (бэкапа):

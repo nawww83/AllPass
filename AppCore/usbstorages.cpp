@@ -412,9 +412,22 @@ QVector<QByteArray> UsbStorages::tryToReadKey()
             for (auto& usb_key : std::as_const(usb_keys)) {
                 QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
 
+                // Если паддинг не совпал (неверный PIN), decrypt вернет пустой массив.
+                // Сразу уходим на следующий круг, предотвращая любые манипуляции с памятью.
+                if (data.isEmpty()) {
+                    continue;
+                }
+
                 constexpr size_t single_hash_size = sizeof(lfsr_hash::u128); // 16 байт
                 constexpr size_t hashes_total_size = 3 * single_hash_size;   // 48 байт
                 constexpr size_t crc_size = 32;                              // 32 байта (SHA-256)
+
+                // Защита: расшифрованный блок мусора не может быть валидным токеном,
+                // если он меньше заголовков хэшей и контрольной суммы
+                if (data.size() <= static_cast<int>(hashes_total_size + crc_size)) {
+                    utils::erase_bytes(data);
+                    continue; // Пропускаем этот поврежденный/неверный токен
+                }
 
                 // Вычисляем размер переменной части данных
                 int variable_data_size = data.size() - hashes_total_size - crc_size;

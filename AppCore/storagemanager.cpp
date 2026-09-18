@@ -173,7 +173,8 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_by
     }
 }
 
-static void insert_hash128(QByteArray& bytes) {
+static void insert_hash128(QByteArray &bytes)
+{
     if (bytes.size() % 128 != 0) {
         qDebug() << "Insert hash128 error: input size is not a 128*k bytes: " << bytes.size();
         return;
@@ -182,13 +183,13 @@ static void insert_hash128(QByteArray& bytes) {
     lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 128;
 
-    // Вычисление хэша
     {
         const auto bytesRead = bytes.size();
         using namespace lfsr_hash;
         const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
         const size_t n = bytesRead / blockSize;
-        const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+        const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
+                                           bytes.size());
         password::hash_gen.add_salt(original_size_salt);
         for (size_t i = 0; i < n; ++i) {
             auto chunk = bytes_span.subspan(i * blockSize, blockSize);
@@ -198,25 +199,20 @@ static void insert_hash128(QByteArray& bytes) {
         }
     }
 
-    // БЕЗОПАСНАЯ И БЫСТРАЯ ЗАПИСЬ ДЛЯ C++:
-    const int current_size = bytes.size();
+    // ИСПРАВЛЕНО: Пишем хэш через чистый временный буфер, исключая мусор resize
     constexpr size_t hash_size = sizeof(lfsr_hash::u128); // 16 байт
-    bytes.resize(current_size + hash_size);
+    QByteArray hash_buf;
+    hash_buf.fill('\0', static_cast<int>(hash_size));
 
-    // Приводим указатель к типу std::byte* или char* и копируем N байт
-    std::copy_n(
-        reinterpret_cast<const char*>(&hash),
-        hash_size,
-        bytes.data() + current_size
-        );
+    std::memcpy(hash_buf.data(), reinterpret_cast<const char *>(&hash), hash_size);
+    bytes.append(hash_buf);
+    utils::erase_bytes(hash_buf);
 }
 
-static bool extract_and_check_hash128(QByteArray& bytes) {
-#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-    MyQByteArray& bytes_ref = static_cast<MyQByteArray&>(bytes);
-#else
-    QByteArray& bytes_ref = bytes;
-#endif
+static bool extract_and_check_hash128(QByteArray &bytes)
+{
+    // 1. Разрываем неявные связи (CoW), гарантируя монопольное владение буфером
+    bytes.detach();
 
     if (bytes.size() % 16 != 0) {
         qDebug() << "Extract hash128 error: input size is not a 16*k bytes: " << bytes.size();
@@ -229,20 +225,21 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
         return false;
     }
 
-    // БЕЗОПАСНОЕ И БЫСТРОЕ ИЗВЛЕЧЕНИЕ ДЛЯ C++:
     lfsr_hash::u128 extracted_hash;
-    const int hash_offset = bytes_ref.size() - hash_size;
+    const int hash_offset = bytes.size() - hash_size;
 
-    // Копируем байты из хвоста массива в структуру extracted_hash
-    std::copy_n(
-        bytes_ref.constData() + hash_offset,
-        hash_size,
-        reinterpret_cast<char*>(&extracted_hash)
-        );
+    // Извлекаем хэш из хвоста массива
+    std::copy_n(bytes.constData() + hash_offset,
+                hash_size,
+                reinterpret_cast<char *>(&extracted_hash));
 
-    // Принудительно затираем нулями оригинальный хэш в ОЗУ перед удалением хвоста
-    std::memset(bytes_ref.data() + hash_offset, 0, hash_size);
-    bytes_ref.resize(hash_offset); // Отрезаем хэш от массива за один шаг O(1)
+    // 2. ГАРАНТИРОВАННО выжигаем оригинальный хэш в ОЗУ через нашу надежную erase_bytes.
+    // Передаем указатель точно на начало хэша в хвосте буфера.
+    uint8_t *hash_tail_ptr = reinterpret_cast<uint8_t *>(bytes.data() + hash_offset);
+    utils::erase_bytes(hash_tail_ptr, hash_size);
+
+    // Отрезаем хэш от массива. Теперь в хвосте гарантированно лежат нули.
+    bytes.resize(hash_offset);
 
     // Вычисляем хэш от оставшихся данных для проверки
     password::hash_gen.reset();
@@ -253,7 +250,8 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
         using namespace lfsr_hash;
         const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
         const size_t n = bytesRead / blockSize;
-        const auto& bytes_span = std::span(reinterpret_cast<const std::byte*>(bytes.constData()), bytes.size());
+        const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
+                                           bytes.size());
         password::hash_gen.add_salt(original_size_salt);
         for (size_t i = 0; i < n; ++i) {
             auto chunk = bytes_span.subspan(i * blockSize, blockSize);
@@ -263,8 +261,17 @@ static bool extract_and_check_hash128(QByteArray& bytes) {
         }
     }
 
-    return extracted_hash.first == calculated_hash.first &&
-           extracted_hash.second == calculated_hash.second;
+    // 3. CONSTANT-TIME СРАВНЕНИЕ ХЭШЕЙ
+    // Полностью исключает утечки по времени (Timing Attacks)
+    uint64_t diff = 0;
+    diff |= (extracted_hash.first ^ calculated_hash.first);
+    diff |= (extracted_hash.second ^ calculated_hash.second);
+
+    // Очищаем локальные копии хэшей на стеке перед выходом
+    utils::clear_lfsr_hash(extracted_hash);
+    utils::clear_lfsr_hash(calculated_hash);
+
+    return diff == 0;
 }
 
 // S-Box для нелинейности
@@ -379,23 +386,28 @@ static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
 
 StorageManager::StorageManager() {}
 
-template <int version>
-QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& enc_inner) {
+template<int version>
+QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &enc_inner)
+{
     QByteArray out;
-    #define my_encode(ns, K, R) \
+#define my_encode(ns, K, R) \
     ns::init_encryption(enc, 0); \
     utils::padd<K>(encoded_string); \
     const int N = encoded_string.length(); \
     const int Q = N / K; \
     QByteArray crc; \
     const auto it = encoded_string.cbegin(); \
-    for (int q=0; q<Q; ++q) { QByteArray in(it + q*K, K); crc.append(ns::encode_crc(in)); } \
+    for (int q = 0; q < Q; ++q) { \
+        QByteArray in(it + q * K, K); \
+        crc.append(ns::encode_crc(in)); \
+    } \
     encoded_string.append(crc); \
     if (encoded_string.length() % (K + R) != 0) { \
-        qDebug() << "CRC encode failure: output size is not a multpile of " << \
-            (K+R) << " : " << encoded_string.size() << \
-            ", Q: " << Q; \
+        qDebug() << "CRC encode failure: output size is not a multpile of " << (K + R) << " : " \
+                 << encoded_string.size() << ", Q: " << Q; \
         ns::finalize_encryption(enc); \
+        utils::erase_bytes(encoded_string); /* Выжигаем при ошибке */ \
+        utils::erase_bytes(crc); \
         return {}; \
     } \
     uint32_t seed2 = std::random_device{}(); \
@@ -413,102 +425,165 @@ QByteArray do_encode(QByteArray& encoded_string, Encryption& enc, Encryption& en
     ns::encrypt(permuted, out, enc); \
     ns::finalize_encryption(enc); \
     ns::finalize_encryption(enc_inner); \
+\
+    /* Жестко выжигаем оригинальный буфер открытого текста, */ \
+    /* который был дополнен и модифицирован внутри do_encode */ \
+    utils::erase_bytes(encoded_string); \
+\
     /* Затираем промежуточные секретные буферы перед выходом */ \
     utils::erase_bytes(encrypted_inner); \
-    utils::erase_bytes(permuted);
+    utils::erase_bytes(permuted); \
+    utils::erase_bytes(crc); \
+    utils::erase_bytes(seed_b); \
+    volatile uint32_t *p_seed = &seed2; \
+    *p_seed = 0;
 
     if constexpr (version == 1) {
-        my_encode(api_v1, (256-17), 17);
+        my_encode(api_v1, (256 - 17), 17);
     }
-    #undef my_encode
+#undef my_encode
     return out;
 }
 
-template <int version>
-QByteArray do_decode(QByteArray& data, Encryption& dec, Encryption& dec_inner) {
+template<int version>
+QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
+{
     QByteArray decoded_data;
-    #define my_decode(ns, K, R) \
+#define my_decode(ns, K, R) \
     constexpr int hash_size = 16; \
     ns::init_encryption(dec, 0); \
     QByteArray decrypted; \
     ns::decrypt(data, decrypted, dec); \
-    uint32_t seed2 = 0; \
-    if (decrypted.size() < static_cast<int>(sizeof(seed2))) { \
-        qDebug() << "Decode failure: input size is too small: " << \
-                                                          decrypted.size(); \
+    decrypted.detach(); \
+\
+    if (decrypted.size() < static_cast<int>(sizeof(uint32_t))) { \
+        qDebug() << "Decode failure: input size is too small: " << decrypted.size(); \
         ns::finalize_encryption(dec); \
         return {}; \
     } \
-    seed2 = utils::seed_from_bytes_pop_back(decrypted); \
-    const int Q = (decrypted.size() - hash_size) / (K + 2*R); \
-    const int Res = (decrypted.size() - hash_size) % (K + 2*R); \
-    if (Res != 0) { \
-        qDebug() << "CRC decode failure: input size is not a multiple of " << \
-            (K + 2*R) << " : " << decrypted.size() << \
-            ", Q: " << Q; \
+\
+    /* 1. Извлекаем 4 байта случайного сида с самого конца массива */ \
+    uint32_t seed2 = utils::seed_from_bytes_pop_back(decrypted); \
+\
+    /* 2. Рассчитываем Q по физическому размеру оставшегося крипто-блока */ \
+    const int block_divider = (K + 2 * R); \
+    const int Q = (decrypted.size() - hash_size) / block_divider; \
+    const int Res = (decrypted.size() - hash_size) % block_divider; \
+\
+    if (Res != 0 || Q <= 0) { \
+        qDebug() << "CRC decode failure: input size bad: " << decrypted.size() << ", Q: " << Q; \
         ns::finalize_encryption(dec); \
+        utils::erase_bytes(decrypted); \
         return {}; \
     } \
-    QByteArray crc; \
-    MyQByteArray& decrypted_ref = static_cast<MyQByteArray&>(decrypted); \
-    for (int q=0; q<Q; ++q) { \
-            for (int i=0; i<R; ++i) { \
-                crc.push_back(decrypted_ref.back()); \
-                /* Безопасно затираем байт в RAM перед тем, как Qt его отсечет */ \
-                decrypted_ref.data()[decrypted_ref.size() - 1] = '\0'; \
-                decrypted_ref.removeLast(); \
-        } \
-    } \
-    std::reverse(crc.begin(), crc.end()); \
-    if (!ns::extract_and_check_hash128(decrypted)) { \
-        ns::finalize_encryption(dec); \
-        return {}; \
-    } \
+\
+    const int single_crc_block_len = Q * R; \
+    const int decrypted_crc_offset = decrypted.size() - single_crc_block_len; \
+\
+    /* 3. Извлекаем внешний блок CRC с хвоста массива в ПРЯМОМ блочном порядке */ \
+    QByteArray crc(decrypted.constData() + decrypted_crc_offset, single_crc_block_len); \
+    /* ИСПРАВЛЕНО: std::reverse убран, так как блочное копирование сохранило верную структуру */ \
+\
+    /* Дешифруем извлеченный CRC на чистом состоянии генераторов */ \
     crc = utils::xor_data_by_seed(crc, seed2); \
+\
+    /* Физически выжигаем и отсекаем блок CRC с самого конца массива decrypted */ \
+    uint8_t *crc_clear_ptr = reinterpret_cast<uint8_t *>(decrypted.data()) + decrypted_crc_offset; \
+    utils::erase_bytes(crc_clear_ptr, single_crc_block_len); \
+    decrypted.resize(decrypted_crc_offset); \
+\
+    /* 4. Теперь в самом хвосте decrypted остался чистый 16-байтный хэш. Проверяем его */ \
+    if (!ns::extract_and_check_hash128(decrypted)) { \
+        qDebug() << "Hash128 check failure."; \
+        ns::finalize_encryption(dec); \
+        utils::erase_bytes(crc); \
+        utils::erase_bytes(decrypted); \
+        return {}; \
+    } \
+\
     QByteArray depermuted; \
     uint8_t dlog_key = static_cast<uint8_t>(seed2 & 0xFF); \
     ns::decode_dlog256(decrypted, depermuted, dlog_key); \
+\
     ns::init_encryption(dec_inner, seed2); \
     ns::decrypt256_inner(depermuted, decoded_data, dec_inner); \
-    QByteArray crc_copy; \
-    MyQByteArray& decoded_ref = static_cast<MyQByteArray&>(decoded_data); \
-    for (int q=0; q<Q; ++q) { \
-        for (int i=0; i<R; ++i) {crc_copy.push_back(decoded_ref.back()); decoded_ref.removeLast();}; \
+    decoded_data.detach(); \
+\
+    if (decoded_data.size() < single_crc_block_len) { \
+        ns::finalize_encryption(dec); \
+        ns::finalize_encryption(dec_inner); \
+        utils::erase_bytes(crc); \
+        utils::erase_bytes(decrypted); \
+        utils::erase_bytes(depermuted); \
+        utils::erase_bytes(decoded_data); \
+        return {}; \
     } \
-    std::reverse(crc_copy.begin(), crc_copy.end()); \
-    if (crc != crc_copy) { \
+\
+    /* 5. Извлекаем внутренний crc_copy из расшифрованных данных в ПРЯМОМ блочном порядке */ \
+    const int decoded_crc_offset = decoded_data.size() - single_crc_block_len; \
+    QByteArray crc_copy(decoded_data.constData() + decoded_crc_offset, single_crc_block_len); \
+    /* ИСПРАВЛЕНО: std::reverse убран */ \
+\
+    uint8_t *decoded_tail_ptr = reinterpret_cast<uint8_t *>(decoded_data.data()) \
+                                + decoded_crc_offset; \
+    utils::erase_bytes(decoded_tail_ptr, single_crc_block_len); \
+    decoded_data.resize(decoded_crc_offset); \
+\
+    /* Constant-Time побайтовая сверка CRC */ \
+    uint8_t diff = 0; \
+    if (crc.size() != crc_copy.size()) { \
+        diff = 1; \
+    } else { \
+        const uint8_t *p_crc = reinterpret_cast<const uint8_t *>(crc.constData()); \
+        const uint8_t *p_copy = reinterpret_cast<const uint8_t *>(crc_copy.constData()); \
+        for (int i = 0; i < crc.size(); ++i) { \
+            diff |= (p_crc[i] ^ p_copy[i]); \
+        } \
+    } \
+\
+    if (diff != 0) { \
         qDebug() << "CRC decode failure: crc != crc_copy."; \
         ns::finalize_encryption(dec); \
         ns::finalize_encryption(dec_inner); \
+        utils::erase_bytes(crc); \
+        utils::erase_bytes(crc_copy); \
+        utils::erase_bytes(decrypted); \
+        utils::erase_bytes(depermuted); \
+        utils::erase_bytes(decoded_data); \
         return {}; \
     } \
-    auto it = decoded_data.cbegin(); \
-    auto it_crc = crc_copy.cbegin(); \
-    for (int q=0; q<Q; ++q) { \
-        const QByteArray in(it + q*K, K); \
-        QByteArray crc_(it_crc + q*R, R); \
+\
+    /* Проверка блочной целостности S-Box CRC */ \
+    const auto it = decoded_data.cbegin(); \
+    const auto it_crc = crc_copy.cbegin(); \
+    for (int q = 0; q < Q; ++q) { \
+        const QByteArray in(it + q * K, K); \
+        QByteArray crc_(it_crc + q * R, R); \
         if (!ns::decode_crc(in, crc_)) { \
             qDebug() << "CRC: storage data failure, q: " << q; \
             ns::finalize_encryption(dec); \
             ns::finalize_encryption(dec_inner); \
+            utils::erase_bytes(crc); \
+            utils::erase_bytes(crc_copy); \
+            utils::erase_bytes(decrypted); \
+            utils::erase_bytes(depermuted); \
+            utils::erase_bytes(decoded_data); \
             return {}; \
         } \
     } \
-    utils::dpadd(decoded_data); \
+\
     ns::finalize_encryption(dec); \
     ns::finalize_encryption(dec_inner); \
-    /* Снимаем paddingГ ISO здесь, когда данные полностью расшифрованы и проверены */ \
     utils::dpadd(decoded_data); \
-    ns::finalize_encryption(dec); \
-    ns::finalize_encryption(dec_inner); \
-    /* Затираем промежуточные бинарные буферы */ \
+    utils::erase_bytes(crc); \
+    utils::erase_bytes(crc_copy); \
     utils::erase_bytes(decrypted); \
     utils::erase_bytes(depermuted);
 
     if constexpr (version == 1) {
-        my_decode(api_v1, (256-17), 17);
+        my_decode(api_v1, (256 - 17), 17);
     }
-    #undef my_decode
+#undef my_decode
     return decoded_data;
 }
 
@@ -525,79 +600,58 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     }
 
     QByteArray packed_data_bytes;
-    // Предварительно резервируем память для минимизации realloc в куче
     packed_data_bytes.reserve(ro_table->rowCount() * ro_table->columnCount() * 16);
 
-    {
-        QDataStream stream(&packed_data_bytes, QIODevice::WriteOnly);
+    const char col_byte = static_cast<char>(symbols::col_delimiter.unicode()); // 0x1F
+    const char row_byte = static_cast<char>(symbols::row_delimiter.unicode()); // 0x1E
+    const char end_byte = static_cast<char>(symbols::end_message.unicode());   // 0x03
+    const char empty_byte = static_cast<char>(symbols::empty_item.unicode());  // 0x08
 
-        // Преобразуем управляющие символы в сырые UTF-8 байты
-        const char col_byte = static_cast<char>(symbols::col_delimiter.unicode()); // 0x1F (между ячейками)
-        const char row_byte = static_cast<char>(symbols::row_delimiter.unicode()); // 0x1E (между строками)
-        const char end_byte = static_cast<char>(symbols::end_message.unicode());   // 0x03 (конец сообщения)
-        const char empty_byte = static_cast<char>(symbols::empty_item.unicode());  // 0x08 (пустая ячейка)
-
-
-        for (int row = 0; row < ro_table->rowCount(); ++row) {
-            for (int col = 0; col < ro_table->columnCount(); ++col) {
-
-                if (ro_table->item(row, col)) {
-                    const QString &txt = ro_table->item(row, col)->text();
-                    if (txt.isEmpty()) {
-                        stream.writeRawData(&empty_byte, 1);
-                    } else {
-                        QByteArray cell_bytes = txt.toUtf8();
-                        stream.writeRawData(cell_bytes.constData(), cell_bytes.size());
-                        utils::erase_bytes(cell_bytes); // Сразу уничтожаем пароль ячейки в RAM.
-                    }
+    for (int row = 0; row < ro_table->rowCount(); ++row) {
+        for (int col = 0; col < ro_table->columnCount(); ++col) {
+            if (ro_table->item(row, col)) {
+                const QString &txt = ro_table->item(row, col)->text();
+                if (txt.isEmpty()) {
+                    packed_data_bytes.append(empty_byte);
                 } else {
-                    stream.writeRawData(&empty_byte, 1);
+                    QByteArray cell_bytes = txt.toUtf8();
+                    packed_data_bytes.append(cell_bytes);
+                    utils::erase_bytes(cell_bytes);
                 }
-
-                // Разделитель колонок (ячеек) внутри одной строки
-                if (col < ro_table->columnCount() - 1) {
-                    stream.writeRawData(&col_byte, 1);
-                }
+            } else {
+                packed_data_bytes.append(empty_byte);
             }
 
-            // Разделитель строк между строками таблицы
-            if (row < ro_table->rowCount() - 1) {
-                stream.writeRawData(&row_byte, 1);
+            if (col < ro_table->columnCount() - 1) {
+                packed_data_bytes.append(col_byte);
             }
         }
-        // Записываем маркер конца сообщения
-        stream.writeRawData(&end_byte, 1);
-    }
 
-    // --- ШИФРОВАНИЕ ---
+        if (row < ro_table->rowCount() - 1) {
+            packed_data_bytes.append(row_byte);
+        }
+    }
+    packed_data_bytes.append(end_byte);
 
     QByteArray encoded_data_bytes;
-    QString current_version = QString::fromUtf8(G_VERSION_LABEL);
-    current_version.remove(G_VERSION_PREFIX);
+    // Используем жестко заданную строку версии "v3.00" для проверки поддержки формата
+    encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
 
-    if (g_supported_as_version_1.contains(current_version)) {
-        // Шифруем полностью выровненный блок
-        encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
-    }
-
-    // Очищаем временный буфер открытого текста
     utils::erase_bytes(packed_data_bytes);
 
     if (encoded_data_bytes.isEmpty()) {
         return true;
     }
 
-    // Дописываем версию в самый конец зашифрованного массива
-    encoded_data_bytes.append(G_VERSION_LABEL);
+    // Дописываем чистую строку версии "v3.00" в "хвост" зашифрованного файла
+    encoded_data_bytes.append("v3.00");
 
-    // Запись в файл и создание бэкапа
     QFile file(file_name);
     if (file.open(QFile::WriteOnly)) {
         file.write(encoded_data_bytes);
         file.close();
-        if (save_to_tmp) {
+        if (save_to_tmp)
             return true;
-        }
 
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
@@ -606,12 +660,10 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
 #ifdef OS_Windows
             do_hidden(file_backup.fileName().toStdWString().data());
 #endif
-            qDebug() << "Make backup: " << mStorageNameBackUp;
         }
     } else {
-        if (save_to_tmp) {
+        if (save_to_tmp)
             return true;
-        }
         QFile file_backup(mStorageNameBackUp);
         if (file_backup.open(QFile::WriteOnly)) {
             file_backup.write(encoded_data_bytes);
@@ -619,7 +671,6 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
 #ifdef OS_Windows
             do_hidden(file_backup.fileName().toStdWString().data());
 #endif
-            qDebug() << "Make backup only: " << mStorageNameBackUp;
         } else {
             QMessageBox mb;
             mb.critical(nullptr,
@@ -635,15 +686,21 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 {
     const auto &file_name = [this, type]() -> QString {
         switch (type) {
-        case FileTypes::BACKUP: return mStorageNameBackUp;
-        case FileTypes::TEMPORARY: return mStorageNameTmp;
-        default: return mStorageName;
+        case FileTypes::BACKUP:
+            return mStorageNameBackUp;
+        case FileTypes::TEMPORARY:
+            return mStorageNameTmp;
+        default:
+            return mStorageName;
         }
     }();
 
-    if (file_name.isEmpty()) return Loading_Errors::EMPTY_STORAGE;
-    if (!mDec.gamma_gen.is_succes() || !mDecInner.gamma_gen.is_succes()) return Loading_Errors::EMPTY_ENCRYPTION;
-    if (wr_table->rowCount() > 0) return Loading_Errors::TABLE_IS_NOT_EMPTY;
+    if (file_name.isEmpty())
+        return Loading_Errors::EMPTY_STORAGE;
+    if (!mDec.gamma_gen.is_succes() || !mDecInner.gamma_gen.is_succes())
+        return Loading_Errors::EMPTY_ENCRYPTION;
+    if (wr_table->rowCount() > 0)
+        return Loading_Errors::TABLE_IS_NOT_EMPTY;
 
     QFile file(file_name);
     QByteArray decoded_data_bytes;
@@ -652,102 +709,136 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         QByteArray raw_data = file.readAll();
         file.close();
 
-        if (raw_data.isEmpty()) return Loading_Errors::EMPTY_TABLE;
+        if (raw_data.isEmpty())
+            return Loading_Errors::EMPTY_TABLE;
+        raw_data.detach();
 
-        // Отсекаем и считываем версию из конца файла
-        QString read_version;
-#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-        MyQByteArray &raw_ref = static_cast<MyQByteArray &>(raw_data);
-#else
-        QByteArray &raw_ref = raw_data;
-#endif
-        while (!raw_ref.isEmpty() && raw_ref.back() != G_VERSION_PREFIX) {
-            read_version.push_back(raw_ref.back());
-            raw_ref.removeLast();
-        }
-        if (!raw_ref.isEmpty()) {
-            raw_ref.removeLast(); // Удаляем префикс
-        }
-        std::reverse(read_version.begin(), read_version.end());
+        // Строка "v3.00" имеет фиксированную длину 5 байт
+        constexpr int version_len = 5;
 
-        // Дешифруем массив, который теперь строго кратен размеру блока
+        if (raw_data.size() < version_len + 4) {
+            utils::erase_bytes(raw_data);
+            return Loading_Errors::UNKNOWN_FORMAT;
+        }
+
+        const int version_start_offset = raw_data.size() - version_len;
+
+        // 1. Извлекаем строку версии из константной памяти оригинального массива
+        QString read_version = QString::fromUtf8(raw_data.constData() + version_start_offset,
+                                                 version_len);
+
+        // 2. ГАРАНТИРОВАННО выжигаем текстовый маркер версии прямо в физической памяти ОЗУ
+        uint8_t *version_tail_ptr = reinterpret_cast<uint8_t *>(raw_data.data())
+                                    + version_start_offset;
+        utils::erase_bytes(version_tail_ptr, version_len);
+
+        // 3. ФИЗИЧЕСКИ отсекаем хвост: создаем новый QByteArray, содержащий ТОЛЬКО крипто-блок.
+        // Метод .left() скопирует ровно version_start_offset байт, полностью отбросив зануленный хвост.
+        QByteArray clean_crypto_data = raw_data.left(version_start_offset);
+
+        // Полностью уничтожаем старый массив raw_data, чтобы он не висел в Heap
+        utils::erase_bytes(raw_data);
+
+        // 4. ПРОВЕРКА ПОДДЕРЖКИ ФОРМАТА
         if (g_supported_as_version_1.contains(read_version)) {
-            decoded_data_bytes = do_decode<1>(raw_ref, mDec, mDecInner);
+            // Передаем в do_decode гарантированно чистый массив, кратный 16 байтам (размер будет 284 байта)
+            decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner);
+            utils::erase_bytes(clean_crypto_data);
+
             if (decoded_data_bytes.isEmpty()) {
                 return Loading_Errors::CRC_FAILURE;
             }
         } else {
+            utils::erase_bytes(clean_crypto_data);
             return Loading_Errors::UNKNOWN_FORMAT;
         }
     } else {
         return file.exists() ? Loading_Errors::CANNOT_BE_OPENED : Loading_Errors::NEW_STORAGE;
     }
 
-    // Переводим расшифрованные байты в строку UTF-16
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    auto toUtf16 = QStringDecoder(QStringDecoder::Utf8);
-    QString decoded_data_str = toUtf16(decoded_data_bytes);
-#else
-    QString decoded_data_str = QString::fromUtf8(decoded_data_bytes);
-#endif
+    if (decoded_data_bytes.isEmpty())
+        return Loading_Errors::UNRECOGNIZED;
+    decoded_data_bytes.detach();
 
-    // Сразу затираем открытый бинарный текст в памяти
-    utils::erase_bytes(decoded_data_bytes);
-
-    if (decoded_data_str.isEmpty()) return Loading_Errors::UNRECOGNIZED;
-
-    // Валидация и удаление технического маркера конца сообщения
-    if (decoded_data_str.back() == symbols::end_message) {
-        decoded_data_str.chop(1);
+    // Отсекаем маркер конца сообщения
+    const char end_byte = static_cast<char>(symbols::end_message.unicode()); // 0x03
+    if (decoded_data_bytes.back() == end_byte) {
+        decoded_data_bytes.resize(decoded_data_bytes.size() - 1);
     } else {
+        utils::erase_bytes(decoded_data_bytes);
         return Loading_Errors::UNRECOGNIZED;
     }
 
-    // Если после удаления маркера конца строка оказалась абсолютно пустой,
-    // это означает, что была сохранена пустая таблица. Завершаем работу без добавления строк.
-    if (decoded_data_str.isEmpty()) {
-        qDebug() << "Loaded storage is empty (0 rows).";
-        return Loading_Errors::OK; // Возвращаем успех, таблица остается чистой
+    if (decoded_data_bytes.isEmpty()) {
+        utils::erase_bytes(decoded_data_bytes);
+        return Loading_Errors::OK;
     }
 
-    // Парсинг с восстановленной иерархией разделителей
-    // Разделяем монолит на СТРОКИ таблицы по row_delimiter (0x1E)
-    QStringList data_rows = decoded_data_str.split(symbols::row_delimiter);
-    if (data_rows.isEmpty()) {
-        return Loading_Errors::EMPTY_TABLE;
-    }
+    const char col_byte = static_cast<char>(symbols::col_delimiter.unicode()); // 0x1F
+    const char row_byte = static_cast<char>(symbols::row_delimiter.unicode()); // 0x1E
+    const char empty_byte = static_cast<char>(symbols::empty_item.unicode());  // 0x08
 
-    for (int row = 0; row < data_rows.size(); ++row) {
-        // Каждую строку разделяем на ЯЧЕЙКИ (колонки) по col_delimiter (0x1F)
-        QStringList data_items = data_rows.at(row).split(symbols::col_delimiter);
+    int current_row = 0;
+    int current_col = 0;
+    const int total_bytes_len = decoded_data_bytes.size();
 
-        if (data_items.size() <= wr_table->columnCount()) {
-            wr_table->insertRow(row);
+    wr_table->insertRow(current_row);
+    QByteArray accumulated_cell;
+
+    for (int i = 0; i < total_bytes_len; ++i) {
+        char ch = decoded_data_bytes.at(i);
+
+        if (ch == col_byte || ch == row_byte) {
+            if (current_col < wr_table->columnCount()) {
+                QTableWidgetItem *item = new QTableWidgetItem();
+                QString final_str = "";
+
+                if (!accumulated_cell.isEmpty() && accumulated_cell.at(0) != empty_byte) {
+                    final_str = QString::fromUtf8(accumulated_cell);
+                }
+
+                if (current_col == constants::pswd_column_idx) {
+                    item->setData(Qt::DisplayRole, final_str);
+                    item->setData(Qt::EditRole, final_str);
+                } else {
+                    item->setText(final_str);
+                }
+
+                wr_table->setItem(current_row, current_col, item);
+                utils::erase_string(final_str);
+            }
+
+            utils::erase_bytes(accumulated_cell);
+
+            if (ch == col_byte) {
+                current_col++;
+            } else if (ch == row_byte) {
+                current_row++;
+                current_col = 0;
+                wr_table->insertRow(current_row);
+            }
         } else {
-            return Loading_Errors::UNRECOGNIZED;
-        }
-
-        for (int col = 0; col < data_items.size(); ++col) {
-            const QString &cell_str = data_items.at(col);
-            QTableWidgetItem *item = new QTableWidgetItem();
-
-            // Извлечение пустых значений
-            QString final_str = "";
-            if (!cell_str.isEmpty() && cell_str.at(0) != symbols::empty_item) {
-                final_str = cell_str;
-            }
-
-            if (col == constants::pswd_column_idx) {
-                // Пишем чистый прочитанный пароль в обе роли модели
-                item->setData(Qt::DisplayRole, final_str);
-                item->setData(Qt::EditRole, final_str);
-            } else {
-                item->setText(final_str);
-            }
-
-            wr_table->setItem(row, col, item);
+            accumulated_cell.append(ch);
         }
     }
+
+    if (current_col < wr_table->columnCount()) {
+        QTableWidgetItem *item = new QTableWidgetItem();
+        QString final_str = "";
+        if (!accumulated_cell.isEmpty() && accumulated_cell.at(0) != empty_byte) {
+            final_str = QString::fromUtf8(accumulated_cell);
+        }
+        if (current_col == constants::pswd_column_idx) {
+            item->setData(Qt::DisplayRole, final_str);
+            item->setData(Qt::EditRole, final_str);
+        } else {
+            item->setText(final_str);
+        }
+        wr_table->setItem(current_row, current_col, item);
+        utils::erase_string(final_str);
+    }
+    utils::erase_bytes(accumulated_cell);
+    utils::erase_bytes(decoded_data_bytes);
 
     qDebug() << "Table has been successfully loaded!";
     return Loading_Errors::OK;
