@@ -3,11 +3,11 @@
 
 #include <QMutex>
 #include <QVector>
-#include "../AppCore/worker.h"
 #include "constants.h"
 #include "key.h"
 #include "lfsr_hash.h"
 #include "stream_cipher.h"
+#include "worker.h"
 #include <array>
 
 struct PasswordBuffer

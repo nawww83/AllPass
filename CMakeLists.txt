@@ -49,7 +49,7 @@ set(APP_DIR AppCore)
 set(UTILS_DIR utils)
 set(LFSR_DIR ${UTILS_DIR}/lfsr)
 
-INCLUDE_DIRECTORIES(${UTILS_DIR} ${LFSR_DIR} images)
+INCLUDE_DIRECTORIES(${APP_DIR} ${UTILS_DIR} ${LFSR_DIR} images)
 
 set(COMMON_SRC
     ${APP_DIR}/main.cpp

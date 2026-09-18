@@ -493,7 +493,6 @@ protected:
     }
 
 private:
-    // Функция не плодит скрытые копии строк в RAM
     void updateOkButtonState()
     {
         if (QPushButton *okButton = buttonBox->button(QDialogButtonBox::Ok)) {

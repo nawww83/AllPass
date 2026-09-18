@@ -21,9 +21,7 @@
 
 #include <random> // std::random_device
 
-static const QSet<QString> g_supported_as_version_1 {
-    QString("v3.00")
-};
+Q_GLOBAL_STATIC(QSet<QString>, g_supported_as_version_1);
 
 #ifdef OS_Windows
     static void do_hidden(wchar_t* fileLPCWSTR) {
@@ -199,7 +197,7 @@ static void insert_hash128(QByteArray &bytes)
         }
     }
 
-    // ИСПРАВЛЕНО: Пишем хэш через чистый временный буфер, исключая мусор resize
+    // Пишем хэш через чистый временный буфер, исключая мусор resize
     constexpr size_t hash_size = sizeof(lfsr_hash::u128); // 16 байт
     QByteArray hash_buf;
     hash_buf.fill('\0', static_cast<int>(hash_size));
@@ -233,7 +231,7 @@ static bool extract_and_check_hash128(QByteArray &bytes)
                 hash_size,
                 reinterpret_cast<char *>(&extracted_hash));
 
-    // 2. ГАРАНТИРОВАННО выжигаем оригинальный хэш в ОЗУ через нашу надежную erase_bytes.
+    // 2. Выжигаем оригинальный хэш в ОЗУ через нашу надежную erase_bytes.
     // Передаем указатель точно на начало хэша в хвосте буфера.
     uint8_t *hash_tail_ptr = reinterpret_cast<uint8_t *>(bytes.data() + hash_offset);
     utils::erase_bytes(hash_tail_ptr, hash_size);
@@ -384,7 +382,10 @@ static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
 
 } // api_v1
 
-StorageManager::StorageManager() {}
+StorageManager::StorageManager()
+{
+    *g_supported_as_version_1 = QSet{QString("v3.00")};
+}
 
 template<int version>
 QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &enc_inner)
@@ -482,7 +483,6 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
 \
     /* 3. Извлекаем внешний блок CRC с хвоста массива в ПРЯМОМ блочном порядке */ \
     QByteArray crc(decrypted.constData() + decrypted_crc_offset, single_crc_block_len); \
-    /* ИСПРАВЛЕНО: std::reverse убран, так как блочное копирование сохранило верную структуру */ \
 \
     /* Дешифруем извлеченный CRC на чистом состоянии генераторов */ \
     crc = utils::xor_data_by_seed(crc, seed2); \
@@ -522,7 +522,6 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
     /* 5. Извлекаем внутренний crc_copy из расшифрованных данных в ПРЯМОМ блочном порядке */ \
     const int decoded_crc_offset = decoded_data.size() - single_crc_block_len; \
     QByteArray crc_copy(decoded_data.constData() + decoded_crc_offset, single_crc_block_len); \
-    /* ИСПРАВЛЕНО: std::reverse убран */ \
 \
     uint8_t *decoded_tail_ptr = reinterpret_cast<uint8_t *>(decoded_data.data()) \
                                 + decoded_crc_offset; \
@@ -634,7 +633,6 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     packed_data_bytes.append(end_byte);
 
     QByteArray encoded_data_bytes;
-    // Используем жестко заданную строку версии "v3.00" для проверки поддержки формата
     encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
 
     utils::erase_bytes(packed_data_bytes);
@@ -643,8 +641,10 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         return true;
     }
 
-    // Дописываем чистую строку версии "v3.00" в "хвост" зашифрованного файла
-    encoded_data_bytes.append("v3.00");
+    {
+        QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
+        encoded_data_bytes.append(current_version.toUtf8());
+    }
 
     QFile file(file_name);
     if (file.open(QFile::WriteOnly)) {
@@ -713,7 +713,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
             return Loading_Errors::EMPTY_TABLE;
         raw_data.detach();
 
-        // Строка "v3.00" имеет фиксированную длину 5 байт
+        // Строка версии имеет фиксированную длину 5 байт
         constexpr int version_len = 5;
 
         if (raw_data.size() < version_len + 4) {
@@ -727,20 +727,20 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         QString read_version = QString::fromUtf8(raw_data.constData() + version_start_offset,
                                                  version_len);
 
-        // 2. ГАРАНТИРОВАННО выжигаем текстовый маркер версии прямо в физической памяти ОЗУ
+        // 2. Выжигаем текстовый маркер версии прямо в физической памяти ОЗУ
         uint8_t *version_tail_ptr = reinterpret_cast<uint8_t *>(raw_data.data())
                                     + version_start_offset;
         utils::erase_bytes(version_tail_ptr, version_len);
 
-        // 3. ФИЗИЧЕСКИ отсекаем хвост: создаем новый QByteArray, содержащий ТОЛЬКО крипто-блок.
+        // 3. Отсекаем хвост: создаем новый QByteArray, содержащий только крипто-блок.
         // Метод .left() скопирует ровно version_start_offset байт, полностью отбросив зануленный хвост.
         QByteArray clean_crypto_data = raw_data.left(version_start_offset);
 
         // Полностью уничтожаем старый массив raw_data, чтобы он не висел в Heap
         utils::erase_bytes(raw_data);
 
-        // 4. ПРОВЕРКА ПОДДЕРЖКИ ФОРМАТА
-        if (g_supported_as_version_1.contains(read_version)) {
+        // 4. Проверка поддержки формата
+        if (g_supported_as_version_1->contains(read_version)) {
             // Передаем в do_decode гарантированно чистый массив, кратный 16 байтам (размер будет 284 байта)
             decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner);
             utils::erase_bytes(clean_crypto_data);

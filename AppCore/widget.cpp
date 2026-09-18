@@ -4,21 +4,22 @@
 
 #include "widget.h"
 
-#include <qtimer.h>
-#include <random> // std::random_device
+#include <random>
 
-#include <QMessageBox>
-#include <QMenu>
-#include <QContextMenuEvent>
-#include <QPixmap>
-#include <QIcon>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDate>
 #include <QElapsedTimer>
+#include <QIcon>
 #include <QInputDialog>
+#include <QMenu>
+#include <QMessageBox>
+#include <QPixmap>
 #include <QStringList>
+#include <QTimer>
 
 #include "AppCore/ui_widget.h"
+
 #include "passitemdelegate.h"
 #include "storagemanager.h"
 #include "usbstorages.h"
@@ -899,9 +900,7 @@ void Widget::update_master_phrase()
         // Запускаем окно и проверяем, что нажал пользователь
         if (dialog.exec() == QDialog::Accepted) {
             // Пользователь выбрал элемент и нажал "Выбрать" (или Enter)
-            selected_item = dialog.textValue();
-            // Передаем строку дальше в вашу логику
-            QMessageBox::information(this, "Успех", "Вы выбрали: " + selected_item);
+            selected_item = dialog.textValue();            
         } else {
             g_use_usb_token = false;
             return;
@@ -1133,7 +1132,6 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     }
 }
 
-
 void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
 {
     if (!item || g_table_is_loading) {
@@ -1322,7 +1320,11 @@ void Widget::btn_recover_from_backup_clicked()
                                  QString::fromUtf8("Невосстановимая ошибка. Восстановите файл хранилища из Вашей копии"
                                                     "и перезапустите программу."));
             storage_manager->SetName("");
+        } else {
+            this->is_modified = false;
         }
+    } else {
+        this->is_modified = true;
     }
     emit table_changed();
 }
@@ -1483,7 +1485,7 @@ void Widget::btn_create_usb_key_clicked()
 
                 utils::erase_bytes(data);
             } else {
-                // На всякий случай зачищаем буфер, если он зашел пустым
+                // На всякий случай зачищаем буфер
                 utils::erase_bytes(textBytes);
             }
 
@@ -1524,6 +1526,7 @@ void Widget::btn_clear_table_clicked()
         return;
     }
     clear_table(ui->tableWidget);
+    this->is_modified = true;
     emit table_changed();
 }
 

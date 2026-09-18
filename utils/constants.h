@@ -4,7 +4,7 @@
 #include <QChar>
 
 inline constexpr auto G_VERSION_PREFIX = '#';
-inline constexpr auto G_VERSION_LABEL  = "#v3.00";
+inline constexpr auto G_VERSION_LABEL = "#v3.00";
 
 namespace constants {
     inline const int pin_code_len = 5;         // Длина пин-кода.

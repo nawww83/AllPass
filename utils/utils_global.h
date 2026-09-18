@@ -4,7 +4,7 @@
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 
-#include "collatz_cipher.h" // Используем шифр для локального шифрования ПИНа в RAM
+#include "collatz_cipher.h"
 #include "global_data.h"
 #include "utils.h"
 
@@ -379,23 +379,21 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &te
 
 inline void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watcher, int password_len)
 {
+    using namespace password;
     const int Nw = (password_len * constants::num_of_passwords) / constants::password_len_per_u64
                    + 1;
-    watcher.setFuture(password::worker->gen_n(password::pass_gen, Nw));
+    watcher.setFuture(worker->gen_n(pass_gen, Nw));
     watcher.waitForFinished();
-
     {
-        QMutexLocker locker(&password::pswd_buff->mMutex);
-
+        QMutexLocker locker(&pswd_buff->mMutex);
         // Перед записью нового пула, если старый буфер не пуст,
         // принудительно затираем его остатки через volatile
-        if (!password::pswd_buff->mPasswords.isEmpty()) {
+        if (!pswd_buff->mPasswords.isEmpty()) {
             volatile lfsr8::u64 *data_ptr = reinterpret_cast<volatile lfsr8::u64 *>(
-                password::pswd_buff->mPasswords.data());
-            std::fill_n(data_ptr, password::pswd_buff->mPasswords.size(), 0);
+                pswd_buff->mPasswords.data());
+            std::fill_n(data_ptr, pswd_buff->mPasswords.size(), 0);
         }
-
-        password::pswd_buff->mPasswords = watcher.result();
+        pswd_buff->mPasswords = watcher.result();
     }
     qDebug() << "Passwords were requested.";
 }
@@ -417,8 +415,8 @@ inline QString try_to_get_password(int len, int level)
         if (buffer->mPasswords.empty()) {
             // Буфер опустел — перед выходом очищаем частично собранную строку,
             // чтобы не возвращать огрызок пароля, и уберечь данные
-            pswd.clear();
-            return {};
+            utils::erase_string(pswd);
+            return pswd;
         }
 
         // Безопасное извлечение с занулением памяти в векторе
@@ -447,14 +445,15 @@ inline QString try_to_get_password(int len, int level)
             }
         }
 
-        // Стираем локальную копию случайного числа в стеке
+        // Стираем локальные копии чисел в стеке
         volatile lfsr8::u64 *p_raw = &raw64;
         *p_raw = 0;
+        volatile uint32_t *h_raw = &high;
+        *h_raw = 0;
+        volatile uint32_t *l_raw = &low;
+        *l_raw = 0;
     }
 
-    if (pswd.size() > len) {
-        pswd.resize(len);
-    }
     return pswd;
 }
 

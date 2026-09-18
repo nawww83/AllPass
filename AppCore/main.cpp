@@ -1,17 +1,16 @@
+#include "constants.h"
 #include "utils_global.h"
 #include "widget.h"
 
 #include <QApplication>
-#include <QLoggingCategory>
+#include <QCommandLineParser>
+#include <QMessageBox>
 #include <QSplashScreen>
-#include <qcommandlineparser.h>
-#include <qmessagebox.h>
 
 // #ifdef Q_OS_LINUX
+// #include <QLoggingCategory>
 // #include <iostream>
 // #endif
-
-#include "constants.h"
 
 // #ifdef Q_OS_LINUX
 // void linuxMessageOutput(QtMsgType /*type*/,
@@ -26,13 +25,13 @@
 int main(int argc, char *argv[])
 {
     // #ifdef Q_OS_LINUX
-    //     // Выключаем вообще всю отладку Qt, информацию и предупреждения фреймворка.
+    //     // Выключаем всю отладку Qt, информацию и предупреждения фреймворка.
     //     // Оставляем включенным ТОЛЬКО дефолтный пользовательский qDebug.
     //     QLoggingCategory::setFilterRules(
     //         QStringLiteral("qt.*=false\n"          // Выключаем абсолютно всё от Qt
     //                        "*.info=false\n"        // Выключаем любые info
     //                        "*.warning=false\n"     // Выключаем любые warning
-    //                        "default.debug=true")); // Включаем ваш стандартный qDebug
+    //                        "default.debug=true")); // Включаем стандартный qDebug
 
     //     qInstallMessageHandler(linuxMessageOutput);
     // #endif
@@ -59,7 +58,7 @@ int main(int argc, char *argv[])
     // Ввод ПИН-кода осуществляется через диалоговое окно MyDialog.
     // Это исключает утечку ПИН-кода через историю терминала и системные утилиты типа ps/procfs.
     if (pin.length() == 0) {
-        QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
+        const QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
         MyDialog<constants::pin_code_len> dialog{
             QString::fromUtf8("Введите PIN-код (%1)").arg(current_version)};
 
