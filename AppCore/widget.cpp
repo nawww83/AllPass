@@ -1421,10 +1421,10 @@ void Widget::btn_create_usb_key_clicked()
     }
     m_tempConn = connect(
         pointers::txt_edit_master_phrase, &SecureTextEdit::sig_closing, this, [this, key_name]() {
-            // 1. Безопасно извлекаем байты
+            // Безопасно извлекаем байты
             QByteArray textBytes = pointers::txt_edit_master_phrase->getSecureData();
 
-            // 2. Выжигаем внутренности виджета SecureTextEdit в RAM
+            // Выжигаем внутренности виджета SecureTextEdit
             pointers::txt_edit_master_phrase->secureClear();
 
             if (!textBytes.isEmpty()) {
@@ -1435,8 +1435,11 @@ void Widget::btn_create_usb_key_clicked()
                 const auto file_name = utils_global::generate_storage_name(hash_storage)
                                            .append(".enc");
 
-                // Затираем мастер-фразу немедленно, так как хэши уже получены!
-                utils::erase_bytes(textBytes);
+                if (!file_name.startsWith(storage_manager->Name())) {
+                    critical_message_box(QString::fromUtf8("Ошибка ввода"),
+                                         QString::fromUtf8("Неверная мастер-фраза"));
+                    goto exit_lambda;
+                }
 
                 QByteArray tmp4 = key_name.toUtf8();
                 QByteArray data;
@@ -1484,11 +1487,10 @@ void Widget::btn_create_usb_key_clicked()
                 loop.exec();
 
                 utils::erase_bytes(data);
-            } else {
-                // На всякий случай зачищаем буфер
-                utils::erase_bytes(textBytes);
             }
-
+        exit_lambda:
+            // Затираем мастер-фразу
+            utils::erase_bytes(textBytes);
             // Восстанавливаем сигналы
             QObject::disconnect(m_tempConn);
             m_masterPhraseConn = connect(pointers::txt_edit_master_phrase,
