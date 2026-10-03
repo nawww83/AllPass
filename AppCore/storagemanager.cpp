@@ -8,6 +8,9 @@
 #elif defined(_WIN32) || defined(WIN32)
     #define OS_Windows
     #include <windows.h>
+    #include <sddl.h>
+    #include <accctrl.h>
+    #include <aclapi.h>
 #endif
 
 #include <QTableWidget>
@@ -24,13 +27,46 @@
 Q_GLOBAL_STATIC(QSet<QString>, g_supported_as_version_1);
 
 #ifdef OS_Windows
-    static void do_hidden(wchar_t* fileLPCWSTR) {
-        int attr = GetFileAttributes(fileLPCWSTR);
-        if ((attr & FILE_ATTRIBUTE_HIDDEN) == 0) {
-            SetFileAttributes(fileLPCWSTR, attr | FILE_ATTRIBUTE_HIDDEN);
+static void do_hidden(wchar_t* fileLPCWSTR) {
+    int attr = GetFileAttributes(fileLPCWSTR);
+    if ((attr & FILE_ATTRIBUTE_HIDDEN) == 0) {
+        SetFileAttributes(fileLPCWSTR, attr | FILE_ATTRIBUTE_HIDDEN);
+    }
+}
+
+// Измененная функция для защиты файла (совместимая с LLVM-MinGW)
+static void restrict_file_access(const QString& filePath) {
+    // SDDL строка: D:P — защищенный DACL (без наследования)
+    // (A;;FA;;;OW) — Разрешить (A) Полный Доступ (FA) Владельцу объекта (OW)
+    PCWSTR sddl = L"D:P(A;;FA;;;OW)";
+
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+    ULONG size = 0;
+
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &pSD, &size)) {
+        PACL pDacl = nullptr;
+        BOOL daclPresent = FALSE;
+        BOOL daclDefaulted = FALSE;
+
+        if (GetSecurityDescriptorDacl(pSD, &daclPresent, &pDacl, &daclDefaulted) && daclPresent) {
+            // Создаем неконстантный буфер wstring для обхода жестких требований MinGW
+            std::wstring mutablePath = filePath.toStdWString();
+
+            // Применяем DACL и явно защищаем его от унаследованных прав
+            SetNamedSecurityInfoW(
+                mutablePath.data(), // Передаем некостантный указатель wchar_t*
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                nullptr, nullptr, pDacl, nullptr
+                );
+        }
+        if (pSD) {
+            LocalFree(pSD);
         }
     }
+}
 #endif
+
 
 namespace api_v1
 {
@@ -650,6 +686,11 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     if (file.open(QFile::WriteOnly)) {
         file.write(encoded_data_bytes);
         file.close();
+#ifdef OS_Windows
+        restrict_file_access(file_name);
+#else
+        file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
         if (save_to_tmp)
             return true;
 
@@ -659,9 +700,13 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
             file_backup.close();
 #ifdef OS_Windows
             do_hidden(file_backup.fileName().toStdWString().data());
+            restrict_file_access(mStorageNameBackUp);
+#else
+            file_backup.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 #endif
         }
-    } else {
+    }
+    else {
         if (save_to_tmp)
             return true;
         QFile file_backup(mStorageNameBackUp);
@@ -670,6 +715,9 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
             file_backup.close();
 #ifdef OS_Windows
             do_hidden(file_backup.fileName().toStdWString().data());
+            restrict_file_access(mStorageNameBackUp);
+#else
+            file_backup.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 #endif
         } else {
             QMessageBox mb;
