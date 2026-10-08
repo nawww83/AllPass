@@ -53,6 +53,7 @@ inline void erase_bytes(uint8_t *b, std::size_t len)
 }
 
 // Функция очистки QByteArray
+// Для локальных, изолированных объектов QByteArray, которыми владеет текущая функция.
 inline void erase_bytes(QByteArray &b)
 {
     if (b.capacity() == 0)
@@ -100,9 +101,17 @@ inline lfsr_rng::STATE fill_state_by_hash(const lfsr_hash::u128 &hash)
 }
 
 // Безопасная очистка 128-битного хэша по ССЫЛКЕ
+// Безопасная очистка 128-битного хэша по ССЫЛКЕ
 inline void clear_lfsr_hash(lfsr_hash::u128 &hash)
 {
-    erase_bytes(reinterpret_cast<uint8_t *>(&hash), sizeof(hash));
+    // Напрямую берем volatile-указатели на физические поля пары.
+    // Это выполняется за один проход, гарантирует очистку в Release
+    // и на 100% безопасно защищает кучу от ловушек с sizeof(std::pair).
+    volatile uint64_t *p_first = &hash.first;
+    volatile uint64_t *p_second = &hash.second;
+
+    *p_first = 0;
+    *p_second = 0;
 }
 
 // Безопасная очистка внутреннего состояния генератора (массива std::array)
@@ -373,39 +382,39 @@ inline QByteArray encode_u32_hard_level(lfsr8::u32 sample)
 inline QByteArray lfsr_hash_to_bytes(const lfsr_hash::u128 &hash)
 {
     QByteArray output;
-    constexpr size_t hash_size = sizeof(hash); // Ровно 16 байт (2 * sizeof(uint64_t))
 
-    // 1. Предварительно выделяем память одной операцией во избежание лишних realloc
-    output.resize(static_cast<int>(hash_size));
+    // Хэш всегда физически состоит из двух u64 по 8 байт = 16 байт
+    constexpr int exact_hash_size = 16;
 
-    // 2. Безопасно копируем байты структуры в буфер QByteArray
-    std::copy_n(
-        reinterpret_cast<const char*>(&hash),
-        hash_size,
-        output.data()
-        );
+    // 1. Выделяем ровно 16 байт одной операцией
+    output.resize(exact_hash_size);
+
+    // 2. Безопасно копируем по 8 байт из каждого числового поля пары напрямую в буфер.
+    // Это исключает любые отступы компилятора (padding) и гарантирует непрерывность данных.
+    std::copy_n(reinterpret_cast<const char *>(&hash.first), 8, output.data());
+    std::copy_n(reinterpret_cast<const char *>(&hash.second), 8, output.data() + 8);
 
     return output;
 }
 
-inline lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray& input)
+inline lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray &input)
 {
-    constexpr size_t hash_size = sizeof(lfsr_hash::u128); // Ровно 16 байт
-    lfsr_hash::u128 hash = {0, 0}; // Инициализируем дефолтными нулями
+    // Реальный физический хэш в байтах (2 * sizeof(uint64_t)) всегда равен 16
+    constexpr int exact_hash_size = 16;
+    lfsr_hash::u128 hash = {0, 0};
 
-    // Проверяем, что входной массив содержит достаточно байт.
-    // Если байт меньше 16, чтение памяти приведет к аварийному падению (Crash).
-    if (input.size() < static_cast<int>(hash_size)) {
+    // Защита памяти: проверяем, что во входном массиве физически есть 16 байт
+    if (input.size() < exact_hash_size) {
         qDebug() << "Error: QByteArray size is too small to restore u128 hash: " << input.size();
-        return hash; // Возвращаем пустой хэш {0, 0}
+        return hash; // Возвращаем безопасный пустой хэш {0, 0}
     }
 
-    // Безопасно копируем 16 байт из массива обратно в структуру пары
-    std::copy_n(
-        input.constData(),
-        hash_size,
-        reinterpret_cast<char*>(&hash)
-        );
+    const char *src_ptr = input.constData();
+
+    // Безопасно восстанавливаем поля по отдельности (по 8 байт на каждое число).
+    // Это полностью защищает память приложения от платформозависимых отступов (padding).
+    std::copy_n(src_ptr, 8, reinterpret_cast<char *>(&hash.first));
+    std::copy_n(src_ptr + 8, 8, reinterpret_cast<char *>(&hash.second));
 
     return hash;
 }

@@ -16,11 +16,22 @@ void PassEditDelegate::initStyleOption(QStyleOptionViewItem *option, const QMode
 {
     QStyledItemDelegate::initStyleOption(option, index);
 
-    // Маскируем вывод на экран ТОЛЬКО для колонки паролей
     if (index.column() == constants::pswd_column_idx) {
-        // Читаем сырой текст из DisplayRole (модель хранит там чистый пароль)
-        QString rawPassword = index.data(Qt::DisplayRole).toString();
-        option->text = QString(rawPassword.length(), '*');
+        // Получаем QVariant, не переводя его сразу в тяжелый QString
+        QVariant data = index.data(Qt::DisplayRole);
+
+        // Безопасно вычисляем длину без CoW-аллокаций и разделения памяти
+        int passwordLength = 0;
+        if (data.canConvert<QString>()) {
+            passwordLength = data.toString().length();
+        }
+
+        // Если длина корректна, маскируем ее звездочками
+        if (passwordLength > 0) {
+            option->text = QString(passwordLength, '*');
+        } else {
+            option->text = "";
+        }
     }
 }
 

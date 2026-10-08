@@ -73,7 +73,7 @@ namespace api_v1
 
 static void finalize_encryption(Encryption& enc) {
     while (enc.counter > 0) {
-        enc.gamma_gen.back_u64();
+        enc.gamma_gen->back_u64();
         enc.counter--;
     }
     enc.counter = 0;
@@ -90,7 +90,7 @@ static void init_encryption(Encryption& enc, uint seed) {
     }
     const int steps = 512 + (seed % 65536u);
     for (int i = 0; i < steps; ++i) {
-        enc.gamma_gen.next_u64();
+        enc.gamma_gen->next_u64();
         enc.counter++;
     }
     enc.gamma = 0;
@@ -101,9 +101,11 @@ static void encrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
         qDebug() << "Encryption error: data size is not a 256*k bytes";
         return;
     }
+    if (!enc.gamma_gen)
+        return; // Защита от nullptr
     for (auto it = in.begin(); it != in.end(); it++) {
         if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
+            enc.gamma = enc.gamma_gen->next_u64();
             enc.counter++;
         }
         uint8_t b = *it;
@@ -118,9 +120,11 @@ static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
         qDebug() << "Inner decryption error: data size is not a 256*k bytes";
         return;
     }
+    if (!dec.gamma_gen)
+        return; // Защита от nullptr
     for (auto it = in.begin(); it != in.end(); it++) {
         if (dec.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            dec.gamma = dec.gamma_gen.next_u64();
+            dec.gamma = dec.gamma_gen->next_u64();
             dec.counter++;
         }
         uint8_t b = *it;
@@ -131,9 +135,11 @@ static void decrypt256_inner(const QByteArray& in, QByteArray& out, Encryption& 
 }
 
 static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
+    if (!enc.gamma_gen)
+        return; // Защита от nullptr
     for (auto it = in.begin(); it != in.end(); it++) {
         if (enc.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            enc.gamma = enc.gamma_gen.next_u64();
+            enc.gamma = enc.gamma_gen->next_u64();
             enc.counter++;
         }
         uint8_t b = *it;
@@ -146,9 +152,11 @@ static void encrypt(const QByteArray& in, QByteArray& out, Encryption& enc) {
 }
 
 static void decrypt(const QByteArray& in, QByteArray& out, Encryption& dec) {
+    if (!dec.gamma_gen)
+        return; // Защита от nullptr
     for (auto it = in.begin(); it != in.end(); it++) {
         if (dec.aligner64 % sizeof(lfsr_rng::u64) == 0) {
-            dec.gamma = dec.gamma_gen.next_u64();
+            dec.gamma = dec.gamma_gen->next_u64();
             dec.counter++;
         }
         const int rot = dec.gamma % CHAR_BIT;
@@ -629,7 +637,7 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         qDebug() << "Empty storage.";
         return true;
     }
-    if (!mEnc.gamma_gen.is_succes() || !mEncInner.gamma_gen.is_succes()) {
+    if (!mEnc.gamma_gen->is_succes() || !mEncInner.gamma_gen->is_succes()) {
         qDebug() << "Encryption generators are not ready.";
         return false;
     }
@@ -745,7 +753,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
     if (file_name.isEmpty())
         return Loading_Errors::EMPTY_STORAGE;
-    if (!mDec.gamma_gen.is_succes() || !mDecInner.gamma_gen.is_succes())
+    if (!mDec.gamma_gen->is_succes() || !mDecInner.gamma_gen->is_succes())
         return Loading_Errors::EMPTY_ENCRYPTION;
     if (wr_table->rowCount() > 0)
         return Loading_Errors::TABLE_IS_NOT_EMPTY;
@@ -853,7 +861,6 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
                 }
 
                 wr_table->setItem(current_row, current_col, item);
-                utils::erase_string(final_str);
             }
 
             utils::erase_bytes(accumulated_cell);
@@ -883,7 +890,6 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
             item->setText(final_str);
         }
         wr_table->setItem(current_row, current_col, item);
-        utils::erase_string(final_str);
     }
     utils::erase_bytes(accumulated_cell);
     utils::erase_bytes(decoded_data_bytes);
@@ -924,8 +930,8 @@ bool StorageManager::WasUpdated() const
 }
 
 bool StorageManager::IsSuccess() const {
-    return mEnc.gamma_gen.is_succes() && mDec.gamma_gen.is_succes() &&
-        mEncInner.gamma_gen.is_succes() && mDecInner.gamma_gen.is_succes();
+    return mEnc.gamma_gen->is_succes() && mDec.gamma_gen->is_succes()
+           && mEncInner.gamma_gen->is_succes() && mDecInner.gamma_gen->is_succes();
 }
 
 bool StorageManager::IsTryToLoadFromTmp() const
@@ -973,25 +979,25 @@ void StorageManager::SetTryToLoadFromTmp(bool value)
     mTryToLoadFromTmp = value;
 }
 
-void StorageManager::SetEncGammaGenerator(const lfsr_rng::Generators &generator)
+void StorageManager::SetEncGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator)
 {
     mSetCounter++;
     mEnc.gamma_gen = generator;
 }
 
-void StorageManager::SetDecGammaGenerator(const lfsr_rng::Generators &generator)
+void StorageManager::SetDecGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator)
 {
     mSetCounter++;
     mDec.gamma_gen = generator;
 }
 
-void StorageManager::SetEncInnerGammaGenerator(const lfsr_rng::Generators &generator)
+void StorageManager::SetEncInnerGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator)
 {
     mSetCounter++;
     mEncInner.gamma_gen = generator;
 }
 
-void StorageManager::SetDecInnerGammaGenerator(const lfsr_rng::Generators &generator)
+void StorageManager::SetDecInnerGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator)
 {
     mSetCounter++;
     mDecInner.gamma_gen = generator;

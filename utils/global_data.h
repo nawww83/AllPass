@@ -56,7 +56,7 @@ struct PinCode
 };
 
 namespace password {
-inline lfsr_rng::Generators pass_gen;
+inline std::shared_ptr<lfsr_rng::Generators> pass_gen;
 inline lfsr_hash::gens hash_gen;
 Q_GLOBAL_STATIC(Worker, worker);
 Q_GLOBAL_STATIC(key::Key, key);

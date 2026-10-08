@@ -313,7 +313,7 @@ static int run_test() {
     constexpr int base_size = 64;
     const int total_steps = offset + base_size;
 
-    QFutureWatcher<lfsr_rng::Generators> watcher_enc;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_enc;
     lfsr_rng::STATE state_inner {2929, 14359, 45922, 39695, 53744, 53089, 18177, 45209};
 
     watcher_enc.setFuture(password::worker->seed(state_inner));
@@ -322,8 +322,14 @@ static int run_test() {
     Encryption mEnc;
     mEnc.gamma_gen = watcher_enc.result();
 
+    // Защита: проверяем, что указатель успешно инициализировался в куче
+    if (!mEnc.gamma_gen) {
+        qDebug() << "ERROR: Тестовый генератор не был создан (nullptr).";
+        return -1;
+    }
+
     // Запоминаем самое первое число
-    const uint64_t init_value = mEnc.gamma_gen.peek_u64();
+    const uint64_t init_value = mEnc.gamma_gen->peek_u64();
     qDebug() << "1: " << init_value << ", " << mEnc.counter;
 
     // Массив для фиксации ВСЕХ сгенерированных чисел при движении вперед
@@ -332,18 +338,18 @@ static int run_test() {
 
     // Шаг 1: Сдвиг вперед на величину offset
     for (int i = 0; i < offset; ++i) {
-        forward_history.append(mEnc.gamma_gen.next_u64());
+        forward_history.append(mEnc.gamma_gen->next_u64());
         mEnc.counter++;
     }
 
     // Шаг 2: Сдвиг вперед на (base_size - 1)
     for (int i = 0; i < base_size - 1; ++i) {
-        forward_history.append(mEnc.gamma_gen.next_u64());
+        forward_history.append(mEnc.gamma_gen->next_u64());
         mEnc.counter++;
     }
 
     // Шаг 3: Последний одиночный сдвиг вперед с фиксацией пикового значения
-    uint64_t tmp = mEnc.gamma_gen.next_u64();
+    uint64_t tmp = mEnc.gamma_gen->next_u64();
     forward_history.append(tmp);
     mEnc.counter++;
     qDebug() << "2: " << tmp << ", " << mEnc.counter;
@@ -351,7 +357,7 @@ static int run_test() {
     // Шаг 4: Откат назад с жесткой сверкой значений на каждом шаге
     bool values_match = true;
     for (int i = 0; i < total_steps; ++i) {
-        tmp = mEnc.gamma_gen.back_u64();
+        tmp = mEnc.gamma_gen->back_u64();
         mEnc.counter--;
 
         // Индекс исторического числа при движении назад (идет от конца к началу)
@@ -363,7 +369,7 @@ static int run_test() {
         }
     }
 
-    const uint64_t final_peek = mEnc.gamma_gen.peek_u64();
+    const uint64_t final_peek = mEnc.gamma_gen->peek_u64();
     qDebug() << "3: " << tmp << ", " << mEnc.counter;
 
     // Условия успешности теста:
@@ -548,15 +554,13 @@ void Widget::closeEvent(QCloseEvent *event)
 
 void Widget::copy_to_clipboard()
 {
-    QTableWidgetItem* item_to_copy = pointers::selected_context_table_item;
+    QTableWidgetItem *item_to_copy = pointers::selected_context_table_item;
     QModelIndex current_index = ui->tableWidget->currentIndex();
 
-    // Если контекстный указатель пуст (нажали Ctrl+C на клавиатуре)
     if (!item_to_copy && current_index.isValid()) {
         item_to_copy = ui->tableWidget->item(current_index.row(), current_index.column());
     }
 
-    // Если элемента в памяти нет, но индекс валиден — вытаскиваем текст и колонку напрямую из модели
     QString direct_text;
     int target_column = -1;
 
@@ -568,7 +572,6 @@ void Widget::copy_to_clipboard()
         target_column = current_index.column();
     }
 
-    // Если копировать абсолютно нечего — выходим
     if (direct_text.isEmpty() && !item_to_copy) {
         pointers::selected_context_table_item = nullptr;
         return;
@@ -576,7 +579,7 @@ void Widget::copy_to_clipboard()
 
     QClipboard *clipboard = QApplication::clipboard();
 
-    // Ищем и корректно сбрасываем старый таймер, если он есть
+    // Сброс старого таймера (ваш корректный код)
     QTimer *oldTimer = this->findChild<QTimer *>("clipboard_timer");
     if (oldTimer) {
         QPersistentModelIndex oldIndex = oldTimer->property("pIndex").value<QPersistentModelIndex>();
@@ -593,14 +596,16 @@ void Widget::copy_to_clipboard()
         oldTimer->setObjectName("");
     }
 
-    // Проверяем колонку (из item или напрямую из индекса)
     if (target_column == constants::pswd_column_idx) {
+        // Создаем честную глубокую копию для изоляции контекста таймера
+        direct_text.detach();
+
         clipboard->setText(direct_text);
 
-        // Получаем индекс модели
-        QModelIndex modelIndex = item_to_copy ?
-                                     ui->tableWidget->model()->index(item_to_copy->row(), item_to_copy->column()) :
-                                     current_index;
+        QModelIndex modelIndex = item_to_copy
+                                     ? ui->tableWidget->model()->index(item_to_copy->row(),
+                                                                       item_to_copy->column())
+                                     : current_index;
 
         QPersistentModelIndex pIndex(modelIndex);
         int timeoutMs = 30 * 1000;
@@ -610,84 +615,85 @@ void Widget::copy_to_clipboard()
         timer->setObjectName("clipboard_timer");
         timer->setProperty("pIndex", QVariant::fromValue(pIndex));
 
-        // Создаем таймер прямо на стеке
         QElapsedTimer elapsedTimer;
         elapsedTimer.start();
 
-        // Передаем elapsedTimer по значению [=] внутрь лямбды. Никаких smart-pointers не нужно.
-        connect(timer, &QTimer::timeout, this, [this, pIndex, clipboard, timer, timeoutMs, elapsedTimer, direct_text]() mutable {
-            if (!pIndex.isValid()) {
-                utils_global::erase_string(direct_text);
-                timer->stop();
-                timer->deleteLater();
-                return;
-            }
-
-            auto currentItem = ui->tableWidget->item(pIndex.row(), pIndex.column());
-
-            // Если объект item пропал или ещё не создался, мы все равно можем обновлять ячейку через её индекс!
-            qint64 elapsed = elapsedTimer.elapsed();
-
-            if (elapsed < timeoutMs) {
-                double progress = 1.0 - (static_cast<double>(elapsed) / timeoutMs);
-
-                QLinearGradient gradient(0, 0, 1, 0);
-                gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
-                gradient.setColorAt(0, QColor(255, 170, 0));
-                gradient.setColorAt(progress, QColor(255, 170, 0));
-                gradient.setColorAt(qMin(progress + 0.001, 1.0), Qt::transparent);
-
-                if (currentItem) {
-                    TableLoadingRAII lock;
-                    currentItem->setData(roles::AnimationRole, QBrush(gradient));
-                } else {
-                    // Если итема нет, пишем градиент в модель напрямую по индексу
-                    TableLoadingRAII lock;
-                    ui->tableWidget->model()->setData(pIndex, QBrush(gradient), roles::AnimationRole);
-                }
-
-                ui->tableWidget->viewport()->update(ui->tableWidget->visualRect(pIndex));
-            } else {
-                timer->stop();
-                timer->deleteLater();
-
-                if (currentItem) {
-                    TableLoadingRAII lock;
-                    currentItem->setData(roles::AnimationRole, QVariant());
-                } else {
-                    TableLoadingRAII lock;
-                    ui->tableWidget->model()->setData(pIndex, QVariant(), roles::AnimationRole);
-                }
-
-                highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
-
-                // Извлекаем текущий текст из буфера для сравнения
-                QString current_clipboard_text = clipboard->text();
-
-                if (current_clipboard_text == direct_text) {
-                    clipboard->clear();
-                    if (this->isActiveWindow()) {
-                        QMessageBox::information(this,
-                                                 tr("Безопасность"),
-                                                 tr("Буфер обмена очищен."));
+        connect(timer,
+                &QTimer::timeout,
+                this,
+                [this, pIndex, clipboard, timer, timeoutMs, elapsedTimer, direct_text]() mutable {
+                    if (!pIndex.isValid()) {
+                        // Если ячейку удалили посреди работы таймера — выжигаем пароль в лямбде
+                        utils_global::erase_string(direct_text);
+                        timer->stop();
+                        timer->deleteLater();
+                        return;
                     }
-                }
 
-                // Затираем временную строку сравнения буфера
-                utils_global::erase_string(current_clipboard_text);
+                    auto currentItem = ui->tableWidget->item(pIndex.row(), pIndex.column());
+                    qint64 elapsed = elapsedTimer.elapsed();
 
-                // Уничтожаем сам пароль, захваченный лямбдой
-                // Теперь, когда лямбда закроется, в куче останутся только нули вместо пароля.
-                utils_global::erase_string(direct_text);
-            }
-        });
+                    if (elapsed < timeoutMs) {
+                        double progress = 1.0 - (static_cast<double>(elapsed) / timeoutMs);
+
+                        QLinearGradient gradient(0, 0, 1, 0);
+                        gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
+                        gradient.setColorAt(0, QColor(255, 170, 0));
+                        gradient.setColorAt(progress, QColor(255, 170, 0));
+                        gradient.setColorAt(qMin(progress + 0.001, 1.0), Qt::transparent);
+
+                        if (currentItem) {
+                            TableLoadingRAII lock;
+                            currentItem->setData(roles::AnimationRole, QBrush(gradient));
+                        } else {
+                            TableLoadingRAII lock;
+                            ui->tableWidget->model()->setData(pIndex,
+                                                              QBrush(gradient),
+                                                              roles::AnimationRole);
+                        }
+
+                        ui->tableWidget->viewport()->update(ui->tableWidget->visualRect(pIndex));
+                    } else {
+                        timer->stop();
+                        timer->deleteLater();
+
+                        if (currentItem) {
+                            TableLoadingRAII lock;
+                            currentItem->setData(roles::AnimationRole, QVariant());
+                        } else {
+                            TableLoadingRAII lock;
+                            ui->tableWidget->model()->setData(pIndex,
+                                                              QVariant(),
+                                                              roles::AnimationRole);
+                        }
+
+                        highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
+
+                        QString current_clipboard_text = clipboard->text();
+
+                        if (current_clipboard_text == direct_text) {
+                            clipboard->clear();
+                            if (this->isActiveWindow()) {
+                                QMessageBox::information(this,
+                                                         tr("Безопасность"),
+                                                         tr("Буфер обмена очищен."));
+                            }
+                        }
+
+                        // ЕДИНСТВЕННОЕ И ПРАВИЛЬНОЕ ЗАНУЛЕНИЕ: Выжигаем пароль, когда таймер отстрелялся
+                        utils_global::erase_string(direct_text);
+                    }
+                });
 
         timer->start(intervalMs);
     } else {
         // Если это не пароль, просто копируем текст
         clipboard->setText(item_to_copy ? item_to_copy->text() : direct_text);
+
+        // Для обычных (не секретных) колонок очищаем строку сразу на стеке
+        utils_global::erase_string(direct_text);
     }
-    utils_global::erase_string(direct_text);
+
     pointers::selected_context_table_item = nullptr;
 }
 
@@ -837,10 +843,12 @@ void Widget::finish_master_key()
 void Widget::finish_password_generator()
 {
     password::pass_gen = watcher_seed_pass_gen.result();
-    if (password::pass_gen.is_succes())
-    {
+    if (password::pass_gen && password::pass_gen->is_succes()) {
         ui->btn_generate->setEnabled(true);
         ui->btn_generate->setFocus();
+        // Поток гарантированно завершен, куча генератора паролей валидна.
+        // Теперь можно безопасно запускать логику загрузки таблицы!
+        emit master_key_set();
     } else {
         ui->btn_generate->setEnabled(false);
         warning_message_box(QString::fromUtf8("Неудача"),
@@ -929,16 +937,21 @@ void Widget::update_master_phrase()
 
         for (auto& data : std::as_const(*g_usb_hashes)) {
             const auto total_bytes = data.size();
+            // Защита кучи: проверяем, что в массиве физически есть 48 байт
+            if (total_bytes < static_cast<int>(3 * single_hash_size)) {
+                continue;
+            }
             const char *src_ptr = data.constData();
 
-            // Извлекаем первый хэш (Хэш Хранилища) — смещение 0 байт
-            std::copy_n(src_ptr, single_hash_size, reinterpret_cast<char*>(&result.storage));
+            // Безопасно собираем хэши через явное побайтовое заполнение полей first и second
+            std::copy_n(src_ptr, 8, reinterpret_cast<char *>(&result.storage.first));
+            std::copy_n(src_ptr + 8, 8, reinterpret_cast<char *>(&result.storage.second));
 
-            // Извлекаем второй хэш (Хэш Шифрования) — смещение 16 байт
-            std::copy_n(src_ptr + single_hash_size, single_hash_size, reinterpret_cast<char*>(&result.encryption));
+            std::copy_n(src_ptr + 16, 8, reinterpret_cast<char *>(&result.encryption.first));
+            std::copy_n(src_ptr + 24, 8, reinterpret_cast<char *>(&result.encryption.second));
 
-            // Извлекаем третий хэш (Внутренний Хэш Шифрования) — смещение 32 байта
-            std::copy_n(src_ptr + (2 * single_hash_size), single_hash_size, reinterpret_cast<char*>(&result.inner_encryption));
+            std::copy_n(src_ptr + 32, 8, reinterpret_cast<char *>(&result.inner_encryption.first));
+            std::copy_n(src_ptr + 40, 8, reinterpret_cast<char *>(&result.inner_encryption.second));
 
             // Извлекаем имя ключа
             if (total_bytes > 3 * single_hash_size) {
@@ -1008,10 +1021,21 @@ void Widget::update_master_phrase()
         g_new_storage_with_transfer_mode = false;
     }
 
+    // 1. Очищаем локальный массив байт мастер-фразы
     utils::erase_bytes(textBytes);
-    for (auto& h : *g_usb_hashes) {
-        utils::erase_bytes(h);
+
+    // 2. БЕЗОПАСНО зануляем содержимое хэшей внутри глобального вектора.
+    for (QByteArray &h : *g_usb_hashes) {
+        if (h.capacity() > 0) {
+            // Стираем физическую память на всю глубину емкости буфера
+            utils::erase_bytes(reinterpret_cast<uint8_t *>(h.data()), h.capacity());
+        }
     }
+
+    // 3. Полностью сбрасываем сам глобальный контейнер, чтобы он освободил память кучи.
+    g_usb_hashes->clear();
+    QVector<QByteArray>().swap(*g_usb_hashes);
+
     utils::clear_lfsr_hash(result.encryption);
     utils::clear_lfsr_hash(result.inner_encryption);
     utils::clear_lfsr_hash(result.storage);
@@ -1027,7 +1051,6 @@ void Widget::set_master_key()
     watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
     password::key->clear();
     utils::clear_lfsr_rng_state(state);
-    emit master_key_set();
 }
 
 void Widget::discard_master_key()
@@ -1038,6 +1061,7 @@ void Widget::discard_master_key()
         utils_global::restore_pin();
     }
     g_new_storage_with_transfer_mode = false;
+    password::pass_gen.reset();
 }
 
 void Widget::insert_new_password()
@@ -1097,10 +1121,14 @@ void Widget::on_btn_generate_clicked()
         qDebug() << "Rejected: not correct password length!";
         return;
     }
-    if (!password::pass_gen.is_succes()) {
-        qDebug() << "Rejected: set the master phrase first!";
+
+    // КРИТИЧЕСКАЯ ЗАЩИТА: Сначала проверяем, что shared_ptr вообще создан в куче,
+    // и только потом безопасно вызываем метод через ->
+    if (!password::pass_gen || !password::pass_gen->is_succes()) {
+        qDebug() << "Rejected: set the master phrase first or pass_gen is null!";
         return;
     }
+
     ui->btn_generate->setEnabled(false);
     emit passwords_ready();
 }
@@ -1575,7 +1603,6 @@ void Widget::highlight_items()
 
 void Widget::update_table_info()
 {
-    ui->tableWidget->resizeColumnToContents(constants::pswd_column_idx);
     ui->tableWidget->sortByColumn(constants::comments_column_idx, Qt::SortOrder::AscendingOrder);
     btn_recover_from_backup->setEnabled(storage_manager->BackupFileIsExist() || storage_manager->FileIsExist());
     btn_new_storage_with_transfer->setEnabled(true);

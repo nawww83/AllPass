@@ -1,14 +1,15 @@
 #ifndef STORAGEMANAGER_H
 #define STORAGEMANAGER_H
 
-#include "stream_cipher.h"
 #include <QString>
+#include "stream_cipher.h"
+#include <memory> // Необходим для std::shared_ptr
 
 class QTableWidget;
 
 struct Encryption
 {
-    lfsr_rng::Generators gamma_gen;
+    std::shared_ptr<lfsr_rng::Generators> gamma_gen;
     uint64_t aligner64 = 0;
     uint64_t counter = 0;
     lfsr_rng::u64 gamma = 0;
@@ -70,13 +71,13 @@ public:
 
     void SetTryToLoadFromTmp(bool value = true);
 
-    void SetEncGammaGenerator(const lfsr_rng::Generators& generator);
+    void SetEncGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator);
 
-    void SetDecGammaGenerator(const lfsr_rng::Generators& generator);
+    void SetDecGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator);
 
-    void SetEncInnerGammaGenerator(const lfsr_rng::Generators& generator);
+    void SetEncInnerGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator);
 
-    void SetDecInnerGammaGenerator(const lfsr_rng::Generators& generator);
+    void SetDecInnerGammaGenerator(const std::shared_ptr<lfsr_rng::Generators> &generator);
 
 private:
     QString mStorageName;

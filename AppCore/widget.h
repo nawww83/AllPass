@@ -114,11 +114,11 @@ protected:
 
 private:
     Ui::Widget *ui;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed_pass_gen;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed_enc_gen;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed_dec_gen;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed_enc_inner_gen;
-    QFutureWatcher<lfsr_rng::Generators> watcher_seed_dec_inner_gen;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_seed_pass_gen;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_seed_enc_gen;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_seed_dec_gen;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_seed_enc_inner_gen;
+    QFutureWatcher<std::shared_ptr<lfsr_rng::Generators>> watcher_seed_dec_inner_gen;
     QFutureWatcher<QVector<lfsr8::u64>> watcher_passwords;
     QAction *copyAct;
     QAction *removeAct;
