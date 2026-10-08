@@ -31,45 +31,64 @@ void PassEditDelegate::paint(QPainter *painter,
     QVariant animData = index.data(roles::AnimationRole);
     QStyleOptionViewItem opt = option;
 
-    // Сначала инициализируем опции и маскируем текст в звёздочки внутри opt.text
+    // Сначала маскируем текст в звёздочки внутри opt.text
     initStyleOption(&opt, index);
 
     const QTableWidget *table = qobject_cast<const QTableWidget *>(option.widget);
+
+    // Проверяем, выделена ли ячейка (активна ли она в таблице)
     bool isCellSelected = (table && table->currentIndex().row() == index.row()
                            && table->currentIndex().column() == index.column());
 
+    // Отключаем стандартный пунктир Qt, чтобы рисовать красивую сплошную рамку
     opt.state &= ~QStyle::State_HasFocus;
 
-    // 1. АНИМАЦИЯ ФОНА
+    painter->save();
+
+    // 1. ОТРИСОВКА ФОНА (Анимация или Обычный)
     if (animData.isValid()) {
         QBrush bg = animData.value<QBrush>();
-        painter->save();
-        painter->fillRect(option.rect, option.palette.base());
-        painter->fillRect(option.rect, bg);
-        painter->restore();
+        painter->fillRect(option.rect, option.palette.base()); // Базовый белый/системный фон
+        painter->fillRect(option.rect, bg);                    // Накладываем оранжевый градиент
 
         opt.state &= ~QStyle::State_Selected;
         opt.backgroundBrush = Qt::transparent;
-        opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
-    }
-    // 2. ВЫДЕЛЕНИЕ КЛИКОМ
-    else if (isCellSelected) {
-        painter->save();
+    } else if (isCellSelected) {
+        // Если анимации нет, но ячейка выбрана — классическая сплошная заливка выделения
         QColor selectColor = option.palette.color(QPalette::Highlight);
         painter->fillRect(option.rect, selectColor);
-        painter->restore();
 
         opt.state &= ~QStyle::State_Selected;
         opt.backgroundBrush = Qt::transparent;
-        opt.palette.setColor(QPalette::Text, Qt::white); // Текст (звёздочки) станет белым
     }
-    // 3. ОБЫЧНОЕ СОСТОЯНИЕ
-    else {
-        opt.state &= ~QStyle::State_Selected;
+
+    // 2. ОТРИСОВКА ВЫДЕЛЕНИЯ КЛИКОМ ПОВЕРХ АНИМАЦИИ
+    if (isCellSelected) {
+        // Подсвечиваем рамку ячейки фирменным цветом выделения ОС
+        QColor highlightColor = option.palette.color(QPalette::Highlight);
+        QPen prevPen = painter->pen();
+
+        // Рисуем внутреннюю рамку толщиной 2 пикселя
+        painter->setPen(QPen(highlightColor, 2, Qt::SolidLine));
+        painter->drawRect(option.rect.adjusted(1, 1, -1, -1));
+        painter->setPen(prevPen);
+
+        // Меняем цвет текста (звёздочек) для контраста
+        if (animData.isValid()) {
+            // Если идет анимация, текст делаем темным/системным, чтобы он читался на оранжевом фоне
+            opt.palette.setColor(QPalette::Text, option.palette.color(QPalette::Text));
+        } else {
+            // Если фона анимации нет и ячейка просто залита синим цветом выделения — текст белый
+            opt.palette.setColor(QPalette::Text, Qt::white);
+        }
+    } else {
+        // Обычное состояние текста (не выделено)
         opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::WindowText));
     }
 
-    // Передаем opt с уже готовыми звёздочками в базовый отрисовщик
+    painter->restore();
+
+    // Передаем opt с уже готовыми звёздочками и цветами в базовый отрисовщик Qt
     QStyledItemDelegate::paint(painter, opt, index);
 }
 

@@ -3,15 +3,15 @@
 /**
  * @author Новиков А.В.
  *
- * Генератор псевдослучайных чисел с периодом около 2^155 по отношению к 16-битному отсчету.
+ * Основан на генераторе псевдослучайных чисел с периодом около 2^155 по отношению к 16-битному отсчету.
 */
 
 #include "lfsr.h"
 
-#include <utility>
+#include <array>
 #include <cmath>
 #include <numeric>
-#include <array>
+#include <utility>
 
 namespace lfsr_rng {
 
@@ -118,6 +118,17 @@ inline u64 my_lcm(const std::array<u16, N>& v) {
         lcm_res = std::lcm(lcm_res, static_cast<u64>(v[i]));
     }
     return lcm_res;
+}
+
+// Универсальный хелпер (побайтовый)
+template<typename T>
+void secure_clear(T &container)
+{
+    constexpr size_t total_bytes = sizeof(T);
+    auto *p = reinterpret_cast<volatile uint8_t *>(&container);
+    for (size_t i = 0; i < total_bytes; ++i) {
+        p[i] = 0;
+    }
 }
 
 /**
@@ -232,32 +243,42 @@ public:
      * @brief Установить начальное состояние генератора.
      * @param st Переданный "сид".
      */
-    void seed(STATE st) {
-        // Некоторая "соль".
-        std::array<u16, 4> init_inputs {1, 2, 2, 3};
-        // Распределить начальное состояние по всем LFSR-генераторам.
-        STATE init_states[4]  {st, st, st, st};
-        for (int i=0; i<4; ++i) {
-            for (auto& el : init_states[i]) {
-                el >>= i*4;
-                el %= 16;
-                init_inputs[i] ^= el;
+    void seed(const STATE &st)
+    {
+        {
+            // Некоторая "соль".
+            std::array<u16, 4> init_inputs{1, 2, 2, 3};
+            {
+                // Распределить начальное состояние по всем LFSR-генераторам.
+                std::array<STATE, 4> init_states{st, st, st, st};
+                for (int i = 0; i < 4; ++i) {
+                    for (auto &el : init_states[i]) {
+                        el >>= i * 4;
+                        el %= 16;
+                        init_inputs[i] ^= el;
+                    }
+                }
+                gp1.set_state(init_states[0]);
+                gp2.set_state(init_states[1]);
+                gp3.set_state(init_states[2]);
+                gp4.set_state(init_states[3]);
+                secure_clear(init_states);
             }
-        }
-        gp1.set_state(init_states[0]);
-        gp2.set_state(init_states[1]);
-        gp3.set_state(init_states[2]);
-        gp4.set_state(init_states[3]);
-        // Насытить генераторы.
-        for (int i=0; i<my_lcm<4>(primes); ++i) {
-            gp1.next_simd(init_inputs[0]);
-            gp2.next_simd(init_inputs[1]);
-            gp3.next_simd(init_inputs[2]);
-            gp4.next_simd(init_inputs[3]);
-            sawtooth<4>(init_inputs, primes);
+            // Насытить генераторы.
+            for (int i = 0; i < my_lcm<4>(primes); ++i) {
+                gp1.next_simd(init_inputs[0]);
+                gp2.next_simd(init_inputs[1]);
+                gp3.next_simd(init_inputs[2]);
+                gp4.next_simd(init_inputs[3]);
+                sawtooth<4>(init_inputs, primes);
+            }
+            secure_clear(init_inputs);
         }
         // Сохранить текущие состояния генераторов в качестве опорных (начальных).
-        const std::array<STATE, 4> refs {gp1.get_state(), gp2.get_state(), gp3.get_state(), gp4.get_state()};
+        std::array<STATE, 4> refs{gp1.get_state(),
+                                  gp2.get_state(),
+                                  gp3.get_state(),
+                                  gp4.get_state()};
         /**
          * @brief Протестировать начальные состояния генераторов "пилы".
          * @return Признак успеха, целое число.
@@ -352,6 +373,7 @@ public:
         gp2.set_state(refs[1]);
         gp3.set_state(refs[2]);
         gp4.set_state(refs[3]);
+        secure_clear(refs);
     }
 
     /**

@@ -53,33 +53,43 @@ inline void erase_bytes(uint8_t *b, std::size_t len)
 }
 
 // Функция очистки QByteArray
-inline void erase_bytes(QByteArray& b) {
-    if (b.isEmpty()) return;
+inline void erase_bytes(QByteArray &b)
+{
+    if (b.capacity() == 0)
+        return;
 
-    // Принудительно делаем буфер уникальным, гарантируя,
-    // что мы очищаем единственный экземпляр данных
-    b.detach();
+    // 1. Затираем абсолютно ВСЮ выделенную память (capacity), а не только size()
+    // Это гарантирует уничтожение "хвостов" после reserve() или resize()
+    erase_bytes(reinterpret_cast<uint8_t *>(b.data()), b.capacity());
 
-    // Передаем указатель на внутренний неконстантный буфер Qt
-    erase_bytes(reinterpret_cast<uint8_t*>(b.data()), b.size());
-    b.clear(); // Сбрасываем размер в Qt
+    // 2. Сбрасываем размер и емкость в 0.
+    // Вместо b.clear() (который оставляет capacity нетронутым)
+    // используем swap с пустым объектом, чтобы полностью освободить память.
+    QByteArray().swap(b);
 }
 
-// Функция очистки QString (UTF-16)
-inline void erase_string(QString& str) {
-    if (str.isEmpty()) return;
+// Функция гарантированной очистки QString (UTF-16)
+inline void erase_string(QString &str)
+{
+    if (str.capacity() == 0)
+        return;
 
-    str.detach();
+    // 1. Вычисляем РЕАЛЬНЫЙ размер выделенной памяти в байтах (через capacity)
+    // Символ QChar всегда занимает 2 байта (char16_t)
+    size_t total_bytes = static_cast<size_t>(str.capacity()) * sizeof(char16_t);
 
-    // Размер в байтах для UTF-16 — это количество символов * 2
-    int size_in_bytes = str.size() * sizeof(char16_t);
+    // 2. Затираем абсолютно всю выделенную память в куче
+    erase_bytes(reinterpret_cast<uint8_t *>(str.data()), total_bytes);
 
-    erase_bytes(reinterpret_cast<uint8_t*>(str.data()), size_in_bytes);
-    str.clear(); // Безопасно очищаем объект Qt
+    // 3. Полностью уничтожаем внутренний буфер объекта, сбрасывая capacity в 0.
+    // Обычный str.clear() оставляет capacity неизменным.
+    // Swap с временным пустым объектом гарантирует сброс.
+    QString().swap(str);
 }
 
 // Инициализация состояния генератора ПСЧ
-inline lfsr_rng::STATE fill_state_by_hash(lfsr_hash::u128 hash) {
+inline lfsr_rng::STATE fill_state_by_hash(const lfsr_hash::u128 &hash)
+{
     lfsr_rng::STATE st;
     for (int i = 0; i < 8; ++i) {
         lfsr_hash::u16 byte_1 = 255 & (hash.first >> (8 * i));
@@ -139,6 +149,8 @@ inline QByteArray seed_to_bytes(uint32_t seed) {
         ptr[i] = static_cast<char>(seed & 0xFF);
         seed >>= 8;
     }
+    volatile uint32_t *p_seed = &seed;
+    *p_seed = 0;
     return result;
 }
 
@@ -302,28 +314,34 @@ inline uint8_t rotr8(uint8_t value, unsigned int count)
     return (value >> count) | (value << ( (-count) & mask ));
 }
 
-inline QString encode_u32_simple_level(lfsr8::u32 sample)
+inline QByteArray encode_u32_simple_level(lfsr8::u32 sample)
 {
-    //constants::password_len_per_u32 обычно равен 4 или 5 в зависимости от архитектуры
-    QString word(constants::password_len_per_u32, '\0');
+    // Используем QByteArray вместо QString для контроля памяти
+    QByteArray word(constants::password_len_per_u32, '\0');
 
-    // Алфавит: 0-9 (10), A-Z (26), a-z (26). Всего 62 символа.
     for (int i = 0; i < constants::password_len_per_u32; ++i) {
         lfsr8::u32 r = sample % 62u;
         sample /= 62u;
 
         auto code = r + 48u;
-        if (code > 57u && code < 65u)  code += 7u;  // Пропуск знаков между 9 и A
-        if (code > 90u && code < 97u)  code += 6u;  // Пропуск знаков между Z и a
+        if (code > 57u && code < 65u)
+            code += 7u;
+        if (code > 90u && code < 97u)
+            code += 6u;
 
-        word[constants::password_len_per_u32 - i - 1] = QChar(code);
+        // Записываем ASCII-код прямо в байтовый массив
+        word[constants::password_len_per_u32 - i - 1] = static_cast<char>(code);
     }
-    return word;
+
+    // Зачищаем локальную копию числа на стеке
+    sample = 0;
+
+    return word; // Буфер переместится/скопируется, но мы затрем его в вызывающей функции
 }
 
-inline QString encode_u32_hard_level(lfsr8::u32 sample)
+inline QByteArray encode_u32_hard_level(lfsr8::u32 sample)
 {
-    QString word(constants::password_len_per_u32, '\0');
+    QByteArray word(constants::password_len_per_u32, '\0');
     bool has_special_symbol = false;
     int last_idx = constants::password_len_per_u32 - 1;
 
@@ -336,23 +354,23 @@ inline QString encode_u32_hard_level(lfsr8::u32 sample)
             has_special_symbol = true;
         }
 
-        if (code > 57u && code < 65u)  code += 7u;
-        if (code > 90u && code < 97u)  code += 6u;
+        if (code > 57u && code < 65u)
+            code += 7u;
+        if (code > 90u && code < 97u)
+            code += 6u;
 
-        word[last_idx - i] = QChar(code);
+        word[last_idx - i] = static_cast<char>(code);
     }
 
-    // Если спецсимвол не выпал случайно, мы принудительно заменяем самый первый
-    // символ строки на гарантированный спецсимвол (например, восклицательный знак '!', ASCII 33).
-    // Это сохраняет размер строки, не ломает цикл while и гарантирует выполнение условий сложности!
     if (!has_special_symbol) {
-        word[0] = QChar(33u); // '!'
+        word[0] = static_cast<char>(33u); // '!'
     }
 
+    sample = 0;
     return word;
 }
 
-inline QByteArray lfsr_hash_to_bytes(lfsr_hash::u128 hash)
+inline QByteArray lfsr_hash_to_bytes(const lfsr_hash::u128 &hash)
 {
     QByteArray output;
     constexpr size_t hash_size = sizeof(hash); // Ровно 16 байт (2 * sizeof(uint64_t))
@@ -392,7 +410,7 @@ inline lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray& input)
     return hash;
 }
 
-inline lfsr_hash::salt hash_to_salt(lfsr_hash::u128 hash)
+inline lfsr_hash::salt hash_to_salt(const lfsr_hash::u128 &hash)
 {
     using namespace lfsr_hash;
 

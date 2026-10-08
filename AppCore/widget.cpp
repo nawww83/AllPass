@@ -559,16 +559,13 @@ void Widget::copy_to_clipboard()
     // Если элемента в памяти нет, но индекс валиден — вытаскиваем текст и колонку напрямую из модели
     QString direct_text;
     int target_column = -1;
-    int target_row = -1;
 
     if (item_to_copy) {
         direct_text = item_to_copy->data(Qt::DisplayRole).toString();
         target_column = item_to_copy->column();
-        // target_row = item_to_copy->row();
     } else if (current_index.isValid()) {
         direct_text = current_index.data(Qt::DisplayRole).toString();
         target_column = current_index.column();
-        // target_row = current_index.row();
     }
 
     // Если копировать абсолютно нечего — выходим
@@ -620,6 +617,7 @@ void Widget::copy_to_clipboard()
         // Передаем elapsedTimer по значению [=] внутрь лямбды. Никаких smart-pointers не нужно.
         connect(timer, &QTimer::timeout, this, [this, pIndex, clipboard, timer, timeoutMs, elapsedTimer, direct_text]() mutable {
             if (!pIndex.isValid()) {
+                utils_global::erase_string(direct_text);
                 timer->stop();
                 timer->deleteLater();
                 return;
@@ -663,8 +661,10 @@ void Widget::copy_to_clipboard()
 
                 highlight_pswd(ui->tableWidget, pIndex.row(), QDate::currentDate());
 
-                // Очищаем буфер только если там всё ещё лежит наш пароль
-                if (clipboard->text() == direct_text) {
+                // Извлекаем текущий текст из буфера для сравнения
+                QString current_clipboard_text = clipboard->text();
+
+                if (current_clipboard_text == direct_text) {
                     clipboard->clear();
                     if (this->isActiveWindow()) {
                         QMessageBox::information(this,
@@ -672,6 +672,13 @@ void Widget::copy_to_clipboard()
                                                  tr("Буфер обмена очищен."));
                     }
                 }
+
+                // Затираем временную строку сравнения буфера
+                utils_global::erase_string(current_clipboard_text);
+
+                // Уничтожаем сам пароль, захваченный лямбдой
+                // Теперь, когда лямбда закроется, в куче останутся только нули вместо пароля.
+                utils_global::erase_string(direct_text);
             }
         });
 
@@ -680,10 +687,9 @@ void Widget::copy_to_clipboard()
         // Если это не пароль, просто копируем текст
         clipboard->setText(item_to_copy ? item_to_copy->text() : direct_text);
     }
-
+    utils_global::erase_string(direct_text);
     pointers::selected_context_table_item = nullptr;
 }
-
 
 void Widget::delete_row() {
     // Вычисляем индекс строки для удаления
@@ -702,6 +708,21 @@ void Widget::delete_row() {
     {
         return;
     }
+
+    // === КРИТИЧЕСКИЙ БЛОК БЕЗОПАСНОСТИ ===
+    // Достаем ячейку с паролем до удаления строки из таблицы
+    QTableWidgetItem *pswd_item = ui->tableWidget->item(row, constants::pswd_column_idx);
+    if (pswd_item) {
+        // Извлекаем секрет из UserRole
+        QString secret = pswd_item->data(Qt::UserRole).toString();
+
+        // 1. Стираем локальную копию, которую мы только что вытащили toString()
+        utils_global::erase_string(secret);
+
+        // 2. Перезаписываем UserRole пустой строкой, чтобы сбросить старый QVariant
+        pswd_item->setData(Qt::UserRole, QString());
+    }
+    // =====================================
 
     // Безопасное удаление с блокировкой сигналов
     ui->tableWidget->blockSignals(true);
@@ -1026,6 +1047,7 @@ void Widget::insert_new_password()
 
     if (pswd.length() < g_current_password_len) {
         utils_global::request_passwords(watcher_passwords, g_current_password_len);
+        utils_global::erase_string(pswd);
         pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
     }
 
@@ -1061,6 +1083,8 @@ void Widget::insert_new_password()
 
     this->is_modified = true;
     emit row_inserted();
+
+    utils_global::erase_string(pswd);
 }
 
 void Widget::on_btn_generate_clicked()
@@ -1463,6 +1487,10 @@ void Widget::btn_create_usb_key_clicked()
                 QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
                 data.append(crc256);
                 utils::erase_bytes(crc256);
+
+                utils::clear_lfsr_hash(hash_storage);
+                utils::clear_lfsr_hash(hash_enc);
+                utils::clear_lfsr_hash(hash_inn_enc);
 
                 QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
                 std::string_view pin_view(stack_pin_bytes.constData(),

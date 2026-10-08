@@ -393,8 +393,10 @@ inline void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watcher, int 
                 pswd_buff->mPasswords.data());
             std::fill_n(data_ptr, pswd_buff->mPasswords.size(), 0);
         }
-        pswd_buff->mPasswords = watcher.result();
+        QVector<lfsr8::u64> fresh_passwords = watcher.result();
+        pswd_buff->mPasswords = std::move(fresh_passwords);
     }
+    watcher.setFuture(QFuture<QVector<lfsr8::u64>>());
     qDebug() << "Passwords were requested.";
 }
 
@@ -403,58 +405,72 @@ inline QString try_to_get_password(int len, int level)
     auto *buffer = password::pswd_buff();
     QMutexLocker locker(&buffer->mMutex);
 
-    QString pswd;
     if (len <= 0)
-        return pswd;
+        return QString();
 
-    // Резервируем память под строку пароля заранее,
-    // чтобы избежать перевыделений в куче внутри цикла while
-    pswd.reserve(len);
+    QByteArray pswd_buffer;
+    pswd_buffer.reserve(len + 16);
 
-    while (pswd.size() < len) {
+    while (pswd_buffer.size() < len) {
         if (buffer->mPasswords.empty()) {
-            // Буфер опустел — перед выходом очищаем частично собранную строку,
-            // чтобы не возвращать огрызок пароля, и уберечь данные
-            utils::erase_string(pswd);
-            return pswd;
+            utils::erase_bytes(pswd_buffer);
+            return QString();
         }
 
-        // Безопасное извлечение с занулением памяти в векторе
         lfsr8::u64 raw64 = buffer->mPasswords.last();
 
-        // Затираем ячейку прямо в куче вектора mPasswords через volatile
+        // Зануляем ячейку в векторе
         volatile lfsr8::u64 *cell_ptr = reinterpret_cast<volatile lfsr8::u64 *>(
             &buffer->mPasswords.last());
         *cell_ptr = 0;
-
         buffer->mPasswords.removeLast();
 
-        // Разделение разрядов
         uint32_t high = static_cast<uint32_t>(raw64 >> 32);
         uint32_t low = static_cast<uint32_t>(raw64 & 0xFFFFFFFF);
 
-        if (level == 0) {
-            pswd.append(encode_u32_simple_level(low));
-            if (pswd.size() < len) {
-                pswd.append(encode_u32_simple_level(high));
-            }
-        } else {
-            pswd.append(encode_u32_hard_level(low));
-            if (pswd.size() < len) {
-                pswd.append(encode_u32_hard_level(high));
-            }
+        // Получаем фрагменты в виде QByteArray
+        QByteArray chunk_low = (level == 0) ? encode_u32_simple_level(low)
+                                            : encode_u32_hard_level(low);
+        QByteArray chunk_high = (level == 0) ? encode_u32_simple_level(high)
+                                             : encode_u32_hard_level(high);
+
+        pswd_buffer.append(chunk_low);
+        if (pswd_buffer.size() < len) {
+            pswd_buffer.append(chunk_high);
         }
 
-        // Стираем локальные копии чисел в стеке
-        volatile lfsr8::u64 *p_raw = &raw64;
-        *p_raw = 0;
-        volatile uint32_t *h_raw = &high;
-        *h_raw = 0;
-        volatile uint32_t *l_raw = &low;
-        *l_raw = 0;
+        // ГАРАНТИРОВАННО уничтожаем временные чанки сразу после использования!
+        utils::erase_bytes(chunk_low);
+        utils::erase_bytes(chunk_high);
+
+        // Стираем локальные копии чисел на стеке правильно:
+        utils::erase_bytes(reinterpret_cast<uint8_t *>(&raw64), sizeof(raw64));
+        utils::erase_bytes(reinterpret_cast<uint8_t *>(&high), sizeof(high));
+        utils::erase_bytes(reinterpret_cast<uint8_t *>(&low), sizeof(low));
     }
 
-    return pswd;
+    if (pswd_buffer.size() > len) {
+        pswd_buffer.resize(len);
+    }
+
+    // Создаем строку Qt в самый последний момент
+    QString final_password = QString::fromUtf8(pswd_buffer);
+
+    // Уничтожаем сборочный буфер
+    utils::erase_bytes(pswd_buffer);
+
+    // Глубокая очистка "хвоста" внутренней памяти вектора паролей, если он стал пуст
+    if (buffer->mPasswords.empty()) {
+        int old_capacity = buffer->mPasswords.capacity();
+        volatile lfsr8::u64 *raw_data = reinterpret_cast<volatile lfsr8::u64 *>(
+            buffer->mPasswords.data());
+        std::fill_n(raw_data, old_capacity, 0);
+
+        // Сбрасываем capacity в 0 через swap
+        QVector<lfsr8::u64>().swap(buffer->mPasswords);
+    }
+
+    return final_password;
 }
 
 inline QString generate_storage_name(const lfsr_hash::u128 &hash)
@@ -494,11 +510,13 @@ inline QString generate_storage_name(const lfsr_hash::u128 &hash)
         b_[16 + 2 * i + 1] = hash2.second >> 8 * i;
     }
     password::hash_gen.add_salt(utils::hash_to_salt(hash2));
+    utils::clear_lfsr_hash(hash2);
     u128 hash3 = hash128(password::hash_gen, bytes_span);
     for (int i = 0; i < 8; ++i) {
         name.push_back(allowed[(hash3.first >> 8 * i) % 36]);
         name.push_back(allowed[(hash3.second >> 8 * i) % 36]);
     }
+    utils::clear_lfsr_hash(hash3);
     utils::erase_bytes(b_, buffer_len);
     return name;
 }
