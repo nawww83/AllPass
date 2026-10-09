@@ -80,18 +80,11 @@ inline lfsr_rng::STATE fill_state_by_hash(const lfsr_hash::u128 &hash)
     return st;
 }
 
-// Безопасная очистка 128-битного хэша по ССЫЛКЕ
-// Безопасная очистка 128-битного хэша по ССЫЛКЕ
+// Безопасная очистка 128-битного хэша по ссылке
 inline void clear_lfsr_hash(lfsr_hash::u128 &hash)
 {
-    // Напрямую берем volatile-указатели на физические поля пары.
-    // Это выполняется за один проход, гарантирует очистку в Release
-    // и на 100% безопасно защищает кучу от ловушек с sizeof(std::pair).
-    volatile uint64_t *p_first = &hash.first;
-    volatile uint64_t *p_second = &hash.second;
-
-    *p_first = 0;
-    *p_second = 0;
+    utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&hash.first), sizeof(hash.first));
+    utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&hash.second), sizeof(hash.second));
 }
 
 // Безопасная очистка внутреннего состояния генератора (массива std::array)
@@ -101,7 +94,14 @@ inline void clear_lfsr_rng_state(lfsr_rng::STATE &st)
     erase_raw_bytes(reinterpret_cast<uint8_t *>(&st), sizeof(st));
 }
 
-inline char xor_val(const QByteArray& data) {
+/**
+ * @brief Возвращает результат битового xor всех байтов.
+ * @details Для пустых данных возвращает 0.
+ * @param data Байты.
+ * @return Байт-xor.
+ */
+inline char xor_values(const QByteArray &data)
+{
     if (data.isEmpty()) return '\0';
 
     const char* ptr = data.constData();
@@ -138,8 +138,7 @@ inline QByteArray seed_to_bytes(uint32_t seed) {
         ptr[i] = static_cast<char>(seed & 0xFF);
         seed >>= 8;
     }
-    volatile uint32_t *p_seed = &seed;
-    *p_seed = 0;
+    utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&seed), sizeof(seed));
     return result;
 }
 
@@ -224,8 +223,7 @@ inline QByteArray xor_data_by_seed(const QByteArray &data, uint32_t seed)
     // 3. Гарантированно выжигаем ключевой материал в RAM перед выходом
     utils::erase_bytes(stateBuffer);
     utils::erase_bytes(currentGammaBlock);
-    volatile uint32_t *p_seed = &seed;
-    *p_seed = 0;
+    utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&seed), sizeof(seed));
 
     return result;
 }
@@ -233,6 +231,7 @@ inline QByteArray xor_data_by_seed(const QByteArray &data, uint32_t seed)
 template<int block_size>
 inline void padd(QByteArray &data)
 {
+    static_assert(block_size > 0);
     // Гарантируем монопольное владение буфером
     data.detach();
 
@@ -322,10 +321,8 @@ inline QByteArray encode_u32_simple_level(lfsr8::u32 sample)
         word[constants::password_len_per_u32 - i - 1] = static_cast<char>(code);
     }
 
-    // Зачищаем локальную копию числа на стеке
-    sample = 0;
-
-    return word; // Буфер переместится/скопируется, но мы затрем его в вызывающей функции
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(&sample), sizeof(sample));
+    return word;
 }
 
 inline QByteArray encode_u32_hard_level(lfsr8::u32 sample)
@@ -355,7 +352,7 @@ inline QByteArray encode_u32_hard_level(lfsr8::u32 sample)
         word[0] = static_cast<char>(33u); // '!'
     }
 
-    sample = 0;
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(&sample), sizeof(sample));
     return word;
 }
 
