@@ -1,5 +1,6 @@
 #include "storagemanager.h"
 #include "constants.h"
+#include "crypto_table_item.h"
 #include "global_data.h"
 #include "utils.h"
 
@@ -846,18 +847,18 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
         if (ch == col_byte || ch == row_byte) {
             if (current_col < wr_table->columnCount()) {
-                QTableWidgetItem *item = new QTableWidgetItem();
+                QTableWidgetItem *item = nullptr;
                 QString final_str = "";
 
                 if (!accumulated_cell.isEmpty() && accumulated_cell.at(0) != empty_byte) {
                     final_str = QString::fromUtf8(accumulated_cell);
                 }
 
+                // ВНЕДРЕНИЕ: Для колонки паролей создаем специализированный CryptoTableItem
                 if (current_col == constants::pswd_column_idx) {
-                    item->setData(Qt::DisplayRole, final_str);
-                    item->setData(Qt::EditRole, final_str);
+                    item = new CryptoTableItem(final_str);
                 } else {
-                    item->setText(final_str);
+                    item = new QTableWidgetItem(final_str);
                 }
 
                 wr_table->setItem(current_row, current_col, item);
@@ -878,17 +879,18 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
     }
 
     if (current_col < wr_table->columnCount()) {
-        QTableWidgetItem *item = new QTableWidgetItem();
+        QTableWidgetItem *item = nullptr;
         QString final_str = "";
         if (!accumulated_cell.isEmpty() && accumulated_cell.at(0) != empty_byte) {
             final_str = QString::fromUtf8(accumulated_cell);
         }
+        // ВНЕДРЕНИЕ: Для колонки паролей создаем специализированный CryptoTableItem
         if (current_col == constants::pswd_column_idx) {
-            item->setData(Qt::DisplayRole, final_str);
-            item->setData(Qt::EditRole, final_str);
+            item = new CryptoTableItem(final_str);
         } else {
-            item->setText(final_str);
+            item = new QTableWidgetItem(final_str);
         }
+
         wr_table->setItem(current_row, current_col, item);
     }
     utils::erase_bytes(accumulated_cell);

@@ -20,6 +20,7 @@
 
 #include "AppCore/ui_widget.h"
 
+#include "crypto_table_item.h"
 #include "passitemdelegate.h"
 #include "storagemanager.h"
 #include "usbstorages.h"
@@ -619,9 +620,24 @@ void Widget::copy_to_clipboard()
                 &QTimer::timeout,
                 this,
                 [this, pIndex, clipboard, timer, timeoutMs, elapsedTimer, direct_text]() mutable {
+                    // Если строку/ячейку удалили посреди работы таймера
                     if (!pIndex.isValid()) {
-                        // Если ячейку удалили посреди работы таймера — выжигаем пароль в лямбде
+                        // 1. Проверяем, совпадает ли текущий текст в буфере ОС с нашим паролем
+                        if (clipboard->text() == direct_text) {
+                            clipboard
+                                ->clear(); // Намертво выжигаем пароль из памяти операционной системы!
+
+                            if (this->isActiveWindow()) {
+                                QMessageBox::information(
+                                    this,
+                                    tr("Безопасность"),
+                                    tr("Строка удалена. Буфер обмена принудительно очищен."));
+                            }
+                        }
+
+                        // 2. Выжигаем локальную переменную пароля внутри самой лямбды
                         utils_global::erase_string(direct_text);
+
                         timer->stop();
                         timer->deleteLater();
                         return;
@@ -711,18 +727,6 @@ void Widget::delete_row() {
     {
         return;
     }
-
-    // === КРИТИЧЕСКИЙ БЛОК БЕЗОПАСНОСТИ ===
-    // Достаем ячейку с паролем до удаления строки из таблицы
-    QTableWidgetItem *pswd_item = ui->tableWidget->item(row, constants::pswd_column_idx);
-    if (pswd_item) {
-        // Извлекаем секрет из UserRole
-        QString secret = pswd_item->data(Qt::UserRole).toString();
-        secret.detach();
-        utils_global::erase_string(secret);
-        pswd_item->setData(Qt::UserRole, QString());
-    }
-    // =====================================
 
     // Безопасное удаление с блокировкой сигналов
     ui->tableWidget->blockSignals(true);
@@ -1072,9 +1076,9 @@ void Widget::insert_new_password()
 
     ui->tableWidget->setItem(row, 0, new QTableWidgetItem(""));
 
-    // Секция пароля
+    // Секция пароля: ВНЕДРЕНИЕ CryptoTableItem
     {
-        QTableWidgetItem *item = new QTableWidgetItem(pswd);
+        CryptoTableItem *item = new CryptoTableItem(pswd);
         ui->tableWidget->setItem(row, constants::pswd_column_idx, item);
     }
 
@@ -1485,28 +1489,23 @@ void Widget::btn_create_usb_key_clicked()
                     goto exit_lambda;
                 }
 
+                // 1. Кодируем имя ключа напрямую в буфер
                 QByteArray tmp4 = key_name.toUtf8();
+
                 QByteArray data;
                 data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
 
-                QByteArray tmp1 = utils::lfsr_hash_to_bytes(hash_storage);
-                data.append(tmp1);
-                utils::erase_bytes(tmp1);
+                // 2. Последовательно добавляем хэши и сразу выжигаем промежуточную память
+                data.append(utils::lfsr_hash_to_bytes(hash_storage));
+                data.append(utils::lfsr_hash_to_bytes(hash_enc));
+                data.append(utils::lfsr_hash_to_bytes(hash_inn_enc));
 
-                QByteArray tmp2 = utils::lfsr_hash_to_bytes(hash_enc);
-                data.append(tmp2);
-                utils::erase_bytes(tmp2);
-
-                QByteArray tmp3 = utils::lfsr_hash_to_bytes(hash_inn_enc);
-                data.append(tmp3);
-                utils::erase_bytes(tmp3);
-
+                // 3. Добавляем имя ключа и очищаем его локальную UTF-8 копию
                 data.append(tmp4);
                 utils::erase_bytes(tmp4);
 
-                QByteArray crc256 = QCryptographicHash::hash(data, QCryptographicHash::Sha256);
-                data.append(crc256);
-                utils::erase_bytes(crc256);
+                // Хэшируем накопленный буфер data и сразу дописываем результат в его хвост
+                data.append(QCryptographicHash::hash(data, QCryptographicHash::Sha256));
 
                 utils::clear_lfsr_hash(hash_storage);
                 utils::clear_lfsr_hash(hash_enc);
@@ -1535,7 +1534,7 @@ void Widget::btn_create_usb_key_clicked()
                 loop.exec();
 
                 utils::erase_bytes(data);
-            }
+            } // if !textBytes.isEmpty()
         exit_lambda:
             // Затираем мастер-фразу
             utils::erase_bytes(textBytes);

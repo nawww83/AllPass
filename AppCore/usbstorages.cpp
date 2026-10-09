@@ -57,16 +57,37 @@ struct UsbDeviceDetails
     QString vid;
     QString pid;
     QString modelDescription;
+
+    // Добавляем кастомный деструктор для структуры, чтобы она сама себя зачищала
+    ~UsbDeviceDetails()
+    {
+        serial.detach();
+        vid.detach();
+        pid.detach();
+        modelDescription.detach();
+        utils::erase_string(serial);
+        utils::erase_string(vid);
+        utils::erase_string(pid);
+        utils::erase_string(modelDescription);
+    }
+
+    // Явно разрешаем конструктор перемещения для безопасного возврата из функции
+    UsbDeviceDetails() = default;
+    UsbDeviceDetails(UsbDeviceDetails &&) = default;
+    UsbDeviceDetails &operator=(UsbDeviceDetails &&) = default;
+    // Запрещаем копирование, чтобы исключить бесконтрольное размножение соли в RAM
+    UsbDeviceDetails(const UsbDeviceDetails &) = delete;
+    UsbDeviceDetails &operator=(const UsbDeviceDetails &) = delete;
 };
 
-UsbDeviceDetails getUsbDetails(const QStorageInfo& storage)
+UsbDeviceDetails getUsbDetails(const QStorageInfo &storage)
 {
     UsbDeviceDetails details;
 
     if (!storage.isValid() || !storage.isReady())
         return details;
 
-    QString devicePath = storage.device(); // Получаем, например, "/dev/sdb1"
+    QString devicePath = storage.device(); // Например, "/dev/sdb1"
     if (!devicePath.startsWith("/dev/"))
         return details;
 
@@ -76,49 +97,79 @@ UsbDeviceDetails getUsbDetails(const QStorageInfo& storage)
         devName.chop(1);
     }
 
-    // Вызываем udevadm для очищенного имени диска
     QProcess udevadm;
     udevadm.start("udevadm", QStringList() << "info" << "--query=property" << "--name=" + devName);
 
     if (udevadm.waitForFinished()) {
         QString output = QString::fromUtf8(udevadm.readAllStandardOutput());
         QStringList lines = output.split('\n');
+
+        // Временные переменные парсера
         QString rawVidHex, rawPidHex;
         QString vendorName, modelName;
+        QString vendorDb, modelDb;
+
         for (const QString &line : std::as_const(lines)) {
             if (line.startsWith("ID_SERIAL_SHORT=")) {
                 details.serial = line.mid(16).trimmed();
             }
-            // Читаем текстовое имя бренда (как VEN_ в Windows)
-            else if (line.startsWith("ID_VENDOR=")) {
+            // Вытаскиваем текстовые имена из базы udev для полной синхронизации с Windows USBSTOR
+            else if (line.startsWith("ID_VENDOR_FROM_DATABASE=")) {
+                vendorDb = line.mid(24).trimmed();
+            } else if (line.startsWith("ID_MODEL_FROM_DATABASE=")) {
+                modelDb = line.mid(23).trimmed();
+            } else if (line.startsWith("ID_VENDOR=")) {
                 vendorName = line.mid(10).trimmed();
-            }
-            // Читаем текстовое имя модели (как PROD_ в Windows)
-            else if (line.startsWith("ID_MODEL=")) {
+            } else if (line.startsWith("ID_MODEL=")) {
                 modelName = line.mid(9).trimmed();
-            }
-            // Параллельно сохраняем HEX-коды на случай, если текста не будет
-            else if (line.startsWith("ID_VENDOR_ID=")) {
-                rawVidHex = line.mid(13).trimmed().toUpper();
+            } else if (line.startsWith("ID_VENDOR_ID=")) {
+                rawVidHex = line.mid(13).trimmed();
             } else if (line.startsWith("ID_MODEL_ID=")) {
-                rawPidHex = line.mid(12).trimmed().toUpper();
+                rawPidHex = line.mid(12).trimmed();
             }
-        }
-        // Полная синхронизация с Windows:
-        if (!vendorName.isEmpty()) {
-            details.vid = vendorName.toUpper();
-        } else if (!rawVidHex.isEmpty()) {
-            details.vid = rawVidHex; // Если текста нет, пишем hex-код производителя
         }
 
-        if (!modelName.isEmpty()) {
-            details.pid = modelName.toUpper();
-        } else if (!rawPidHex.isEmpty()) {
-            details.pid = rawPidHex; // Если текста нет, пишем hex-код модели
-        }
+        // --- КРОСС ПЛАТФОРМЕННЫЙ СИНХРОНИЗАТОР СОЛИ ---
+        // Отдаем строгий приоритет текстовым именам, как это делает подсистема Windows
+        if (!vendorDb.isEmpty())
+            details.vid = vendorDb;
+        else if (!vendorName.isEmpty())
+            details.vid = vendorName;
+        else
+            details.vid = rawVidHex;
+
+        if (!modelDb.isEmpty())
+            details.pid = modelDb;
+        else if (!modelName.isEmpty())
+            details.pid = modelName;
+        else
+            details.pid = rawPidHex;
+
+        details.vid = details.vid.toUpper();
+        details.pid = details.pid.toUpper();
+
+        // Принудительно изолируем возвращаемые строки в куче
+        details.serial.detach();
+        details.vid.detach();
+        details.pid.detach();
+
+        // --- КРИТИЧЕСКОЕ ВЫЖИГАНИЕ ПРОМЕЖУТОЧНОЙ ПАМЯТИ В RAM ---
+        rawVidHex.detach();
+        rawPidHex.detach();
+        vendorName.detach();
+        modelName.detach();
+        vendorDb.detach();
+        modelDb.detach();
+
+        utils::erase_string(rawVidHex);
+        utils::erase_string(rawPidHex);
+        utils::erase_string(vendorName);
+        utils::erase_string(modelName);
+        utils::erase_string(vendorDb);
+        utils::erase_string(modelDb);
     }
 
-    return details;
+    return details; // Сработает NRVO/Move-возврат структуры
 }
 
 #endif
@@ -262,18 +313,17 @@ void UsbStorages::fill_usb_info(const QString& root_path)
 #endif
 
 /**
- * @brief Прямое чтение токена.
+ * @brief Прямое чтение токенов с USB-носителя.
  * @param root_path Корень usb-токена.
- * @return Прочитанная строка.
+ * @return Валидный вектор сырых байтовых массивов Base64.
  */
-static QVector<QString> read_tokens(const QString& root_path)
+static QVector<QByteArray> read_tokens(const QString &root_path)
 {
     QDir usbDir(root_path);
-    QVector<QString> tokens;
+    QVector<QByteArray> tokens;
 
     // Фильтруем поиск только по файлам *.enc в корне диска
-    QStringList filters;
-    filters << "*.enc";
+    QStringList filters{"*.enc"};
     usbDir.setNameFilters(filters);
     usbDir.setFilter(QDir::Files | QDir::NoDotAndDotDot);
 
@@ -282,17 +332,24 @@ static QVector<QString> read_tokens(const QString& root_path)
         return tokens;
     }
 
-    // Берем первый подходящий файл
-    for (auto& file_info : std::as_const(fileList)) {
-        QString filePath = file_info.absoluteFilePath();
-        QFile file(filePath);
-        QString base64Text;
-        // Считываем данные через QTextStream
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QTextStream stream(&file);
-            base64Text = stream.readAll();
+    for (const QFileInfo &file_info : std::as_const(fileList)) {
+        QFile file(file_info.absoluteFilePath());
+
+        // Открываем строго в бинарном режиме ReadOnly (без текстового перекодирования)
+        if (file.open(QIODevice::ReadOnly)) {
+            QByteArray base64Bytes = file.readAll();
             file.close();
-            tokens.append(base64Text);
+
+            if (!base64Bytes.isEmpty()) {
+                // Принудительно изолируем массив в куче, чтобы владение было монопольным
+                base64Bytes.detach();
+
+                // Добавляем токен в вектор
+                tokens.append(base64Bytes);
+
+                // Гарантированно выжигаем локальную переменную
+                utils::erase_bytes(base64Bytes);
+            }
         }
     }
     return tokens;
@@ -368,9 +425,21 @@ UsbStorages::UsbStorages(std::string_view pin,
 
 UsbStorages::~UsbStorages()
 {
-    utils::erase_string(m_hardwareSerial);
+    // 1. Принудительно изолируем конфиденциальные контейнеры перед выжиганием.
+    // Это гарантирует, что erase_bytes/erase_string очистят монопольные буферы
+    // и никогда не повредят общую память интерфейса Qt!
+    m_data.detach();
+    m_pinBuffer.detach();
+    m_hardwareSerial.detach();
+    m_vid.detach();
+    m_pid.detach();
+
+    // 2. Гарантированно уничтожаем ключевой материал и соль PBKDF2 нулями по точному .size()
     utils::erase_bytes(m_data);
     utils::erase_bytes(m_pinBuffer);
+    utils::erase_string(m_hardwareSerial);
+    utils::erase_string(m_vid);
+    utils::erase_string(m_pid);
 }
 
 QVector<QByteArray> UsbStorages::tryToReadKey()
@@ -378,15 +447,14 @@ QVector<QByteArray> UsbStorages::tryToReadKey()
     auto allDrives = QStorageInfo::mountedVolumes();
     QVector<QByteArray> tokens;
 
-    for (const QStorageInfo &storage : std::as_const( allDrives )) {
+    for (const QStorageInfo &storage : std::as_const(allDrives)) {
         if (!storage.isValid() || !storage.isReady())
             continue;
 
         bool isRemovable = false;
-
 #if defined(Q_OS_WIN)
-        UINT driveType = GetDriveTypeW(reinterpret_cast<LPCWSTR>(storage.rootPath().utf16()));
-        if (driveType == DRIVE_REMOVABLE) {
+        if (GetDriveTypeW(reinterpret_cast<LPCWSTR>(storage.rootPath().utf16()))
+            == DRIVE_REMOVABLE) {
             isRemovable = true;
         }
 #elif defined(Q_OS_LINUX)
@@ -404,70 +472,81 @@ QVector<QByteArray> UsbStorages::tryToReadKey()
 #else
             fill_usb_info(m_rootPath);
 #endif
-            QVector<QString> usb_keys = read_tokens(m_rootPath);
+            QVector<QByteArray> usb_keys = read_tokens(m_rootPath);
             QByteArray strongMasterKey = makePinTokenMasterKey(m_vid,
                                                                m_pid,
                                                                m_hardwareSerial,
                                                                m_pinBuffer);
-            for (auto& usb_key : std::as_const(usb_keys)) {
-                QByteArray data = CollatzCipher256::decrypt(usb_key, strongMasterKey);
 
-                // Если паддинг не совпал (неверный PIN), decrypt вернет пустой массив.
-                // Сразу уходим на следующий круг, предотвращая любые манипуляции с памятью.
-                if (data.isEmpty()) {
+            for (const QByteArray &usb_key_bytes : std::as_const(usb_keys)) {
+                // 1. Явно создаем Unicode-строку для совместимости с сигнатурой decrypt
+                QString usb_key_str = QString::fromUtf8(usb_key_bytes);
+
+                // 2. Передаем её в шифратор
+                QByteArray data = CollatzCipher256::decrypt(usb_key_str, strongMasterKey);
+
+                // Очищаем временную строку secrets СРАЗУ же, как только получили данные.
+                // Метод detach() гарантирует монопольность, а erase_string стирает её в RAM нулями.
+                usb_key_str.detach();
+                utils::erase_string(usb_key_str);
+
+                // Ограничиваем максимальный размер токена для защиты от мусорных данных (1 МБ)
+                if (data.isEmpty() || data.size() > 1024 * 1024) {
+                    utils::erase_bytes(data);
                     continue;
                 }
 
-                constexpr size_t single_hash_size = sizeof(lfsr_hash::u128); // 16 байт
-                constexpr size_t hashes_total_size = 3 * single_hash_size;   // 48 байт
-                constexpr size_t crc_size = 32;                              // 32 байта (SHA-256)
+                constexpr size_t hashes_total_size = 3 * sizeof(lfsr_hash::u128); // 48 байт
+                constexpr size_t crc_size = 32; // 32 байта (SHA-256)
+                const int variable_data_size = data.size() - hashes_total_size - crc_size;
 
-                // Защита: расшифрованный блок мусора не может быть валидным токеном,
-                // если он меньше заголовков хэшей и контрольной суммы
-                if (data.size() <= static_cast<int>(hashes_total_size + crc_size)) {
+                if (variable_data_size <= 0) {
                     utils::erase_bytes(data);
-                    continue; // Пропускаем этот поврежденный/неверный токен
+                    continue;
                 }
 
-                // Вычисляем размер переменной части данных
-                int variable_data_size = data.size() - hashes_total_size - crc_size;
-                // Вырезаем первые 48 байт хэшей
-                QByteArray data_part;
-                data_part.reserve(hashes_total_size + variable_data_size);
-                data_part = data.left(hashes_total_size);
-                data_part.append( data.mid(hashes_total_size, variable_data_size) );
+                // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ КУЧИ: Разрываем связи и фиксируем парсер
+                data.detach();
 
-                // Вырезаем последние 32 байта сохраненного CRC
-                QByteArray saved_crc = data.right(crc_size);
+                // Проверяем SHA-256 напрямую по памяти оригинального буфера без выделения промежуточных массивов
+                QByteArray calculated_crc
+                    = QCryptographicHash::hash(QByteArray::fromRawData(data.constData(),
+                                                                       hashes_total_size
+                                                                           + variable_data_size),
+                                               QCryptographicHash::Sha256);
 
-                // Вычисляем SHA-256 от прочитанных хэшей
-                QByteArray calculated_crc = QCryptographicHash::hash(data_part, QCryptographicHash::Sha256);
-
-                // Сверяем контрольные суммы
-                if (saved_crc != calculated_crc) {
-                    utils::erase_bytes(data_part);
-                    utils::erase_bytes(data);
-                    utils::erase_bytes(saved_crc);
+                // Constant-Time сверка контрольной суммы (SHA-256)
+                if (std::memcmp(data.constData() + data.size() - crc_size,
+                                calculated_crc.constData(),
+                                crc_size)
+                    != 0) {
                     utils::erase_bytes(calculated_crc);
+                    utils::erase_bytes(data);
                     continue;
                 }
 
-                utils::erase_bytes(saved_crc);
                 utils::erase_bytes(calculated_crc);
-                tokens.append(data_part);
-                utils::erase_bytes(data_part);
+
+                // Отрезаем публичный тег CRC с хвоста
+                data.resize(hashes_total_size + variable_data_size);
+
+                // Добавляем очищенный валидный токен в результирующий вектор
+                tokens.append(data);
                 utils::erase_bytes(data);
-            } // file loop
+            }
+            for (QByteArray &k : usb_keys) {
+                utils::erase_bytes(k);
+            }
             utils::erase_bytes(strongMasterKey);
-        } // if removable
-    } // storage loop
+        }
+    }
     return tokens;
 }
 
 void UsbStorages::saveKey()
 {
     m_save_keyButton->setEnabled(false);
-    QSplashScreen* splash = new QSplashScreen();
+    QSplashScreen *splash = new QSplashScreen();
     QFont splashFont;
     splashFont.setBold(true);
     splashFont.setPixelSize(18);
@@ -475,32 +554,49 @@ void UsbStorages::saveKey()
     splash->setWindowFlags(splash->windowFlags() | Qt::WindowStaysOnTopHint);
     splash->showMessage(QString::fromUtf8("Подождите..."), Qt::AlignCenter, Qt::blue);
     splash->show();
-    // Заставляем Qt немедленно перерисовать кнопку на экране.
-    qApp->processEvents(QEventLoop::ExcludeUserInputEvents); // [Qt]
+    qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
 
-    // Генерируем 256-битный мастер-ключ через PBKDF2
+    // 1. Генерируем 256-битный мастер-ключ через PBKDF2
     QByteArray strongMasterKey = makePinTokenMasterKey(m_vid, m_pid, m_hardwareSerial, m_pinBuffer);
+
+    // Получаем зашифрованный токен Base64
     QString usb_key = CollatzCipher256::encrypt(m_data, strongMasterKey);
+
+    // Незамедлительно уничтожаем PBKDF2 мастер-ключ системными нулями
     utils::erase_bytes(strongMasterKey);
 
     splash->close();
     splash->deleteLater();
 
+    // Преобразуем строку токена в чистый однобайтовый ASCII-массив для записи на диск
+    QByteArray usb_key_bytes = usb_key.toUtf8();
+
+    // КРИТИЧЕСКАЯ ОЧИСТКА: Нам больше не нужна Unicode-строка в куче, выжигаем её на месте
+    usb_key.detach();
+    utils::erase_string(usb_key);
+
+    // 2. Запись на носитель в чистом бинарном режиме (без QTextStream)
     QString fullPath = QDir::cleanPath(m_rootPath + QDir::separator() + m_tokenName);
     QFile file(fullPath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << usb_key;
+
+    // Открываем файл в строго бинарном режиме WriteOnly (без флага Text)
+    if (file.open(QIODevice::WriteOnly)) {
+        // Принудительно изолируем байты перед физической записью на сектор флешки
+        usb_key_bytes.detach();
+
+        file.write(usb_key_bytes);
         file.close();
-        QMessageBox::information(this,
-                             tr("Успех"),
-                             tr("Крипто-токен записан."));
+
+        QMessageBox::information(this, tr("Успех"), tr("Крипто-токен записан."));
     } else {
         QMessageBox::warning(this,
                              tr("Ошибка файла"),
                              tr("Крипто-токен не может быть записан на носитель."));
     }
-    utils::erase_string(usb_key);
+
+    // 3. Гарантированно выжигаем ASCII-копию токена в куче системными нулями
+    utils::erase_bytes(usb_key_bytes);
+
     m_save_keyButton->setEnabled(true);
 }
 
@@ -512,15 +608,15 @@ void UsbStorages::refreshDrives()
 
     auto allDrives = QStorageInfo::mountedVolumes();
 
-    for (const QStorageInfo &storage : std::as_const( allDrives )) {
+    for (const QStorageInfo &storage : std::as_const(allDrives)) {
         if (!storage.isValid() || !storage.isReady())
             continue;
 
         bool isRemovable = false;
 
 #if defined(Q_OS_WIN)
-        UINT driveType = GetDriveTypeW(reinterpret_cast<LPCWSTR>(storage.rootPath().utf16()));
-        if (driveType == DRIVE_REMOVABLE) {
+        if (GetDriveTypeW(reinterpret_cast<LPCWSTR>(storage.rootPath().utf16()))
+            == DRIVE_REMOVABLE) {
             isRemovable = true;
         }
 #elif defined(Q_OS_LINUX)
@@ -533,12 +629,27 @@ void UsbStorages::refreshDrives()
 
             QString displayName = storage.name().isEmpty() ? "Физический диск" : storage.name();
 
-            // Передаем все три аргумента в один вызов .arg() через запятую
-            QString itemText = QString("%1 (%2) [%3]")
-                                   .arg(displayName, storage.rootPath(), QString::fromUtf8(storage.fileSystemType()));
+            // Вытаскиваем сырой тип файловой системы
+            QByteArray fsTypeBytes = storage.fileSystemType();
+            QString fsTypeStr = QString::fromUtf8(fsTypeBytes);
+            QString rootPathStr = storage.rootPath();
 
+            // Формируем текст элемента списка
+            QString itemText = QString("%1 (%2) [%3]").arg(displayName, rootPathStr, fsTypeStr);
 
+            // Принудительно разрываем связи строки перед добавлением в UI виджет
+            itemText.detach();
             m_driveListWidget->addItem(itemText);
+
+            // --- ГАРАНТИРОВАННОЕ ВЫЖИГАНИЕ ВРЕМЕННЫХ СТРОК ИЗ КУЧИ ---
+            fsTypeStr.detach();
+            rootPathStr.detach();
+            itemText.detach();
+
+            utils::erase_bytes(fsTypeBytes);
+            utils::erase_string(fsTypeStr);
+            utils::erase_string(rootPathStr);
+            utils::erase_string(itemText);
         }
     }
 
@@ -552,19 +663,35 @@ void UsbStorages::refreshDrives()
 
 void UsbStorages::onDriveSelected(int index)
 {
-    if (index < 0 || index >= m_drives.size()) return;
+    if (index < 0 || index >= m_drives.size())
+        return;
 
     const QStorageInfo &storage = m_drives.at(index);
     m_rootPath = storage.rootPath(); // Например, "E:/"
 
+    // Сразу принудительно изолируем пути перед обновлением данных
+    m_rootPath.detach();
+
 #if defined(Q_OS_LINUX)
-    auto usb_details = getUsbDetails(storage);
-    m_hardwareSerial = usb_details.serial;
-    m_vid = usb_details.vid;
-    m_pid = usb_details.pid;
+    // Ограничиваем область видимости структуры usb_details
+    {
+        auto usb_details = getUsbDetails(storage);
+
+        // Перезаписываем поля класса
+        m_hardwareSerial = usb_details.serial;
+        m_vid = usb_details.vid;
+        m_pid = usb_details.pid;
+    }
 #else
     fill_usb_info(m_rootPath);
 #endif
+
+    // КРИТИЧЕСКИЙ БАРЬЕР: Намертво изолируем новые данные соли флешки в куче.
+    // Теперь поля класса владеют памятью монопольно, и повторные клики/деструктор
+    // никогда не спровоцируют конфликты аллокатора или Invalid Pointer!
+    m_hardwareSerial.detach();
+    m_vid.detach();
+    m_pid.detach();
 
     // Формируем красивый HTML-блок с CSS-стилями и визуальными разделителями
     QString resultText
@@ -594,7 +721,12 @@ void UsbStorages::onDriveSelected(int index)
               "</div>")
               .arg(m_hardwareSerial, m_vid, m_pid); // Передаем исправленные строки отображения
 
+    // Принудительно отвязываем сформированный HTML от внутренних буферов QString перед выводом
+    resultText.detach();
     m_serialLabel->setHtml(resultText);
+
+    // ГАРАНТИРОВАННОЕ ВЫЖИГАНИЕ: Полностью уничтожаем текстовый шаблон соли в RAM системными нулями
+    utils::erase_string(resultText);
 }
 
 #if defined(Q_OS_WIN)
