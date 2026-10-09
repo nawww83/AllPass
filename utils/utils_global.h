@@ -198,7 +198,7 @@ inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
     fill_buffer_from_pin(b_);
     password::hash_gen.add_salt(pin_to_salt(inner_salt));
     const auto hash = hash128(password::hash_gen, std::as_bytes(std::span(b_)));
-    utils::erase_bytes(b_, blockSize);
+    utils::erase_raw_bytes(b_, blockSize);
     return hash;
 }
 
@@ -444,9 +444,9 @@ inline QString try_to_get_password(int len, int level)
         utils::erase_bytes(chunk_high);
 
         // Стираем локальные копии чисел на стеке правильно:
-        utils::erase_bytes(reinterpret_cast<uint8_t *>(&raw64), sizeof(raw64));
-        utils::erase_bytes(reinterpret_cast<uint8_t *>(&high), sizeof(high));
-        utils::erase_bytes(reinterpret_cast<uint8_t *>(&low), sizeof(low));
+        utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&raw64), sizeof(raw64));
+        utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&high), sizeof(high));
+        utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(&low), sizeof(low));
     }
 
     if (pswd_buffer.size() > len) {
@@ -517,7 +517,7 @@ inline QString generate_storage_name(const lfsr_hash::u128 &hash)
         name.push_back(allowed[(hash3.second >> 8 * i) % 36]);
     }
     utils::clear_lfsr_hash(hash3);
-    utils::erase_bytes(b_, buffer_len);
+    utils::erase_raw_bytes(b_, buffer_len);
     return name;
 }
 

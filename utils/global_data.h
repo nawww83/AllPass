@@ -29,7 +29,7 @@ struct PinCode
 
     void clear()
     {
-        utils::erase_bytes(reinterpret_cast<uint8_t *>(mPinCode.data()), sizeof(mPinCode));
+        utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(mPinCode.data()), sizeof(mPinCode));
         mPinCode.fill(-1);
     }
 

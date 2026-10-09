@@ -278,7 +278,7 @@ static bool extract_and_check_hash128(QByteArray &bytes)
     // 2. Выжигаем оригинальный хэш в ОЗУ через нашу надежную erase_bytes.
     // Передаем указатель точно на начало хэша в хвосте буфера.
     uint8_t *hash_tail_ptr = reinterpret_cast<uint8_t *>(bytes.data() + hash_offset);
-    utils::erase_bytes(hash_tail_ptr, hash_size);
+    utils::erase_raw_bytes(hash_tail_ptr, hash_size);
 
     // Отрезаем хэш от массива. Теперь в хвосте гарантированно лежат нули.
     bytes.resize(hash_offset);
@@ -533,7 +533,7 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
 \
     /* Физически выжигаем и отсекаем блок CRC с самого конца массива decrypted */ \
     uint8_t *crc_clear_ptr = reinterpret_cast<uint8_t *>(decrypted.data()) + decrypted_crc_offset; \
-    utils::erase_bytes(crc_clear_ptr, single_crc_block_len); \
+    utils::erase_raw_bytes(crc_clear_ptr, single_crc_block_len); \
     decrypted.resize(decrypted_crc_offset); \
 \
     /* 4. Теперь в самом хвосте decrypted остался чистый 16-байтный хэш. Проверяем его */ \
@@ -569,7 +569,7 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
 \
     uint8_t *decoded_tail_ptr = reinterpret_cast<uint8_t *>(decoded_data.data()) \
                                 + decoded_crc_offset; \
-    utils::erase_bytes(decoded_tail_ptr, single_crc_block_len); \
+    utils::erase_raw_bytes(decoded_tail_ptr, single_crc_block_len); \
     decoded_data.resize(decoded_crc_offset); \
 \
     /* Constant-Time побайтовая сверка CRC */ \
@@ -786,7 +786,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         // 2. Выжигаем текстовый маркер версии прямо в физической памяти ОЗУ
         uint8_t *version_tail_ptr = reinterpret_cast<uint8_t *>(raw_data.data())
                                     + version_start_offset;
-        utils::erase_bytes(version_tail_ptr, version_len);
+        utils::erase_raw_bytes(version_tail_ptr, version_len);
 
         // 3. Отсекаем хвост: создаем новый QByteArray, содержащий только крипто-блок.
         // Метод .left() скопирует ровно version_start_offset байт, полностью отбросив зануленный хвост.
@@ -799,6 +799,7 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         if (g_supported_as_version_1->contains(read_version)) {
             // Передаем в do_decode гарантированно чистый массив, кратный 16 байтам (размер будет 284 байта)
             decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner);
+            decoded_data_bytes.detach();
             utils::erase_bytes(clean_crypto_data);
 
             if (decoded_data_bytes.isEmpty()) {
@@ -814,7 +815,6 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
     if (decoded_data_bytes.isEmpty())
         return Loading_Errors::UNRECOGNIZED;
-    decoded_data_bytes.detach();
 
     // Отсекаем маркер конца сообщения
     const char end_byte = static_cast<char>(symbols::end_message.unicode()); // 0x03

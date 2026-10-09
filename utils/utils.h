@@ -27,7 +27,7 @@
 namespace utils {
 
 // Базовая функция очистки сырого буфера
-inline void erase_bytes(uint8_t *b, std::size_t len)
+inline void erase_raw_bytes(uint8_t *b, std::size_t len)
 {
     if (!b || len == 0)
         return;
@@ -56,35 +56,15 @@ inline void erase_bytes(uint8_t *b, std::size_t len)
 // Для локальных, изолированных объектов QByteArray, которыми владеет текущая функция.
 inline void erase_bytes(QByteArray &b)
 {
-    if (b.capacity() == 0)
-        return;
-
-    // 1. Затираем абсолютно ВСЮ выделенную память (capacity), а не только size()
-    // Это гарантирует уничтожение "хвостов" после reserve() или resize()
-    erase_bytes(reinterpret_cast<uint8_t *>(b.data()), b.capacity());
-
-    // 2. Сбрасываем размер и емкость в 0.
-    // Вместо b.clear() (который оставляет capacity нетронутым)
-    // используем swap с пустым объектом, чтобы полностью освободить память.
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(b.data()), b.size());
     QByteArray().swap(b);
 }
 
 // Функция гарантированной очистки QString (UTF-16)
 inline void erase_string(QString &str)
 {
-    if (str.capacity() == 0)
-        return;
-
-    // 1. Вычисляем РЕАЛЬНЫЙ размер выделенной памяти в байтах (через capacity)
-    // Символ QChar всегда занимает 2 байта (char16_t)
-    size_t total_bytes = static_cast<size_t>(str.capacity()) * sizeof(char16_t);
-
-    // 2. Затираем абсолютно всю выделенную память в куче
-    erase_bytes(reinterpret_cast<uint8_t *>(str.data()), total_bytes);
-
-    // 3. Полностью уничтожаем внутренний буфер объекта, сбрасывая capacity в 0.
-    // Обычный str.clear() оставляет capacity неизменным.
-    // Swap с временным пустым объектом гарантирует сброс.
+    size_t total_bytes = static_cast<size_t>(str.size()) * sizeof(char16_t);
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(str.data()), total_bytes);
     QString().swap(str);
 }
 
@@ -118,7 +98,7 @@ inline void clear_lfsr_hash(lfsr_hash::u128 &hash)
 inline void clear_lfsr_rng_state(lfsr_rng::STATE &st)
 {
     // Безопасно затираем всё состояние rng, используя sizeof для точного размера
-    erase_bytes(reinterpret_cast<uint8_t *>(&st), sizeof(st));
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(&st), sizeof(st));
 }
 
 inline char xor_val(const QByteArray& data) {
@@ -187,7 +167,7 @@ inline uint32_t seed_from_bytes_pop_back(QByteArray &data)
     // 3. ГАРАНТИРОВАННО выжигаем извлекаемый сид в ОЗУ перед обрезкой массива.
     // Используем системно-защищенный erase_bytes вместо ручного std::memset/цикла.
     uint8_t *tail_ptr = reinterpret_cast<uint8_t *>(data.data()) + seed_offset;
-    utils::erase_bytes(tail_ptr, seed_size);
+    utils::erase_raw_bytes(tail_ptr, seed_size);
 
     // 4. Отрезаем хвост за один шаг O(1).
     // Метод resize() одинаков для всех версий Qt. В хвосте кучи остаются только честные нули.
@@ -302,7 +282,7 @@ inline void dpadd(QByteArray &data)
         // Перед уменьшением размера затираем отсекаемую область памяти (включая 0x80),
         // чтобы расшифрованные данные не оставались в Heap-мусоре.
         uint8_t *padding_start = reinterpret_cast<uint8_t *>(data.data() + real_size);
-        utils::erase_bytes(padding_start, padding_size);
+        utils::erase_raw_bytes(padding_start, padding_size);
 
         // Стандартный resize() для уменьшения размера работает одинаково во всех версиях Qt
         data.resize(real_size);

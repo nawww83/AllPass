@@ -55,7 +55,7 @@ public:
     int N() const { return _N; }
 
     // Функция безопасной очистки самого класса
-    void clear() { utils::erase_bytes(mKey_bytes, _N); }
+    void clear() { utils::erase_raw_bytes(mKey_bytes, _N); }
 
 private:
     // Ключ хранится как плоский массив байт на стеке (внутри объекта)

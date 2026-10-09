@@ -571,7 +571,7 @@ void Widget::copy_to_clipboard()
         direct_text = current_index.data(Qt::DisplayRole).toString();
         target_column = current_index.column();
     }
-
+    direct_text.detach();
     if (direct_text.isEmpty() && !item_to_copy) {
         pointers::selected_context_table_item = nullptr;
         return;
@@ -597,9 +597,6 @@ void Widget::copy_to_clipboard()
     }
 
     if (target_column == constants::pswd_column_idx) {
-        // Создаем честную глубокую копию для изоляции контекста таймера
-        direct_text.detach();
-
         clipboard->setText(direct_text);
 
         QModelIndex modelIndex = item_to_copy
@@ -721,11 +718,8 @@ void Widget::delete_row() {
     if (pswd_item) {
         // Извлекаем секрет из UserRole
         QString secret = pswd_item->data(Qt::UserRole).toString();
-
-        // 1. Стираем локальную копию, которую мы только что вытащили toString()
+        secret.detach();
         utils_global::erase_string(secret);
-
-        // 2. Перезаписываем UserRole пустой строкой, чтобы сбросить старый QVariant
         pswd_item->setData(Qt::UserRole, QString());
     }
     // =====================================
@@ -751,6 +745,7 @@ void Widget::update_pass()
 
         // Безопасно читаем старый пароль для проверки на пустоту
         QString old_data = pointers::selected_context_table_item->data(Qt::DisplayRole).toString();
+        old_data.detach();
         if (!old_data.isEmpty()) {
             if (!question_message_box(
                     tr("Замена текущего пароля новым"),
@@ -1026,10 +1021,7 @@ void Widget::update_master_phrase()
 
     // 2. БЕЗОПАСНО зануляем содержимое хэшей внутри глобального вектора.
     for (QByteArray &h : *g_usb_hashes) {
-        if (h.capacity() > 0) {
-            // Стираем физическую память на всю глубину емкости буфера
-            utils::erase_bytes(reinterpret_cast<uint8_t *>(h.data()), h.capacity());
-        }
+        utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(h.data()), h.size());
     }
 
     // 3. Полностью сбрасываем сам глобальный контейнер, чтобы он освободил память кучи.
@@ -1090,7 +1082,7 @@ void Widget::insert_new_password()
 
     // Секция даты
     {
-        const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
+        QString date = QDate::currentDate().toString("yyyy.MM.dd");
         QTableWidgetItem* item = new QTableWidgetItem();
         item->setText(date);
         ui->tableWidget->setItem(row, constants::date_column_idx, item);
@@ -1191,7 +1183,7 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
     }
 
     if (item->column() == constants::pswd_column_idx) {
-        const auto& date = QDate::currentDate().toString("yyyy.MM.dd");
+        QString date = QDate::currentDate().toString("yyyy.MM.dd");
         const int row = item->row();
         auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
         if (date_item) {
