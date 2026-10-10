@@ -896,6 +896,12 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
     utils::erase_bytes(accumulated_cell);
     utils::erase_bytes(decoded_data_bytes);
 
+    // Если база была успешно открыта и прочитана из основного файла,
+    // синхронизируем скрытую копию, если она устарела или не была скопирована
+    if (type == FileTypes::NORMAL) {
+        SyncBackupStorage();
+    }
+
     qDebug() << "Table has been successfully loaded!";
     return Loading_Errors::OK;
 }
@@ -906,6 +912,78 @@ void StorageManager::RemoveTmpFile()
     if (tmp_file.exists()) {
         tmp_file.remove();
     }
+}
+
+bool StorageManager::SyncBackupStorage()
+{
+    if (mStorageName.isEmpty() || mStorageNameBackUp.isEmpty()) {
+        return false;
+    }
+
+    QFile orig_file(mStorageName);
+    if (!orig_file.exists()) {
+        return false;
+    }
+
+    QFile backup_file(mStorageNameBackUp);
+    bool need_update = false;
+
+    if (!backup_file.exists()) {
+        need_update = true;
+    } else if (orig_file.size() != backup_file.size()) {
+        need_update = true;
+    } else {
+        // Если размеры совпадают, проверяем идентичность побайтово
+        if (orig_file.open(QFile::ReadOnly) && backup_file.open(QFile::ReadOnly)) {
+            constexpr qint64 CHUNK_SIZE = 4096;
+            while (!orig_file.atEnd() && !backup_file.atEnd()) {
+                QByteArray b1 = orig_file.read(CHUNK_SIZE);
+                QByteArray b2 = backup_file.read(CHUNK_SIZE);
+                if (b1 != b2) {
+                    need_update = true;
+                    break;
+                }
+            }
+            orig_file.close();
+            backup_file.close();
+        } else {
+            // Если не удалось открыть на чтение для сравнения, форсируем обновление
+            need_update = true;
+            if (orig_file.isOpen()) orig_file.close();
+            if (backup_file.isOpen()) backup_file.close();
+        }
+    }
+
+    if (!need_update) {
+        return true;
+    }
+
+    // Читаем оригинал и записываем точную копию в скрытый бэкап
+    if (!orig_file.open(QFile::ReadOnly)) {
+        qDebug() << "SyncBackupStorage: Failed to read original file for backup.";
+        return false;
+    }
+    QByteArray data = orig_file.readAll();
+    orig_file.close();
+
+    if (backup_file.open(QFile::WriteOnly)) {
+        backup_file.write(data);
+        backup_file.close();
+        utils::erase_bytes(data);
+
+#ifdef OS_Windows
+        do_hidden(backup_file.fileName().toStdWString().data());
+        restrict_file_access(mStorageNameBackUp);
+#else
+        backup_file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+        qDebug() << "Backup storage has been synchronized with the original.";
+        return true;
+    }
+
+    utils::erase_bytes(data);
+    qDebug() << "SyncBackupStorage: Failed to open backup file for writing.";
+    return false;
 }
 
 bool StorageManager::FileIsExist() const

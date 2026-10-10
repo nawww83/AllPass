@@ -120,35 +120,14 @@ private:
     }
 
     // Вспомогательный метод для безопасного удаления временных раундовых ключей из RAM
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#endif
     static void secureClearRoundKeys(std::vector<Block256> &roundKeys)
     {
-        if (roundKeys.empty())
-            return;
-
-        size_t totalBytes = roundKeys.size() * sizeof(Block256);
-        void *ptr = roundKeys.data();
-
-#if defined(Q_OS_WIN)
-        // Кроссплатформенный стандарт для Windows (гарантирует невырезание)
-        SecureZeroMemory(ptr, totalBytes);
-#elif defined(__STDC_LIB_EXT1__) || defined(__GLIBC__)
-        // Для Linux систем с поддержкой безопасных функций C11 / GLIBC 2.25+
-        explicit_bzero(ptr, totalBytes);
-#else
-        // Жесткий fallback для старых Linux/Unix систем, обманывающий компилятор:
-        // Мы заставляем его думать, что указатель используется внешней ассемблерной функцией
-        volatile char *p = static_cast<volatile char *>(ptr);
-        while (totalBytes--) {
-            *p++ = 0;
+        for (auto& block : roundKeys) {
+            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.A), sizeof(Block256::A));
+            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.B), sizeof(Block256::B));
+            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.C), sizeof(Block256::C));
+            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.D), sizeof(Block256::D));
         }
-// Этот барьер запрещает компилятору выбрасывать операции записи до него
-#if defined(__GNUC__) || defined(__clang__)
-        __asm__ __volatile__("" : : "g"(ptr) : "memory");
-#endif
-#endif
     }
 
 public:
@@ -186,16 +165,8 @@ public:
             std::memcpy(ciphertext.data() + i + 24, &block.D, 8);
         }
 
-        // =========================================================================
-        // КРИТИЧЕСКИ ВАЖНО ДЛЯ БЕЗОПАСНОСТИ RAM:
-        // =========================================================================
-        // 1. Очищаем раундовые ключи в памяти процесса
         secureClearRoundKeys(roundKeys);
-
-        // 2. Жестко выжигаем локальную копию открытых данных (ПИН/пароль) в RAM,
-        // так как деструктор Qt этого сам не сделает.
         utils::erase_bytes(data);
-        // =========================================================================
 
         return QString::fromUtf8(ciphertext.toBase64());
     }

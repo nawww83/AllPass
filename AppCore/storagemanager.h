@@ -45,6 +45,10 @@ public:
 
     void RemoveTmpFile();
 
+    // Проверяет идентичность mStorageName и mStorageNameBackUp,
+    // при несовпадении или отсутствии копии перезаписывает ее.
+    bool SyncBackupStorage();
+
     bool FileIsExist() const;
 
     bool BackupFileIsExist() const;
