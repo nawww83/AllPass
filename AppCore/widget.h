@@ -2,6 +2,7 @@
 #define WIDGET_H
 
 #include <QAction>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -10,13 +11,13 @@
 #include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
-#include <QMimeData>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QTableWidget>
-#include <QTextEdit>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -65,9 +66,11 @@ private slots:
 
     void finish_password_generator();
 
-    void input_master_phrase();
-
     void update_master_phrase();
+
+    // Показывает диалог ввода мастер-фразы. Пустой QByteArray — пользователь отменил.
+    // repeat_only == true — повторный ввод для подтверждения нового хранилища.
+    QByteArray ask_master_phrase(bool repeat_only = false);
 
     void set_master_key();
 
@@ -82,6 +85,8 @@ private slots:
     void delete_row();
 
     void update_pass();
+
+    void show_pass();
 
     void show_pass_date();
 
@@ -123,208 +128,114 @@ private:
     QAction *copyAct;
     QAction *removeAct;
     QAction *updatePassAct;
+    QAction *showPassAct;
     QAction *showPassDateAct;
     QPushButton *btn_recover_from_backup;
     QPushButton *btn_create_usb_key;
     QPushButton *btn_new_storage_with_transfer;
     QPushButton *btn_clear_table;
 
-    QMetaObject::Connection m_masterPhraseConn;
-    QMetaObject::Connection m_tempConn;
-
     bool is_modified = false;
 };
 
-class SecureTextEdit : public QTextEdit
+// Однострочное поле мастер-фразы: ввод, курсор, выделение, вставка и IME
+// обрабатываются штатным QLineEdit, поэтому Unicode (включая иероглифы и
+// эмодзи) работает корректно. Копирование/вырезание запрещены, чтобы фраза
+// не утекла в буфер обмена.
+class PhraseLineEdit : public QLineEdit
+{
+public:
+    explicit PhraseLineEdit(QWidget *parent = nullptr)
+        : QLineEdit(parent)
+    {
+        setContextMenuPolicy(Qt::NoContextMenu);
+        setDragEnabled(false);
+        setAcceptDrops(false);
+        setClearButtonEnabled(false);
+        setMaxLength(4096);
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->modifiers() & Qt::ControlModifier) {
+            if (event->key() == Qt::Key_C || event->key() == Qt::Key_X) {
+                event->ignore();
+                return;
+            }
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+};
+
+// Диалог ввода мастер-фразы.
+// repeat_only == false — обычный ввод: фраза видна, есть переключатель «скрыть».
+// repeat_only == true  — повторный ввод при создании нового хранилища.
+class MasterPhraseDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit SecureTextEdit(QWidget *parent = nullptr)
-        : QTextEdit(parent)
+    explicit MasterPhraseDialog(bool repeat_only, QWidget *parent = nullptr)
+        : QDialog(parent)
     {
-        // 1. Запрещаем Drag-and-Drop, чтобы текст нельзя было «утащить» мышкой
-        setAcceptDrops(false);
+        setWindowTitle(repeat_only ? tr("Подтверждение мастер-фразы")
+                                   : tr("Ввод мастер-фразы"));
+        setModal(true);
 
-        // 2. Отключаем контекстное меню (копирование, вырезание, Undo/Redo)
-        setContextMenuPolicy(Qt::NoContextMenu);
+        auto *layout = new QVBoxLayout(this);
 
-        // 3. Отключаем историю отмены на уровне документа Qt
-        document()->setUndoRedoEnabled(false);
+        auto *hint = new QLabel(
+            repeat_only
+                ? tr("Хранилище с такой фразой не найдено — будет создано новое.\n"
+                     "Повторите мастер-фразу, чтобы исключить опечатку.")
+                : tr("Мастер-фраза нигде не хранится: восстановить забытую фразу невозможно."),
+            this);
+        hint->setWordWrap(true);
+        layout->addWidget(hint);
 
-        // 4. Защита от систем доступности (Accessibility API / экранные дикторы)
-        setAccessibleName(QString());
-        setAccessibleDescription(QString());
+        m_edit = new PhraseLineEdit(this);
+        m_edit->setPlaceholderText(repeat_only ? tr("Повторите мастер-фразу")
+                                               : tr("Мастер-фраза"));
+        layout->addWidget(m_edit);
 
-        // Отключаем стандартный double-click, который пытается выделить слово
-        // (выделять маскированные звездочки пользователю не нужно)
-        setReadOnly(false);
+        m_hide = new QCheckBox(tr("Скрыть фразу"), this);
+        layout->addWidget(m_hide);
+        connect(m_hide, &QCheckBox::toggled, this, [this](bool hidden) {
+            m_edit->setEchoMode(hidden ? QLineEdit::Password : QLineEdit::Normal);
+        });
+
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, this, &MasterPhraseDialog::on_accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+        m_edit->setFocus();
+        resize(520, sizeHint().height());
     }
 
-    ~SecureTextEdit() override
+    // Возвращает фразу в UTF-8 и сразу очищает поле.
+    QByteArray take_phrase()
     {
-        // Принудительно выжигаем память при уничтожении виджета
-        if (!m_secureBuffer.empty()) {
-            std::fill(m_secureBuffer.begin(), m_secureBuffer.end(), L'\0');
-        }
-    }
-
-    // Возвращает мастер-фразу в UTF-8 (для хэширования)
-    QByteArray getSecureData() const
-    {
-        if (m_secureBuffer.empty())
-            return QByteArray();
-
-        // Преобразуем накопленный wchar_t (UTF-16/32) в QString, а затем в UTF-8 байты
-        QString str = QString::fromWCharArray(m_secureBuffer.data(),
-                                              static_cast<int>(m_secureBuffer.size()));
-        QByteArray bytes = str.toUtf8();
-
-        // Немедленно выжигаем временную QString в памяти
-        // (метод utils::erase_string должен принудительно занулять внутренний буфер)
-        utils::erase_string(str);
-
+        const QByteArray bytes = m_edit->text().toUtf8();
+        m_edit->clear();
         return bytes;
     }
 
-    // Безопасное и гарантированное зануление памяти
-    void secureClear()
+private slots:
+    void on_accept()
     {
-        // Блокируем сигналы, чтобы не провоцировать лишние перерисовки
-        blockSignals(true);
-
-        // 1. Выжигаем скрытый буфер в RAM нулями
-        if (!m_secureBuffer.empty()) {
-            std::fill(m_secureBuffer.begin(), m_secureBuffer.end(), L'\0');
-            m_secureBuffer.clear();
-        }
-
-        // 2. Выжигаем визуальный буфер QTextEdit
-        // Сначала заполняем мусором той же длины, затем очищаем
-        int len = document()->toPlainText().length();
-        if (len > 0) {
-            QString junk(len, 'X');
-            setPlainText(junk);
-            utils::erase_string(junk);
-        }
-        clear();
-
-        blockSignals(false);
-    }
-
-    bool is_closing() const { return mIsClosing; }
-
-signals:
-    void sig_closing();
-
-protected:
-    std::vector<wchar_t> m_secureBuffer; // Безопасное хранилище Unicode-символов
-    bool mIsClosing = false;
-
-    virtual void closeEvent(QCloseEvent *event) override final
-    {
-        mIsClosing = true;
-        emit sig_closing();
-        QTextEdit::closeEvent(event);
-        mIsClosing = false;
-    }
-
-    // Перехватываем ввод с клавиатуры до того, как Qt отобразит его на экране
-    virtual void keyPressEvent(QKeyEvent *event) override
-    {
-        // Разрешаем навигацию стрелками, но блокируем выделение через Shift
-        if (event->modifiers() & Qt::ShiftModifier) {
-            if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right
-                || event->key() == Qt::Key_Up || event->key() == Qt::Key_Down
-                || event->key() == Qt::Key_Home || event->key() == Qt::Key_End) {
-                event->ignore();
-                return;
-            }
-        }
-
-        // Обработка Backspace (удаление символа)
-        if (event->key() == Qt::Key_Backspace) {
-            if (!m_secureBuffer.empty()) {
-                m_secureBuffer.pop_back();
-                // Синхронизируем отображение: удаляем одну звездочку на экране
-                QTextEdit::keyPressEvent(event);
-            }
+        if (m_edit->text().isEmpty()) {
+            QMessageBox::warning(this, tr("Мастер-фраза"),
+                                 tr("Мастер-фраза не может быть пустой."));
+            m_edit->setFocus();
             return;
         }
-
-        // Перевод строки (Enter / Return) — отображаем как есть для структуры
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
-            m_secureBuffer.push_back(L'\n');
-            QTextEdit::keyPressEvent(event);
-            return;
-        }
-
-        // Горячие клавиши: полностью блокируем Ctrl+C / Ctrl+X / Ctrl+Z / Ctrl+Y
-        if (event->modifiers() & Qt::ControlModifier) {
-            if (event->key() == Qt::Key_C || event->key() == Qt::Key_X || event->key() == Qt::Key_Z
-                || event->key() == Qt::Key_Y) {
-                event->ignore();
-                return;
-            }
-            // Разрешаем Ctrl+V (Вставка), но обрабатываем её безопасно (см. ниже insertFromMimeData)
-            if (event->key() == Qt::Key_V) {
-                QTextEdit::keyPressEvent(event);
-                return;
-            }
-        }
-
-        // Обработка ввода обычного печатного Unicode-символа
-        QString text = event->text();
-        if (!text.isEmpty()) {
-            wchar_t ch = text.at(0).unicode();
-
-            // Игнорируем управляющие символы системных клавиш
-            if (ch >= 32 || ch == L'\t') {
-                m_secureBuffer.push_back(ch);
-
-                // Вместо реального символа подсовываем Qt маскирующую звездочку
-                QKeyEvent fakeEvent(event->type(), Qt::Key_Asterisk, event->modifiers(), "*");
-                QTextEdit::keyPressEvent(&fakeEvent);
-
-                utils::erase_string(text);
-                return;
-            }
-        }
-
-        // Все остальные служебные клавиши (Home, End, стрелки без Shift) обрабатываем штатно
-        QTextEdit::keyPressEvent(event);
+        accept();
     }
 
-    // Безопасный перехват вставки (Paste) из буфера обмена
-    virtual void insertFromMimeData(const QMimeData *source) override
-    {
-        if (source->hasText()) {
-            QString pastedText = source->text();
-            if (pastedText.isEmpty())
-                return;
-
-            QString maskedText;
-            maskedText.reserve(pastedText.length());
-
-            // Разбираем вставленный Unicode-текст посимвольно
-            for (int i = 0; i < pastedText.length(); ++i) {
-                wchar_t ch = pastedText.at(i).unicode();
-                m_secureBuffer.push_back(ch);
-
-                // Сохраняем структуру переноса строк, остальное маскируем
-                if (ch == L'\n' || ch == L'\r') {
-                    maskedText.append(pastedText.at(i));
-                } else {
-                    maskedText.append('*');
-                }
-            }
-
-            // Вставляем в видимое поле только звездочки
-            insertPlainText(maskedText);
-
-            // Немедленно очищаем буферную переменную из памяти
-            utils::erase_string(pastedText);
-        }
-    }
+private:
+    PhraseLineEdit *m_edit = nullptr;
+    QCheckBox *m_hide = nullptr;
 };
 
 template<int pin_len>

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AllPass VERSION 2.00 LANGUAGES CXX)
+project(AllPass VERSION 3.01 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -57,8 +57,8 @@ else()
 endif()
 # --------------------------------------------------------------------------
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent)
 
 set(APP_DIR AppCore)
 set(UTILS_DIR utils)
@@ -129,7 +129,11 @@ else()
     endif()
 endif()
 
-target_link_libraries(AllPass PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
+target_link_libraries(AllPass PRIVATE
+    Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Network
+    Qt${QT_VERSION_MAJOR}::Concurrent
+)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an

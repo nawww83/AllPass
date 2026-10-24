@@ -51,6 +51,9 @@ public:
 
     bool FileIsExist() const;
 
+    // Проверка существования хранилища по имени, без изменения состояния.
+    bool FileIsExist(const QString& name) const;
+
     bool BackupFileIsExist() const;
 
     bool TmpFileIsExist() const;

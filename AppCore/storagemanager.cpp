@@ -15,7 +15,9 @@
 #endif
 
 #include <QTableWidget>
+#include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QSet>
 
@@ -26,6 +28,14 @@
 #include <random> // std::random_device
 
 Q_GLOBAL_STATIC(QSet<QString>, g_supported_as_version_1);
+
+// Каталог хранилища: всегда рядом с исполняемым файлом, а не в текущем
+// каталоге процесса. Иначе при запуске из IDE (CWD = каталог сборки) база
+// создавалась в одном месте, а при запуске из другого — «терялась».
+static QString storage_directory()
+{
+    return QCoreApplication::applicationDirPath();
+}
 
 #ifdef OS_Windows
 static void do_hidden(wchar_t* fileLPCWSTR) {
@@ -429,7 +439,10 @@ static bool decode_crc(const QByteArray& data, const QByteArray& received_crc) {
 
 StorageManager::StorageManager()
 {
-    *g_supported_as_version_1 = QSet{QString("v3.00")};
+    // Версии формата хранилища, которые умеет читать эта сборка.
+    // Новые версии формата добавлять сюда, старые — не удалять: иначе
+    // ранее созданные базы перестанут открываться.
+    *g_supported_as_version_1 = QSet{QString("v3.00"), QString("v3.01")};
 }
 
 template<int version>
@@ -635,8 +648,8 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
 {
     const QString &file_name = save_to_tmp ? mStorageNameTmp : mStorageName;
     if (file_name.isEmpty()) {
-        qDebug() << "Empty storage.";
-        return true;
+        qWarning() << "Empty storage name, nothing to save.";
+        return false;
     }
     if (!mEnc.gamma_gen->is_succes() || !mEncInner.gamma_gen->is_succes()) {
         qDebug() << "Encryption generators are not ready.";
@@ -683,7 +696,8 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     utils::erase_bytes(packed_data_bytes);
 
     if (encoded_data_bytes.isEmpty()) {
-        return true;
+        qWarning() << "Encryption returned empty data, nothing to save.";
+        return false;
     }
 
     {
@@ -691,50 +705,65 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
         encoded_data_bytes.append(current_version.toUtf8());
     }
 
-    QFile file(file_name);
-    if (file.open(QFile::WriteOnly)) {
-        file.write(encoded_data_bytes);
-        file.close();
-#ifdef OS_Windows
-        restrict_file_access(file_name);
-#else
-        file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-#endif
-        if (save_to_tmp)
-            return true;
-
-        QFile file_backup(mStorageNameBackUp);
-        if (file_backup.open(QFile::WriteOnly)) {
-            file_backup.write(encoded_data_bytes);
-            file_backup.close();
-#ifdef OS_Windows
-            do_hidden(file_backup.fileName().toStdWString().data());
-            restrict_file_access(mStorageNameBackUp);
-#else
-            file_backup.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-#endif
+    // Запись одного файла с проверкой результата: QFile::write() может записать
+    // меньше байт (нет места, обрыв, read-only том) — раньше это игнорировалось.
+    const auto write_file = [&encoded_data_bytes](const QString &path) -> bool {
+        QFile f(path);
+        if (!f.open(QFile::WriteOnly)) {
+            qWarning() << "Cannot open file for writing:" << path;
+            return false;
         }
-    }
-    else {
+        const qint64 written = f.write(encoded_data_bytes);
+        f.close();
+        if (written != encoded_data_bytes.size()) {
+            qWarning() << "Short write:" << path << written << "of" << encoded_data_bytes.size();
+            return false;
+        }
+        return true;
+    };
+
+    if (!write_file(file_name)) {
         if (save_to_tmp)
-            return true;
-        QFile file_backup(mStorageNameBackUp);
-        if (file_backup.open(QFile::WriteOnly)) {
-            file_backup.write(encoded_data_bytes);
-            file_backup.close();
-#ifdef OS_Windows
-            do_hidden(file_backup.fileName().toStdWString().data());
-            restrict_file_access(mStorageNameBackUp);
-#else
-            file_backup.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-#endif
-        } else {
+            return false;
+
+        // Основное хранилище записать не удалось — пытаемся спасти резервную копию.
+        if (!write_file(mStorageNameBackUp)) {
             QMessageBox mb;
             mb.critical(nullptr,
                         QString::fromUtf8("Ошибка сохранения."),
                         QString::fromUtf8("Файловая ошибка сохранения таблицы в хранилище."));
             return false;
         }
+#ifdef OS_Windows
+        do_hidden(mStorageNameBackUp.toStdWString().data());
+        restrict_file_access(mStorageNameBackUp);
+#else
+        QFile::setPermissions(mStorageNameBackUp, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+        return false;
+    }
+
+#ifdef OS_Windows
+    restrict_file_access(file_name);
+#else
+    QFile::setPermissions(file_name, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+
+    if (save_to_tmp)
+        return true;
+
+    if (!write_file(mStorageNameBackUp)) {
+        QMessageBox mb;
+        mb.warning(nullptr,
+                   QString::fromUtf8("Резервная копия не создана."),
+                   QString::fromUtf8("Хранилище сохранено, но резервную копию создать не удалось."));
+    } else {
+#ifdef OS_Windows
+        do_hidden(mStorageNameBackUp.toStdWString().data());
+        restrict_file_access(mStorageNameBackUp);
+#else
+        QFile::setPermissions(mStorageNameBackUp, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
     }
     return true;
 }
@@ -992,6 +1021,14 @@ bool StorageManager::FileIsExist() const
     return file.exists();
 }
 
+bool StorageManager::FileIsExist(const QString& name) const
+{
+    if (name.isEmpty())
+        return false;
+    const QFile file(storage_directory() + QLatin1Char('/') + name);
+    return file.exists();
+}
+
 bool StorageManager::BackupFileIsExist() const
 {
     const QFile backup_file(mStorageNameBackUp);
@@ -1034,24 +1071,40 @@ void StorageManager::AfterUpdate()
 void StorageManager::SetName(const QString &name)
 {
     if (!name.isEmpty()) mSetCounter++;
-    mStorageName = name;
-    mStorageNameBackUp = QString::fromUtf8(".") + name;
+
+    if (name.isEmpty()) {
+        mStorageName.clear();
+        mStorageNameBackUp.clear();
+        return;
+    }
+
+    const QString dir = storage_directory();
+    mStorageName = dir + QLatin1Char('/') + name;
+    mStorageNameBackUp = dir + QLatin1Char('/') + QLatin1Char('.') + name;
 }
 
 void StorageManager::SetTmpName(const QString &name)
 {
     if (!name.isEmpty()) mSetCounter++;
-    mStorageNameTmp = name + QString::fromUtf8(".tmp");
+
+    if (name.isEmpty()) {
+        mStorageNameTmp.clear();
+        return;
+    }
+
+    mStorageNameTmp = storage_directory() + QLatin1Char('/') + name + QStringLiteral(".tmp");
 }
 
 QString StorageManager::Name() const
 {
-    return mStorageName;
+    // Наружу отдаём только имя файла: полный путь нужен лишь для операций
+    // с файлами внутри класса.
+    return QFileInfo(mStorageName).fileName();
 }
 
 QString StorageManager::NameTmp() const
 {
-    return mStorageNameTmp;
+    return QFileInfo(mStorageNameTmp).fileName();
 }
 
 void StorageManager::SetTryToLoadFromTmp(bool value)

@@ -14,6 +14,7 @@ namespace key {
  */
 class Key
 {
+    // 8 слов по 16 бит = 128 бит (полный хэш мастер-фразы).
     static constexpr int _N = 8;
 
 public:
@@ -26,17 +27,17 @@ public:
     // Деструктор класса ОБЯЗАН затирать ключ
     ~Key() { clear(); }
 
-    void set_key(uint8_t key_byte, int idx)
+    void set_key(uint16_t key_word, int idx)
     {
         if (idx >= 0 && idx < _N) {
-            mKey_bytes[idx] = key_byte;
+            mKey_words[idx] = key_word;
         }
     }
 
     int get_key(int idx) const
     {
         if (idx >= 0 && idx < _N) {
-            return mKey_bytes[idx];
+            return mKey_words[idx];
         }
         return 0;
     }
@@ -47,7 +48,7 @@ public:
     {
         QString result;
         for (int i = 0; i < _N; ++i) {
-            result += QString("%1 ").arg(mKey_bytes[i], 2, 16, QChar('0'));
+            result += QString("%1 ").arg(mKey_words[i], 4, 16, QChar('0'));
         }
         return result.trimmed();
     }
@@ -55,11 +56,11 @@ public:
     int N() const { return _N; }
 
     // Функция безопасной очистки самого класса
-    void clear() { utils::erase_raw_bytes(mKey_bytes, _N); }
+    void clear() { utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(mKey_words), sizeof(mKey_words)); }
 
 private:
-    // Ключ хранится как плоский массив байт на стеке (внутри объекта)
-    uint8_t mKey_bytes[_N];
+    // Ключ хранится как плоский массив 16-битных слов внутри объекта
+    uint16_t mKey_words[_N];
 };
 }
 

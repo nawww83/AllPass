@@ -302,23 +302,38 @@ inline uint8_t rotr8(uint8_t value, unsigned int count)
     return (value >> count) | (value << ( (-count) & mask ));
 }
 
+// Алфавиты для генерации паролей.
+// simple: 10 цифр + 26 заглавных + 26 строчных = 62 символа.
+inline constexpr char kSimplePasswordAlphabet[] =
+    "0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz";
+
+// hard: 15 спецсимволов + 62 символа simple = 77 символов.
+inline constexpr char kHardPasswordAlphabet[] =
+    "!\"#$%&'()*+,-./"
+    "0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz";
+
+inline constexpr std::size_t kSimpleAlphabetSize = sizeof(kSimplePasswordAlphabet) - 1; // 62
+inline constexpr std::size_t kHardAlphabetSize   = sizeof(kHardPasswordAlphabet) - 1;   // 77
+inline constexpr std::size_t kHardSpecialsCount  = 15;
+
+static_assert(kSimpleAlphabetSize == 62, "simple-алфавит должен содержать 62 символа");
+static_assert(kHardAlphabetSize == 77, "hard-алфавит должен содержать 77 символов");
+
 inline QByteArray encode_u32_simple_level(lfsr8::u32 sample)
 {
     // Используем QByteArray вместо QString для контроля памяти
     QByteArray word(constants::password_len_per_u32, '\0');
 
     for (int i = 0; i < constants::password_len_per_u32; ++i) {
-        lfsr8::u32 r = sample % 62u;
-        sample /= 62u;
+        const std::size_t r = sample % kSimpleAlphabetSize;
+        sample /= static_cast<lfsr8::u32>(kSimpleAlphabetSize);
 
-        auto code = r + 48u;
-        if (code > 57u && code < 65u)
-            code += 7u;
-        if (code > 90u && code < 97u)
-            code += 6u;
-
-        // Записываем ASCII-код прямо в байтовый массив
-        word[constants::password_len_per_u32 - i - 1] = static_cast<char>(code);
+        // Записываем символ алфавита прямо в байтовый массив
+        word[constants::password_len_per_u32 - i - 1] = kSimplePasswordAlphabet[r];
     }
 
     erase_raw_bytes(reinterpret_cast<uint8_t *>(&sample), sizeof(sample));
@@ -329,29 +344,30 @@ inline QByteArray encode_u32_hard_level(lfsr8::u32 sample)
 {
     QByteArray word(constants::password_len_per_u32, '\0');
     bool has_special_symbol = false;
-    int last_idx = constants::password_len_per_u32 - 1;
+    const int last_idx = constants::password_len_per_u32 - 1;
+
+    // Копия сэмпла до разложения: нужна, чтобы выбрать позицию и сам
+    // спецсимвол, если ни один не выпал случайно.
+    lfsr8::u32 selector = sample;
 
     for (int i = 0; i < constants::password_len_per_u32; ++i) {
-        lfsr8::u32 r = sample % 77u;
-        sample /= 77u;
+        const std::size_t r = sample % kHardAlphabetSize;
+        sample /= static_cast<lfsr8::u32>(kHardAlphabetSize);
 
-        auto code = r + 33u;
-        if (code >= 33u && code <= 47u) {
+        if (r < kHardSpecialsCount) {
             has_special_symbol = true;
         }
 
-        if (code > 57u && code < 65u)
-            code += 7u;
-        if (code > 90u && code < 97u)
-            code += 6u;
-
-        word[last_idx - i] = static_cast<char>(code);
+        word[last_idx - i] = kHardPasswordAlphabet[r];
     }
 
     if (!has_special_symbol) {
-        word[0] = static_cast<char>(33u); // '!'
+        const std::size_t pos = selector % static_cast<std::size_t>(constants::password_len_per_u32);
+        const std::size_t sp  = (selector >> 8) % kHardSpecialsCount;
+        word[pos] = kHardPasswordAlphabet[sp];
     }
 
+    erase_raw_bytes(reinterpret_cast<uint8_t *>(&selector), sizeof(selector));
     erase_raw_bytes(reinterpret_cast<uint8_t *>(&sample), sizeof(sample));
     return word;
 }

@@ -149,16 +149,19 @@ bool PassEditDelegate::helpEvent(QHelpEvent *event,
                                  const QStyleOptionViewItem &option,
                                  const QModelIndex &index)
 {
-    if (event && event->type() == QEvent::ToolTip) {
-        if (index.column() == constants::pswd_column_idx) {
-            // Читаем открытый пароль для тултипа
-            QString password = index.data(Qt::DisplayRole).toString();
+    if (event && event->type() == QEvent::ToolTip
+        && index.column() == constants::pswd_column_idx) {
 
-            if (!password.isEmpty()) {
-                QWidget *viewport = (view) ? view->viewport() : nullptr;
-                QToolTip::showText(event->globalPos(), password, viewport);
-                return true;
-            }
+        // Пароль в тултип не попадает: tooltip — это отдельное окно ОС,
+        // он виден на скриншотах/записи экрана и доступен другим приложениям.
+        // Показываем только подсказку, как получить значение.
+        if (!index.data(Qt::DisplayRole).toString().isEmpty()) {
+            QWidget *viewport = view ? view->viewport() : nullptr;
+            QToolTip::showText(event->globalPos(),
+                               tr("Пароль скрыт. Скопируйте его через «Копировать ячейку» (Ctrl+C) "
+                                  "или откройте «Показать пароль»."),
+                               viewport);
+            return true;
         }
     }
     return QStyledItemDelegate::helpEvent(event, view, option, index);

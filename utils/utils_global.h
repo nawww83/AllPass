@@ -121,16 +121,16 @@ inline void fill_key_by_hash128(const lfsr_hash::u128 &hash)
 
     {
         using password::key;
-        // Операция & 0xFFFF (маска) эквивалентна % 65536.
-        key->set_key(x & 0xFFFF, 3);
-        key->set_key((x >> 16) & 0xFFFF, 2);
-        key->set_key((x >> 32) & 0xFFFF, 1);
-        key->set_key((x >> 48) & 0xFFFF, 0);
+        // Ключ — 8 слов по 16 бит: переносим хэш целиком, без обрезания до байта.
+        key->set_key(static_cast<uint16_t>(x),       3);
+        key->set_key(static_cast<uint16_t>(x >> 16), 2);
+        key->set_key(static_cast<uint16_t>(x >> 32), 1);
+        key->set_key(static_cast<uint16_t>(x >> 48), 0);
 
-        key->set_key(y & 0xFFFF, 7);
-        key->set_key((y >> 16) & 0xFFFF, 6);
-        key->set_key((y >> 32) & 0xFFFF, 5);
-        key->set_key((y >> 48) & 0xFFFF, 4);
+        key->set_key(static_cast<uint16_t>(y),       7);
+        key->set_key(static_cast<uint16_t>(y >> 16), 6);
+        key->set_key(static_cast<uint16_t>(y >> 32), 5);
+        key->set_key(static_cast<uint16_t>(y >> 48), 4);
     }
 
     volatile uint64_t *px = &x;

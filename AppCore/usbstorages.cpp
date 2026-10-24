@@ -183,8 +183,10 @@ void UsbStorages::fill_usb_info(const QString& root_path)
     QString driveLetter = root_path.left(2).toUpper(); // Например, "E:"
     // Инициализируем COM в режиме APARTMENTTHREADED (совместимом с главным потоком Qt)
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    // Переменная будет истинной, если COM успешно создана сейчас (S_OK) или уже была создана Qt ранее (S_FALSE)
+    // S_OK — счётчик COM увеличили мы и обязаны его уменьшить;
+    // S_FALSE — COM уже инициализирован (например, Qt), закрывать сессию нельзя.
     bool coInitialized = (hr == S_OK || hr == S_FALSE);
+    const bool must_uninitialize = (hr == S_OK);
 
     if (coInitialized) {
         // Инициализируем безопасность. Если Qt уже сделал это — функция вернет ошибку,
@@ -304,8 +306,9 @@ void UsbStorages::fill_usb_info(const QString& root_path)
             pLoc->Release();
         }
 
-        // Деинициализацию вызываем только если мы сами успешно открыли COM-сессию (S_OK)
-        if (hr == S_OK) {
+        // Деинициализируем только если счётчик увеличили именно мы (S_OK),
+        // а не по последнему HRESULT от WMI-вызовов.
+        if (must_uninitialize) {
             CoUninitialize();
         }
     }
@@ -357,6 +360,33 @@ static QVector<QByteArray> read_tokens(const QString &root_path)
 
 #if defined(Q_OS_WIN)
 #include <dbt.h> // Необходим для макросов работы с устройствами
+
+// Список только съёмных томов. В отличие от QStorageInfo::mountedVolumes(),
+// не перечисляет остальные тома: GetLogicalDrives + GetDriveTypeW не
+// обращаются к носителю и не блокируются на отключённых сетевых дисках,
+// «залипших» кардридерах и прочих чужих томах.
+static QVector<QStorageInfo> removable_volumes()
+{
+    QVector<QStorageInfo> result;
+
+    const DWORD mask = GetLogicalDrives();
+    wchar_t root[4] = {L'A', L':', L'\\', L'\0'};
+
+    for (int i = 0; i < 26; ++i) {
+        if ((mask & (1u << i)) == 0)
+            continue;
+
+        root[0] = static_cast<wchar_t>(L'A' + i);
+        if (GetDriveTypeW(root) != DRIVE_REMOVABLE)
+            continue;
+
+        QStorageInfo storage(QString::fromWCharArray(root, 3));
+        if (storage.isValid() && storage.isReady())
+            result.append(storage);
+    }
+
+    return result;
+}
 #endif
 
 UsbStorages::UsbStorages(std::string_view pin, QWidget *parent)
@@ -444,7 +474,11 @@ UsbStorages::~UsbStorages()
 
 QVector<QByteArray> UsbStorages::tryToReadKey()
 {
-    auto allDrives = QStorageInfo::mountedVolumes();
+#if defined(Q_OS_WIN)
+    const auto allDrives = removable_volumes();
+#else
+    const auto allDrives = QStorageInfo::mountedVolumes();
+#endif
     QVector<QByteArray> tokens;
 
     for (const QStorageInfo &storage : std::as_const(allDrives)) {
@@ -606,7 +640,11 @@ void UsbStorages::refreshDrives()
     m_drives.clear();
     m_serialLabel->setHtml("<span style='color: #7f8c8d;'>Выберите диск из списка выше...</span>");
 
-    auto allDrives = QStorageInfo::mountedVolumes();
+#if defined(Q_OS_WIN)
+    const auto allDrives = removable_volumes();
+#else
+    const auto allDrives = QStorageInfo::mountedVolumes();
+#endif
 
     for (const QStorageInfo &storage : std::as_const(allDrives)) {
         if (!storage.isValid() || !storage.isReady())

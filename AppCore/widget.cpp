@@ -9,14 +9,18 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDate>
+#include <QDialog>
 #include <QElapsedTimer>
 #include <QIcon>
 #include <QInputDialog>
+#include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QPushButton>
 #include <QStringList>
 #include <QTimer>
+#include <QVBoxLayout>
 
 #include "AppCore/ui_widget.h"
 
@@ -45,7 +49,6 @@ public:
 
 namespace {
     namespace pointers {
-    SecureTextEdit *txt_edit_master_phrase = nullptr;
     QTableWidgetItem *selected_context_table_item = nullptr;
     }
 }
@@ -113,6 +116,9 @@ static void critical_message_box(const QString& title, const QString& message) {
 
 // Очистить содержимое таблицы, сохраняя ее структуру.
 static void clear_table(QTableWidget* widget) {
+    // Элементы сейчас будут удалены — висячий указатель на них недопустим.
+    pointers::selected_context_table_item = nullptr;
+
     TableLoadingRAII lock;
     widget->clearContents();
     while (widget->rowCount() > 0)
@@ -299,6 +305,10 @@ do { \
                                     tr("&Обновить пароль"), this); \
         connect(updatePassAct, &QAction::triggered, this, &Widget::update_pass); \
     \
+        showPassAct = new QAction(QIcon(), \
+                                  tr("&Показать пароль"), this); \
+        connect(showPassAct, &QAction::triggered, this, &Widget::show_pass); \
+    \
         showPassDateAct = new QAction(QIcon(), \
                                       tr("&Показать дату изменения пароля"), this); \
         connect(showPassDateAct, &QAction::triggered, this, &Widget::show_pass_date); \
@@ -405,20 +415,6 @@ Widget::Widget(QWidget *parent)
     app_title.append(QString::fromUtf8(" - Менеджер паролей"));
     this->setWindowTitle( app_title );
 
-    pointers::txt_edit_master_phrase = new SecureTextEdit();
-    pointers::txt_edit_master_phrase->setWindowTitle(QString::fromUtf8("Ввод мастер-фразы"));
-    pointers::txt_edit_master_phrase->setStyleSheet("color: white; background-color: black; font: 14px;");
-    pointers::txt_edit_master_phrase->setVisible(false);
-    pointers::txt_edit_master_phrase->setContextMenuPolicy(Qt::NoContextMenu);
-    pointers::txt_edit_master_phrase->document()->setUndoRedoEnabled(false);
-    pointers::txt_edit_master_phrase->setAcceptDrops(false);
-    pointers::txt_edit_master_phrase->setAccessibleDescription(QString());
-    pointers::txt_edit_master_phrase->setAccessibleName(QString());
-
-    m_masterPhraseConn = connect(pointers::txt_edit_master_phrase,
-                                 &SecureTextEdit::sig_closing,
-                                 this,
-                                 &Widget::update_master_phrase);
     connect(this, &Widget::master_phrase_ready, this, &Widget::set_master_key);
     connect(this, &Widget::master_key_set, this, &Widget::finish_master_key);
     connect(this, &Widget::master_phrase_discarded, this, &Widget::discard_master_key);
@@ -471,7 +467,9 @@ Widget::Widget(QWidget *parent)
     }
 #endif
     g_use_usb_token = false;
-    QTimer::singleShot(0, this, [&]{ input_master_phrase(); });
+    // Диалог мастер-фразы показываем уже после возврата в цикл событий,
+    // чтобы главное окно успело отрисоваться.
+    QTimer::singleShot(0, this, [this]() { update_master_phrase(); });
 }
 
 Widget::~Widget()
@@ -793,6 +791,77 @@ void Widget::update_pass()
 }
 
 
+void Widget::show_pass()
+{
+    QTableWidgetItem *item = pointers::selected_context_table_item;
+    if (!item || item->column() != constants::pswd_column_idx) {
+        pointers::selected_context_table_item = nullptr;
+        return;
+    }
+
+    QString pswd = item->data(Qt::DisplayRole).toString();
+    if (pswd.isEmpty()) {
+        utils::erase_string(pswd);
+        pointers::selected_context_table_item = nullptr;
+        information_message_box(QString::fromUtf8("Просмотр пароля"),
+                                QString::fromUtf8("Ячейка пуста."));
+        return;
+    }
+
+    // Пароль показываем только в модальном окне с автозакрытием:
+    // без выделения текста (чтобы значение нельзя было скопировать мимо
+    // таймера очистки буфера) и с затиранием содержимого при закрытии.
+    constexpr int show_timeout_sec = 10;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Просмотр пароля"));
+    dialog.setModal(true);
+
+    auto *layout = new QVBoxLayout(&dialog);
+
+    auto *password_label = new QLabel(pswd, &dialog);
+    password_label->setTextInteractionFlags(Qt::NoTextInteraction);
+    password_label->setAlignment(Qt::AlignCenter);
+
+    QFont mono_font = password_label->font();
+    mono_font.setFamily(QStringLiteral("Consolas"));
+    mono_font.setStyleHint(QFont::Monospace);
+    mono_font.setPointSize(mono_font.pointSize() + 4);
+    password_label->setFont(mono_font);
+    layout->addWidget(password_label);
+
+    auto *hint_label = new QLabel(&dialog);
+    hint_label->setAlignment(Qt::AlignCenter);
+    layout->addWidget(hint_label);
+
+    auto *close_btn = new QPushButton(tr("Закрыть"), &dialog);
+    layout->addWidget(close_btn, 0, Qt::AlignCenter);
+    connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+    int remaining_sec = show_timeout_sec;
+    hint_label->setText(tr("Окно закроется через %1 с.").arg(remaining_sec));
+
+    QTimer countdown;
+    countdown.setInterval(1000);
+    connect(&countdown, &QTimer::timeout, &dialog, [&dialog, &hint_label, &remaining_sec]() {
+        --remaining_sec;
+        if (remaining_sec <= 0) {
+            dialog.accept();
+            return;
+        }
+        hint_label->setText(tr("Окно закроется через %1 с.").arg(remaining_sec));
+    });
+    countdown.start();
+
+    dialog.exec();
+
+    countdown.stop();
+    password_label->setText(QString());
+    utils::erase_string(pswd);
+    pointers::selected_context_table_item = nullptr;
+}
+
+
 void Widget::show_pass_date()
 {
     if (!pointers::selected_context_table_item) {
@@ -855,29 +924,59 @@ void Widget::finish_password_generator()
     }
 }
 
-void Widget::input_master_phrase()
+QByteArray Widget::ask_master_phrase(bool repeat_only)
 {
-    pointers::txt_edit_master_phrase->setVisible(true);
-    pointers::txt_edit_master_phrase->resize(400, 250);
-    pointers::txt_edit_master_phrase->activateWindow();
-    pointers::txt_edit_master_phrase->raise();
-    pointers::txt_edit_master_phrase->setFocus();
+    MasterPhraseDialog dialog(repeat_only, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return QByteArray();
+    return dialog.take_phrase();
 }
 
 void Widget::update_master_phrase()
 {
-    QByteArray textBytes; // Переменная для хранения сырых UTF-8 байт фразы
+    QByteArray textBytes;   // Сырые UTF-8 байты мастер-фразы
+    QString storage_name;   // Имя хранилища, выведенное из фразы (без USB-ключа)
 
     if (!g_use_usb_token) {
-        // Извлекаем фразу напрямую в байтах
-        textBytes = pointers::txt_edit_master_phrase->getSecureData();
-
-        // Сразу же полностью выжигаем буферы внутри виджета
-        pointers::txt_edit_master_phrase->secureClear();
-
+        textBytes = ask_master_phrase();
         if (textBytes.isEmpty()) {
+            // Диалог отменён: без мастер-фразы работать нельзя.
             emit master_phrase_discarded();
+            QTimer::singleShot(0, this, [this]() { close(); });
             return;
+        }
+
+        // Имя хранилища выводится из фразы, поэтому существование можно
+        // проверить только после первого ввода. Файла нет — значит создаётся
+        // новое хранилище: просим повторить фразу, чтобы исключить опечатку
+        // (иначе опечатка молча создаёт новую пустую базу).
+        {
+            lfsr_hash::u128 hash_storage = utils_global::gen_hash_for_storage(textBytes);
+            storage_name = utils_global::generate_storage_name(hash_storage);
+            utils::clear_lfsr_hash(hash_storage);
+        }
+
+        if (!storage_manager->FileIsExist(storage_name)) {
+            QByteArray confirmation = ask_master_phrase(true);
+
+            if (confirmation.isEmpty()) {
+                utils::erase_bytes(textBytes);
+                emit master_phrase_discarded();
+                QTimer::singleShot(0, this, [this]() { close(); });
+                return;
+            }
+
+            if (confirmation != textBytes) {
+                utils::erase_bytes(confirmation);
+                utils::erase_bytes(textBytes);
+                critical_message_box(QString::fromUtf8("Фразы не совпадают"),
+                                     QString::fromUtf8("Мастер-фраза введена по-разному. "
+                                                       "Попробуйте ещё раз."));
+                QTimer::singleShot(0, this, [this]() { update_master_phrase(); });
+                return;
+            }
+
+            utils::erase_bytes(confirmation);
         }
     }
     // Структура для возврата трех хэшей одновременно
@@ -936,15 +1035,20 @@ void Widget::update_master_phrase()
 
         for (auto& data : std::as_const(*g_usb_hashes)) {
             const auto total_bytes = data.size();
-            // Защита кучи: проверяем, что в массиве физически есть 48 байт
-            if (total_bytes < static_cast<int>(3 * single_hash_size)) {
+            // Нужны 48 байт хэшей + непустое имя ключа.
+            if (total_bytes <= static_cast<int>(3 * single_hash_size))
                 continue;
-            }
-            const char *src_ptr = data.constData();
 
-            // Безопасно собираем хэши через явное побайтовое заполнение полей first и second
-            std::copy_n(src_ptr, 8, reinterpret_cast<char *>(&result.storage.first));
-            std::copy_n(src_ptr + 8, 8, reinterpret_cast<char *>(&result.storage.second));
+            const char *src_ptr = data.constData();
+            const int offset = 3 * single_hash_size;
+
+            // Сначала сверяем имя: иначе при несовпадении в result остаются
+            // хэши последнего токена из списка.
+            if (selected_item != QString::fromUtf8(src_ptr + offset, total_bytes - offset))
+                continue;
+
+            std::copy_n(src_ptr,      8, reinterpret_cast<char *>(&result.storage.first));
+            std::copy_n(src_ptr + 8,  8, reinterpret_cast<char *>(&result.storage.second));
 
             std::copy_n(src_ptr + 16, 8, reinterpret_cast<char *>(&result.encryption.first));
             std::copy_n(src_ptr + 24, 8, reinterpret_cast<char *>(&result.encryption.second));
@@ -952,16 +1056,16 @@ void Widget::update_master_phrase()
             std::copy_n(src_ptr + 32, 8, reinterpret_cast<char *>(&result.inner_encryption.first));
             std::copy_n(src_ptr + 40, 8, reinterpret_cast<char *>(&result.inner_encryption.second));
 
-            // Извлекаем имя ключа
-            if (total_bytes > 3 * single_hash_size) {
-                int offset = 3 * single_hash_size;
-                int data_length = total_bytes - offset;
-                // Выбор имени токена совпал.
-                if ( selected_item == QString::fromUtf8(src_ptr + offset, data_length)) {
-                    result.key_name = selected_item;
-                    break;
-                }
-            }
+            result.key_name = selected_item;
+            break;
+        }
+
+        if (result.key_name.isEmpty()) {
+            warning_message_box(QString::fromUtf8("Ошибка ключа."),
+                                QString::fromUtf8("Выбранный ключ не найден на носителе. "
+                                                  "Проверьте, что USB-токен подключён."));
+            g_use_usb_token = false;
+            return;
         }
     } // use usb token
 
@@ -974,13 +1078,13 @@ void Widget::update_master_phrase()
         utils::clear_lfsr_hash(hash);
     }
     {
-        lfsr_hash::u128 hash_fs = g_use_usb_token ? result.storage
-                                                  : utils_global::gen_hash_for_storage(
-                                                        textBytes); // на usb-токен
-        const auto &name = utils_global::generate_storage_name(hash_fs);
-        storage_manager->SetName( name );
-        storage_manager->SetTmpName( name );
-        utils::clear_lfsr_hash(hash_fs);
+        // Для USB-ключа имя хранилища берётся из хэшей токена, для фразы —
+        // уже вычислено выше (и по нему проверялось существование файла).
+        if (g_use_usb_token) {
+            storage_name = utils_global::generate_storage_name(result.storage);
+        }
+        storage_manager->SetName( storage_name );
+        storage_manager->SetTmpName( storage_name );
     }
     {
         lfsr_hash::u128 hash_enc = g_use_usb_token ? result.encryption
@@ -1042,7 +1146,7 @@ void Widget::set_master_key()
 {
     lfsr_rng::STATE state; // key => state => password generator
     for (int i=0; i<password::key->N(); ++i) {
-        state[i] = password::key->get_key(i);
+        state[i] = static_cast<uint16_t>(password::key->get_key(i));
     }
     watcher_seed_pass_gen.setFuture( password::worker->seed(state) );
     password::key->clear();
@@ -1165,6 +1269,7 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
         if (pointers::selected_context_table_item->column() == constants::pswd_column_idx) {
             menu.addSeparator(); // Визуальный разделитель для красоты
             menu.addAction(updatePassAct);
+            menu.addAction(showPassAct);
             menu.addAction(showPassDateAct);
         }
     } else {
@@ -1178,6 +1283,10 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     if (!menu.actions().isEmpty()) {
         menu.exec(ui->tableWidget->viewport()->mapToGlobal(pos));
     }
+
+    // Меню закрыто (выбран экшен, Esc или клик мимо) — указатель больше не нужен.
+    // Все обработчики, которым он был нужен, уже отработали синхронно внутри exec().
+    pointers::selected_context_table_item = nullptr;
 }
 
 void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
@@ -1228,8 +1337,15 @@ void Widget::load_storage()
     switch (loading_status) {
         case Loading_Errors::OK:
         case Loading_Errors::EMPTY_TABLE:
-        case Loading_Errors::TABLE_IS_NOT_EMPTY:
             break;
+        case Loading_Errors::TABLE_IS_NOT_EMPTY:
+            // Контракт нарушен: загружать можно только в пустую таблицу.
+            // Раньше этот код попадал в группу "OK" и молча игнорировался.
+            qWarning() << "LoadFromStorage: table is not empty, loading aborted.";
+            critical_message_box(QString::fromUtf8("Ошибка загрузки хранилища."),
+                                 QString::fromUtf8("Внутренняя ошибка: таблица не была очищена "
+                                                   "перед загрузкой. Данные не загружены."));
+            return;
         case Loading_Errors::NEW_STORAGE:
             try_load_from_backup = true;
             break;
@@ -1274,10 +1390,15 @@ void Widget::load_storage()
         switch (loading_status_backup) {
             case Loading_Errors::OK:
             case Loading_Errors::EMPTY_TABLE:
-            case Loading_Errors::TABLE_IS_NOT_EMPTY:
                 warning_message_box(QString::fromUtf8("Загрузка из резервного хранилища."),
                        QString::fromUtf8("Данные загружены из резервной копии."));
                 break;
+            case Loading_Errors::TABLE_IS_NOT_EMPTY:
+                qWarning() << "Backup load: table is not empty, loading aborted.";
+                critical_message_box(QString::fromUtf8("Ошибка загрузки резервной копии."),
+                                     QString::fromUtf8("Внутренняя ошибка: таблица не была очищена "
+                                                       "перед загрузкой резервной копии."));
+                return;
             case Loading_Errors::NEW_STORAGE:
                 if (!was_failure && !storage_manager->TmpFileIsExist()) {
                     information_message_box(QString::fromUtf8("Успех."),
@@ -1399,7 +1520,8 @@ void Widget::btn_new_storage_with_transfer_clicked() {
     if (pin.length() != constants::pin_code_len) {
         QMessageBox mb(QMessageBox::Critical,
                        QString::fromUtf8("Ошибка PIN-кода"),
-                       QString::fromUtf8("PIN-код должен быть любым 4-значным числом"));
+                       QString::fromUtf8("PIN-код должен быть числом из %1 цифр")
+                           .arg(constants::pin_code_len));
         mb.exec();
         return;
     }
@@ -1414,7 +1536,7 @@ void Widget::btn_new_storage_with_transfer_clicked() {
                                             "Однако, старое при этом будет доступно. Вы можете его удалить вручную."
                                             "Если фраза введена не будет, то изменений не произойдет."));
 
-    input_master_phrase();
+    update_master_phrase();
 }
 
 void Widget::btn_create_usb_key_clicked()
@@ -1444,7 +1566,11 @@ void Widget::btn_create_usb_key_clicked()
         &ok                          // Сюда запишется true, если нажали OK, или false, если Cancel
         );
 
-    if (ok && !key_name.isEmpty()) {
+    // Отмена ввода имени не должна создавать ключ с текстом по умолчанию.
+    if (!ok)
+        return;
+
+    if (!key_name.isEmpty()) {
         // Ограничиваем длину
         if (key_name.length() > 20) {
             key_name = key_name.left(20); // обрезаем или выводим ошибку
@@ -1464,89 +1590,83 @@ void Widget::btn_create_usb_key_clicked()
             "Подготовьте usb-носитель. После подтверждения мастер-фразы будет предложено"
             "окно выбора usb-носителя. Если фраза введена не будет, то ничего не произойдет."));
 
-    if (m_masterPhraseConn) {
-        QObject::disconnect(m_masterPhraseConn);
+    // Раньше здесь подменялся обработчик сигнала закрытия окна мастер-фразы.
+    // Теперь диалог модальный и возвращает результат напрямую — порядок
+    // действий виден в одном месте, без goto и восстановления сигналов.
+    QByteArray textBytes = ask_master_phrase();
+    if (textBytes.isEmpty()) {
+        warning_message_box(
+            QString::fromUtf8(""),
+            QString::fromUtf8("Ввод мастер-фразы был отменён. Изменений не будет."));
+        return;
     }
-    m_tempConn = connect(
-        pointers::txt_edit_master_phrase, &SecureTextEdit::sig_closing, this, [this, key_name]() {
-            // Безопасно извлекаем байты
-            QByteArray textBytes = pointers::txt_edit_master_phrase->getSecureData();
 
-            // Выжигаем внутренности виджета SecureTextEdit
-            pointers::txt_edit_master_phrase->secureClear();
+    auto hash_storage = utils_global::gen_hash_for_storage(textBytes);
+    auto hash_enc = utils_global::gen_hash_for_encryption(textBytes);
+    auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(textBytes);
+    utils::erase_bytes(textBytes);
 
-            if (!textBytes.isEmpty()) {
-                auto hash_storage = utils_global::gen_hash_for_storage(textBytes);
-                auto hash_enc = utils_global::gen_hash_for_encryption(textBytes);
-                auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(textBytes);
+    const QString file_name = utils_global::generate_storage_name(hash_storage)
+                              + QStringLiteral(".enc");
 
-                const auto file_name = utils_global::generate_storage_name(hash_storage)
-                                           .append(".enc");
+    // Ключ создаётся только для активного хранилища: иначе на носитель
+    // попали бы хэши от другой (опечатанной) мастер-фразы.
+    if (!file_name.startsWith(storage_manager->Name())) {
+        utils::clear_lfsr_hash(hash_storage);
+        utils::clear_lfsr_hash(hash_enc);
+        utils::clear_lfsr_hash(hash_inn_enc);
+        critical_message_box(QString::fromUtf8("Ошибка ввода"),
+                             QString::fromUtf8("Неверная мастер-фраза"));
+        return;
+    }
 
-                if (!file_name.startsWith(storage_manager->Name())) {
-                    critical_message_box(QString::fromUtf8("Ошибка ввода"),
-                                         QString::fromUtf8("Неверная мастер-фраза"));
-                    goto exit_lambda;
-                }
+    // 1. Кодируем имя ключа напрямую в буфер
+    QByteArray tmp4 = key_name.toUtf8();
 
-                // 1. Кодируем имя ключа напрямую в буфер
-                QByteArray tmp4 = key_name.toUtf8();
+    QByteArray data;
+    data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
 
-                QByteArray data;
-                data.reserve(3 * sizeof(lfsr_hash::u128) + tmp4.size() + 32);
+    // 2. Последовательно добавляем хэши и сразу выжигаем промежуточную память
+    data.append(utils::lfsr_hash_to_bytes(hash_storage));
+    data.append(utils::lfsr_hash_to_bytes(hash_enc));
+    data.append(utils::lfsr_hash_to_bytes(hash_inn_enc));
 
-                // 2. Последовательно добавляем хэши и сразу выжигаем промежуточную память
-                data.append(utils::lfsr_hash_to_bytes(hash_storage));
-                data.append(utils::lfsr_hash_to_bytes(hash_enc));
-                data.append(utils::lfsr_hash_to_bytes(hash_inn_enc));
+    // 3. Добавляем имя ключа и очищаем его локальную UTF-8 копию
+    data.append(tmp4);
+    utils::erase_bytes(tmp4);
 
-                // 3. Добавляем имя ключа и очищаем его локальную UTF-8 копию
-                data.append(tmp4);
-                utils::erase_bytes(tmp4);
+    // Хэшируем накопленный буфер data и сразу дописываем результат в его хвост
+    data.append(QCryptographicHash::hash(data, QCryptographicHash::Sha256));
 
-                // Хэшируем накопленный буфер data и сразу дописываем результат в его хвост
-                data.append(QCryptographicHash::hash(data, QCryptographicHash::Sha256));
+    utils::clear_lfsr_hash(hash_storage);
+    utils::clear_lfsr_hash(hash_enc);
+    utils::clear_lfsr_hash(hash_inn_enc);
 
-                utils::clear_lfsr_hash(hash_storage);
-                utils::clear_lfsr_hash(hash_enc);
-                utils::clear_lfsr_hash(hash_inn_enc);
+    {
+        QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
+        std::string_view pin_view(stack_pin_bytes.constData(),
+                                  static_cast<size_t>(stack_pin_bytes.size()));
 
-                QByteArray stack_pin_bytes = utils_global::get_global_pin_decrypted();
-                std::string_view pin_view(stack_pin_bytes.constData(),
-                                          static_cast<size_t>(stack_pin_bytes.size()));
+        UsbStorages usb_storages{pin_view, file_name, data};
+        utils::erase_bytes(stack_pin_bytes);
 
-                UsbStorages usb_storages{pin_view, file_name, data};
-                utils::erase_bytes(stack_pin_bytes);
+        usb_storages.setWindowModality(Qt::ApplicationModal);
+        usb_storages.setAttribute(Qt::WA_DeleteOnClose, false);
 
-                usb_storages.setWindowModality(Qt::ApplicationModal);
-                usb_storages.setAttribute(Qt::WA_DeleteOnClose, false);
+        usb_storages.show();
+        usb_storages.raise();
+        usb_storages.activateWindow();
+        usb_storages.setFocus();
 
-                usb_storages.show();
-                usb_storages.raise();
-                usb_storages.activateWindow();
-                usb_storages.setFocus();
+        QEventLoop loop;
+        QObject::connect(&usb_storages,
+                         &UsbStorages::sig_finished,
+                         &loop,
+                         &QEventLoop::quit);
+        loop.exec();
+    }
 
-                QEventLoop loop;
-                QObject::connect(&usb_storages,
-                                 &UsbStorages::sig_finished,
-                                 &loop,
-                                 &QEventLoop::quit);
-                loop.exec();
-
-                utils::erase_bytes(data);
-            } // if !textBytes.isEmpty()
-        exit_lambda:
-            // Затираем мастер-фразу
-            utils::erase_bytes(textBytes);
-            // Восстанавливаем сигналы
-            QObject::disconnect(m_tempConn);
-            m_masterPhraseConn = connect(pointers::txt_edit_master_phrase,
-                                         &SecureTextEdit::sig_closing,
-                                         this,
-                                         &Widget::update_master_phrase);
-        });
-
-    input_master_phrase();
+    utils::erase_bytes(data);
 }
 
 void Widget::btn_clear_table_clicked()
