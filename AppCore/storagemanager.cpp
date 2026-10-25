@@ -16,6 +16,7 @@
 
 #include <QTableWidget>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -226,12 +227,13 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_by
     }
 }
 
-static void insert_hash128(QByteArray &bytes)
+static void insert_hash128(QByteArray &bytes, bool legacy)
 {
     if (bytes.size() % 128 != 0) {
         qDebug() << "Insert hash128 error: input size is not a 128*k bytes: " << bytes.size();
         return;
     }
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     lfsr_hash::u128 hash = {0, 0};
     constexpr size_t blockSize = 128;
@@ -262,7 +264,7 @@ static void insert_hash128(QByteArray &bytes)
     utils::erase_bytes(hash_buf);
 }
 
-static bool extract_and_check_hash128(QByteArray &bytes)
+static bool extract_and_check_hash128(QByteArray &bytes, bool legacy)
 {
     // 1. Разрываем неявные связи (CoW), гарантируя монопольное владение буфером
     bytes.detach();
@@ -295,6 +297,7 @@ static bool extract_and_check_hash128(QByteArray &bytes)
     bytes.resize(hash_offset);
 
     // Вычисляем хэш от оставшихся данных для проверки
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     lfsr_hash::u128 calculated_hash = {0, 0};
     constexpr size_t blockSize = 128;
@@ -442,11 +445,16 @@ StorageManager::StorageManager()
     // Версии формата хранилища, которые умеет читать эта сборка.
     // Новые версии формата добавлять сюда, старые — не удалять: иначе
     // ранее созданные базы перестанут открываться.
-    *g_supported_as_version_1 = QSet{QString("v3.00"), QString("v3.01")};
+    *g_supported_as_version_1 = QSet{QString("v3.00"), QString("v3.01"), QString("v3.02")};
+
+    // Новые хранилища создаются в актуальном формате.
+    mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
+    mLegacyHash = false;
 }
 
 template<int version>
-QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &enc_inner)
+QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &enc_inner,
+                     bool legacy)
 {
     QByteArray out;
 #define my_encode(ns, K, R) \
@@ -476,7 +484,7 @@ QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &en
     QByteArray permuted; \
     uint8_t dlog_key = static_cast<uint8_t>(seed2 & 0xFF); \
     ns::encode_dlog256(encrypted_inner, permuted, dlog_key); \
-    ns::insert_hash128(permuted); \
+    ns::insert_hash128(permuted, legacy); \
     crc = utils::xor_data_by_seed(crc, seed2); \
     permuted.append(crc); \
     QByteArray seed_b = utils::seed_to_bytes(seed2); \
@@ -505,7 +513,7 @@ QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &en
 }
 
 template<int version>
-QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
+QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner, bool legacy)
 {
     QByteArray decoded_data;
 #define my_decode(ns, K, R) \
@@ -551,7 +559,7 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner)
     decrypted.resize(decrypted_crc_offset); \
 \
     /* 4. Теперь в самом хвосте decrypted остался чистый 16-байтный хэш. Проверяем его */ \
-    if (!ns::extract_and_check_hash128(decrypted)) { \
+    if (!ns::extract_and_check_hash128(decrypted, legacy)) { \
         qDebug() << "Hash128 check failure."; \
         ns::finalize_encryption(dec); \
         utils::erase_bytes(crc); \
@@ -691,7 +699,7 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     packed_data_bytes.append(end_byte);
 
     QByteArray encoded_data_bytes;
-    encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner);
+    encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner, mLegacyHash);
 
     utils::erase_bytes(packed_data_bytes);
 
@@ -701,7 +709,9 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     }
 
     {
-        QString current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
+        QString current_version = mVersionLabel;
+        if (current_version.isEmpty())
+            current_version = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
         encoded_data_bytes.append(current_version.toUtf8());
     }
 
@@ -827,8 +837,14 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
 
         // 4. Проверка поддержки формата
         if (g_supported_as_version_1->contains(read_version)) {
+            // Версия файла — авторитетный источник режима хэширования:
+            // v3.00/v3.01 используют прежний (legacy) хэш, v3.02 — исправленный.
+            mLegacyHash = (read_version == QStringLiteral("v3.00")
+                           || read_version == QStringLiteral("v3.01"));
+            mVersionLabel = read_version;
+
             // Передаем в do_decode гарантированно чистый массив, кратный 16 байтам (размер будет 284 байта)
-            decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner);
+            decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner, mLegacyHash);
             decoded_data_bytes.detach();
             utils::erase_bytes(clean_crypto_data);
 
@@ -1029,6 +1045,14 @@ bool StorageManager::FileIsExist(const QString& name) const
     return file.exists();
 }
 
+bool StorageManager::BackupFileIsExist(const QString& name) const
+{
+    if (name.isEmpty())
+        return false;
+    const QFile file(storage_directory() + QLatin1Char('/') + QLatin1Char('.') + name);
+    return file.exists();
+}
+
 bool StorageManager::BackupFileIsExist() const
 {
     const QFile backup_file(mStorageNameBackUp);
@@ -1075,12 +1099,189 @@ void StorageManager::SetName(const QString &name)
     if (name.isEmpty()) {
         mStorageName.clear();
         mStorageNameBackUp.clear();
+        // Сбрасываем режим: следующее хранилище будет создано в актуальном формате.
+        mLegacyHash = false;
+        mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
         return;
     }
 
     const QString dir = storage_directory();
     mStorageName = dir + QLatin1Char('/') + name;
     mStorageNameBackUp = dir + QLatin1Char('/') + QLatin1Char('.') + name;
+}
+
+void StorageManager::SetLegacyHash(bool legacy)
+{
+    mLegacyHash = legacy;
+}
+
+bool StorageManager::IsLegacyHash() const
+{
+    return mLegacyHash;
+}
+
+void StorageManager::SetVersionLabel(const QString &label)
+{
+    mVersionLabel = label;
+    if (mVersionLabel.startsWith(QLatin1Char(G_VERSION_PREFIX)))
+        mVersionLabel.remove(0, 1);
+}
+
+QString StorageManager::VersionLabel() const
+{
+    return mVersionLabel;
+}
+
+QString StorageManager::ReadVersionLabel(const QString& name) const
+{
+    if (name.isEmpty())
+        return {};
+
+    const QString dir = storage_directory();
+    QString path = dir + QLatin1Char('/') + name;
+    if (!QFile::exists(path))
+        path = dir + QLatin1Char('/') + QLatin1Char('.') + name;
+
+    QFile file(path);
+    if (!file.open(QFile::ReadOnly))
+        return {};
+    if (file.size() < 5)
+        return {};
+    if (!file.seek(file.size() - 5))
+        return {};
+    return QString::fromUtf8(file.read(5));
+}
+
+bool StorageManager::ConvertedBackupExists(const QString& name) const
+{
+    if (name.isEmpty())
+        return false;
+
+    // Имя хранилища состоит только из [0-9a-z], поэтому подстановочные
+    // символы здесь безопасны.
+    QDir dir(storage_directory());
+    const QStringList filters{name + QStringLiteral(".*.bak")};
+    return !dir.entryList(filters, QDir::Files | QDir::Hidden | QDir::System).isEmpty();
+}
+
+bool StorageManager::RenameStorage(const QString& new_name)
+{
+    if (new_name.isEmpty() || mStorageName.isEmpty())
+        return false;
+
+    const QString dir = storage_directory();
+    const QString new_path = dir + QLatin1Char('/') + new_name;
+    const QString new_backup = dir + QLatin1Char('/') + QLatin1Char('.') + new_name;
+
+    if (new_path == mStorageName)
+        return true; // уже называется так
+
+    // Чужую базу не перезаписываем.
+    if (QFile::exists(new_path) || QFile::exists(new_backup)) {
+        qWarning() << "Rename skipped: target already exists" << new_path;
+        return false;
+    }
+
+    const bool main_exists = QFile::exists(mStorageName);
+    const bool backup_exists = QFile::exists(mStorageNameBackUp);
+    if (!main_exists && !backup_exists)
+        return false;
+
+    bool main_moved = false;
+    if (main_exists) {
+        if (!QFile::rename(mStorageName, new_path))
+            return false;
+        main_moved = true;
+    }
+    if (backup_exists) {
+        if (!QFile::rename(mStorageNameBackUp, new_backup)) {
+            // Откат уже перенесённого основного файла: база должна остаться
+            // целой под прежним именем.
+            if (main_moved)
+                QFile::rename(new_path, mStorageName);
+            return false;
+        }
+    }
+
+    mStorageName = new_path;
+    mStorageNameBackUp = new_backup;
+    if (!mStorageNameTmp.isEmpty())
+        mStorageNameTmp = dir + QLatin1Char('/') + new_name + QStringLiteral(".tmp");
+    return true;
+}
+
+bool StorageManager::ConvertToCurrentFormat(const QTableWidget *const table,
+                                            std::shared_ptr<lfsr_rng::Generators> enc,
+                                            std::shared_ptr<lfsr_rng::Generators> dec,
+                                            std::shared_ptr<lfsr_rng::Generators> enc_inner,
+                                            std::shared_ptr<lfsr_rng::Generators> dec_inner)
+{
+    if (!mLegacyHash || mStorageName.isEmpty() || !table)
+        return false;
+    if (!enc || !dec || !enc_inner || !dec_inner)
+        return false;
+
+    const QString old_path = mStorageName;
+
+    // Источник копии — основной файл, а если он утерян (база открыта из
+    // скрытой резервной копии) — сама резервная копия.
+    const bool main_existed = QFile::exists(old_path);
+    const QString source_path = main_existed ? old_path : mStorageNameBackUp;
+    if (source_path.isEmpty() || !QFile::exists(source_path)) {
+        qWarning() << "Conversion skipped: no source file to convert";
+        return false;
+    }
+
+    // Копия старого файла: страховка от недописанного файла (нет места,
+    // обрыв) и возможность ручного отката на прежнюю версию.
+    const QString rollback_path
+        = old_path + QLatin1Char('.') + mVersionLabel + QStringLiteral(".bak");
+    QFile::remove(rollback_path);
+    if (!QFile::copy(source_path, rollback_path)) {
+        // Без копии конвертировать нельзя: сбой записи оставит базу без
+        // резервного варианта. Работаем дальше в старом формате.
+        qWarning() << "Conversion skipped: cannot create rollback copy" << rollback_path;
+        return false;
+    }
+
+    const bool old_legacy = mLegacyHash;
+    const QString old_version = mVersionLabel;
+    auto old_enc = mEnc.gamma_gen;
+    auto old_dec = mDec.gamma_gen;
+    auto old_enc_inner = mEncInner.gamma_gen;
+    auto old_dec_inner = mDecInner.gamma_gen;
+
+    // Переключаемся на исправленный формат: те же имена файлов, новые ключи.
+    mLegacyHash = false;
+    mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
+    mEnc.gamma_gen = std::move(enc);
+    mDec.gamma_gen = std::move(dec);
+    mEncInner.gamma_gen = std::move(enc_inner);
+    mDecInner.gamma_gen = std::move(dec_inner);
+
+    if (SaveToStorage(table))
+        return true;
+
+    // Откат: возвращаем режим, версию, ключи и прежнее содержимое файлов.
+    mLegacyHash = old_legacy;
+    mVersionLabel = old_version;
+    mEnc.gamma_gen = std::move(old_enc);
+    mDec.gamma_gen = std::move(old_dec);
+    mEncInner.gamma_gen = std::move(old_enc_inner);
+    mDecInner.gamma_gen = std::move(old_dec_inner);
+
+    if (main_existed) {
+        QFile::remove(old_path);
+        QFile::copy(rollback_path, old_path);
+    } else {
+        // Основного файла до конвертации не было — убираем недописанный.
+        QFile::remove(old_path);
+    }
+    QFile::remove(mStorageNameBackUp);
+    QFile::copy(rollback_path, mStorageNameBackUp);
+
+    qWarning() << "Conversion failed, rolled back to" << old_version;
+    return false;
 }
 
 void StorageManager::SetTmpName(const QString &name)

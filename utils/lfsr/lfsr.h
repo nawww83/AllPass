@@ -76,6 +76,26 @@ public:
     {
         m_K = K;
         m_calculate_inverse_of_K();
+        // Матрицы перехода зависят от K: без пересчёта блоковые SIMD-методы
+        // продолжали бы работать со старыми коэффициентами.
+        precompute_matrices();
+    }
+
+    /**
+     * @brief Включить режим совместимости со старыми хранилищами.
+     * @details В legacy-режиме SIMD-методы воспроизводят прежнее поведение:
+     * входные слова не приводятся по модулю p, из-за чего возможны
+     * 16-битные переполнения. Это нужно только для чтения баз, созданных
+     * до исправления (v3.00/v3.01). Новые базы работают в fixed-режиме.
+     */
+    void set_legacy(bool legacy)
+    {
+        m_legacy = legacy;
+    }
+
+    bool is_legacy() const
+    {
+        return m_legacy;
     }
 
     // Безопасная очистка внутреннего состояния генератора
@@ -126,6 +146,15 @@ public:
 #endif
         void next_simd(u16 inp1, u16 inp2)
     {
+        if (!m_legacy)
+        {
+            // Вход приводится по модулю p: иначе сумма state + feedback + input
+            // может переполнить 16 бит (так происходит, например, для
+            // дополненных байтов в хвосте) и результат разойдётся с next().
+            inp1 = static_cast<u16>(inp1 % p);
+            inp2 = static_cast<u16>(inp2 % p);
+        }
+
         __m128i state = _mm_load_si128((const __m128i *)m_state.data());
         __m128i K_vec = _mm_load_si128((const __m128i *)m_K.data());
 
@@ -231,6 +260,14 @@ public:
     void next_simd_block(__m128i input_128)
     {
         __m128i s = _mm_load_si128((const __m128i *)m_state.data());
+
+        if (!m_legacy)
+        {
+            // Входные слова приводятся по модулю p ДО умножения на матрицу G.
+            // Иначе произведение input * G (до 65535 * 250) переполняет 16 бит
+            // и результат расходится со скалярной моделью next().
+            input_128 = simd_mod_p(input_128);
+        }
 
         // Бродкаст ячеек состояния (s0..s3 и s4..s7)
         __m128i bS[4];
@@ -377,6 +414,7 @@ public:
     {
         auto x = q;
         LFSR_paired_2x4<p> lfsr{m_K};
+        lfsr.set_legacy(m_legacy);
         lfsr.set_unit_state();
         for (; x != 0;)
         {
@@ -430,6 +468,9 @@ private:
 
     alignas(16) u16x8 m_inv_K{};
 
+    // Режим совместимости: SIMD-шаги не приводят вход по модулю p.
+    bool m_legacy = false;
+
 private:
     // Матрицы перехода для 4-х шагов (каждая строка — это влияние s_i на все s'_0..3)
     alignas(16) __m128i m_matM[4]; // Для состояния s0..s3 и s4..s7
@@ -444,28 +485,32 @@ private:
         const u32 g4 = m_K[4];
         assert(g0 != 0);
         assert(g4 != 0);
-        u32 inverse0 = 1;
-        u32 inverse4 = 1;
         const u32 modulo = p;
-        bool achieved0 = false;
-        bool achieved4 = false;
-        for (;;)
+
+        // Ограниченный поиск: p простое, поэтому для g != 0 обратный элемент
+        // существует и находится не более чем за p-1 шагов. Раньше цикл был
+        // бесконечным и мог зависнуть при некорректных коэффициентах.
+        const auto find_inverse = [modulo](u32 g) -> u16
         {
-            const auto product0 = (g0 * inverse0) % modulo;
-            const auto product4 = (g4 * inverse4) % modulo;
-            achieved0 = achieved0 ? achieved0 : product0 == 1;
-            achieved4 = achieved4 ? achieved4 : product4 == 1;
-            if (achieved0 && achieved4)
-                break;
-            inverse0 += !achieved0;
-            inverse4 += !achieved4;
-        }
-        m_inv_K[0] = static_cast<u16>(inverse0);
-        m_inv_K[4] = static_cast<u16>(inverse4);
+            for (u32 inverse = 1; inverse < modulo; ++inverse)
+            {
+                if ((g * inverse) % modulo == 1)
+                    return static_cast<u16>(inverse);
+            }
+            assert(false && "Inverse element does not exist");
+            return 0;
+        };
+
+        m_inv_K[0] = find_inverse(g0);
+        m_inv_K[4] = find_inverse(g4);
     }
 
     void precompute_matrices()
     {
+        // Прогон шагов меняет m_state: сохраняем и восстанавливаем его, чтобы
+        // вызов set_K()/конструктор не сбрасывали текущее состояние генератора.
+        const u16x8 saved_state = m_state;
+
         // Для каждой ячейки i от 0 до 3 (считаем один генератор, второй симметричен)
         for (int i = 0; i < 4; ++i)
         {
@@ -492,6 +537,8 @@ private:
             }
             m_matG[t] = _mm_loadu_si128((const __m128i *)&m_state[0]);
         }
+
+        m_state = saved_state;
     }
 
     // Вспомогательная функция для векторизованного (x % p)

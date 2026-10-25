@@ -202,8 +202,10 @@ inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint seed)
+inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint seed,
+                                              bool legacy = false)
 {
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
 
     // Передаем сырые байты напрямую вместо text.toUtf8()
@@ -252,8 +254,9 @@ inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint s
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes)
+inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes, bool legacy = false)
 {
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     constexpr size_t blockSize = 72;
 
@@ -298,8 +301,9 @@ inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes)
     return hash_fs;
 }
 
-inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes)
+inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes, bool legacy = false)
 {
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     constexpr size_t blockSize = 128;
 
@@ -338,8 +342,10 @@ inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes)
     return hash_enc;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &textBytes)
+inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &textBytes,
+                                                           bool legacy = false)
 {
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     constexpr size_t blockSize = 96;
 
@@ -473,9 +479,10 @@ inline QString try_to_get_password(int len, int level)
     return final_password;
 }
 
-inline QString generate_storage_name(const lfsr_hash::u128 &hash)
+inline QString generate_storage_name(const lfsr_hash::u128 &hash, bool legacy = false)
 {
     using namespace lfsr_hash;
+    password::hash_gen.set_legacy(legacy);
     password::hash_gen.reset();
     static constexpr auto allowed{"0123456789abcdefghijklmnopqrstuvwxyz"};
     const int allowed_len = std::strlen(allowed);

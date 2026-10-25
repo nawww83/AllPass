@@ -54,6 +54,9 @@ public:
     // Проверка существования хранилища по имени, без изменения состояния.
     bool FileIsExist(const QString& name) const;
 
+    // Проверка существования скрытой резервной копии по имени хранилища.
+    bool BackupFileIsExist(const QString& name) const;
+
     bool BackupFileIsExist() const;
 
     bool TmpFileIsExist() const;
@@ -69,6 +72,39 @@ public:
     void AfterUpdate();
 
     void SetName(const QString& name);
+
+    // Режим хэширования: true — совместимость со старыми базами (v3.00/v3.01).
+    void SetLegacyHash(bool legacy);
+    bool IsLegacyHash() const;
+
+    // Метка версии, которая будет записана в файл (без символа '#').
+    void SetVersionLabel(const QString& label);
+    QString VersionLabel() const;
+
+    // Читает метку версии из хвоста файла хранилища (если основного файла
+    // нет — из скрытой резервной копии). Файл не расшифровывается.
+    QString ReadVersionLabel(const QString& name) const;
+
+    // Есть ли рядом копия "<name>.<версия>.bak" — след автоконвертации.
+    // Нужно, чтобы отличить устаревший USB-ключ от действительно нового
+    // хранилища, когда файла под старым именем уже нет.
+    bool ConvertedBackupExists(const QString& name) const;
+
+    // Переименовывает основное хранилище и его скрытую копию (например,
+    // legacy-имя -> fixed-имя после конвертации). Существующие файлы не
+    // перезаписываются; при сбое частичного переноса выполняется откат.
+    bool RenameStorage(const QString& new_name);
+
+    // Однократно переводит открытую старую базу (v3.00/v3.01) в текущий
+    // формат, перезаписывая её файл на месте: имя файла не меняется, но
+    // содержимое шифруется уже исправленными ключами. Перед записью рядом
+    // сохраняется копия старого файла "<имя>.<версия>.bak". При сбое записи
+    // состояние и файлы откатываются, метод возвращает false.
+    bool ConvertToCurrentFormat(const QTableWidget * const table,
+                                std::shared_ptr<lfsr_rng::Generators> enc,
+                                std::shared_ptr<lfsr_rng::Generators> dec,
+                                std::shared_ptr<lfsr_rng::Generators> enc_inner,
+                                std::shared_ptr<lfsr_rng::Generators> dec_inner);
 
     void SetTmpName(const QString& name);
 
@@ -102,6 +138,10 @@ private:
     bool mWasUpdated;
 
     bool mTryToLoadFromTmp = false;
+
+    // Режим хэширования и версия формата текущего хранилища.
+    bool mLegacyHash = false;
+    QString mVersionLabel;
 };
 
 #endif // STORAGEMANAGER_H

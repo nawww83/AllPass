@@ -18,6 +18,7 @@
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -136,6 +137,25 @@ private:
     QPushButton *btn_clear_table;
 
     bool is_modified = false;
+
+    // Автоконвертация старой базы (v3.00/v3.01) в текущий формат.
+    // Хэши исправленного формата считаются в момент ввода мастер-фразы,
+    // пока её байты ещё находятся в памяти; сама конвертация выполняется
+    // после успешной загрузки таблицы.
+    bool mConversionPending = false;
+    lfsr_hash::u128 mConversionEnc{0, 0};
+    lfsr_hash::u128 mConversionInner{0, 0};
+    bool mStorageConverted = false;
+    // Имя, которое база должна носить в текущем формате (fixed). Пусто при
+    // открытии по USB-токену: без мастер-фразы его не вычислить.
+    QString mFixedStorageName;
+    bool mStorageRenamed = false;
+    // Текущая попытка открытия использует USB-токен (нужно для отката
+    // на ввод мастер-фразы, если ключ устарел).
+    bool mUsedUsbToken = false;
+
+    void convert_legacy_storage();
+    void migrate_storage_name();
 };
 
 // Однострочное поле мастер-фразы: ввод, курсор, выделение, вставка и IME
@@ -168,6 +188,10 @@ protected:
     }
 };
 
+// Код текущей раскладки клавиатуры (например, "RU"/"EN") для диалога
+// мастер-фразы. Пустая строка, если определить не удалось (не Windows).
+QString current_keyboard_layout_code();
+
 // Диалог ввода мастер-фразы.
 // repeat_only == false — обычный ввод: фраза видна, есть переключатель «скрыть».
 // repeat_only == true  — повторный ввод при создании нового хранилища.
@@ -199,10 +223,28 @@ public:
         layout->addWidget(m_edit);
 
         m_hide = new QCheckBox(tr("Скрыть фразу"), this);
-        layout->addWidget(m_hide);
+        m_layout = new QLabel(this);
+        m_layout->setStyleSheet(QStringLiteral("color: #667085;"));
+        auto *options = new QHBoxLayout;
+        options->addWidget(m_hide);
+        options->addStretch();
+        options->addWidget(m_layout);
+        layout->addLayout(options);
+
         connect(m_hide, &QCheckBox::toggled, this, [this](bool hidden) {
             m_edit->setEchoMode(hidden ? QLineEdit::Password : QLineEdit::Normal);
+            // Клик по галке забирает фокус у поля ввода. Возвращаем его,
+            // чтобы можно было продолжать печатать фразу, не хватая мышь.
+            m_edit->setFocus();
         });
+
+        // Раскладку нельзя отследить событием Qt — опрашиваем её нечасто,
+        // пока диалог открыт (переключение Alt+Shift/Win+Space видно сразу).
+        auto *layout_timer = new QTimer(this);
+        layout_timer->setInterval(200);
+        connect(layout_timer, &QTimer::timeout, this, [this] { update_layout_label(); });
+        layout_timer->start();
+        update_layout_label();
 
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
         layout->addWidget(buttons);
@@ -234,8 +276,15 @@ private slots:
     }
 
 private:
+    void update_layout_label()
+    {
+        const QString code = current_keyboard_layout_code();
+        m_layout->setText(code.isEmpty() ? QString() : tr("Раскладка: %1").arg(code));
+    }
+
     PhraseLineEdit *m_edit = nullptr;
     QCheckBox *m_hide = nullptr;
+    QLabel *m_layout = nullptr;
 };
 
 template<int pin_len>

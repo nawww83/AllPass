@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AllPass VERSION 3.01 LANGUAGES CXX)
+project(AllPass VERSION 3.02 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
