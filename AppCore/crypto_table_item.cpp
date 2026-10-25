@@ -30,7 +30,24 @@ void CryptoTableItem::setData(int role, const QVariant &value)
 {
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         QString newText = value.toString();
+
+        // То же значение — не изменение: Qt в этом случае тоже молчит.
+        if (newText == m_secretData) {
+            utils::erase_string(newText);
+            return;
+        }
+
         setSecretText(newText);
+        utils::erase_string(newText);
+
+        // QTableWidget узнаёт об изменении ячейки только через
+        // QTableModel::itemChanged(), который вызывает базовый
+        // QTableWidgetItem::setData(). Пароль в базовом классе хранить
+        // нельзя, поэтому уведомляем модель, не трогая данные: повторная
+        // установка тех же флагов всегда порождает itemChanged().
+        if (tableWidget()) {
+            QTableWidgetItem::setFlags(flags());
+        }
         return;
     }
     QTableWidgetItem::setData(role, value);

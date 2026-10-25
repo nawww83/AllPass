@@ -16,8 +16,10 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -797,7 +799,10 @@ void Widget::update_pass()
             pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
         }
 
-        // Записываем чистый пароль в модель ячейки
+        // Записываем чистый пароль в модель ячейки. Дату ставит сама
+        // программа: спрашивать «оставить прежнюю?» при нажатой кнопке
+        // «Обновить пароль» бессмысленно.
+        QScopedValueRollback<bool> date_guard(mDateManagedByApp, true);
         pointers::selected_context_table_item->setData(Qt::DisplayRole, pswd);
         pointers::selected_context_table_item->setData(Qt::EditRole, pswd);
 
@@ -1307,6 +1312,9 @@ void Widget::discard_master_key()
 
 void Widget::insert_new_password()
 {
+    // Новый пароль только что сгенерирован: дата — сегодня, без вопросов.
+    QScopedValueRollback<bool> date_guard(mDateManagedByApp, true);
+
     const int pass_level = ui->cmbbx_password_level->currentIndex();
     QString pswd = utils_global::try_to_get_password(g_current_password_len, pass_level);
 
@@ -1430,6 +1438,140 @@ void Widget::tableWidget_customContextMenuRequested(const QPoint &pos)
     pointers::selected_context_table_item = nullptr;
 }
 
+// Записывает дату изменения пароля, не порождая новых сигналов таблицы:
+// иначе изменение ячейки даты сбивает фокус у поля ввода пароля.
+void Widget::set_password_date(int row, const QString &date)
+{
+    auto *date_item = ui->tableWidget->item(row, constants::date_column_idx);
+    if (!date_item) {
+        return;
+    }
+
+    const QSignalBlocker blocker(ui->tableWidget);
+    if (date_item->text() != date) {
+        date_item->setText(date);
+    }
+    highlight_pswd(ui->tableWidget, row, QDate::currentDate());
+}
+
+// true, если вставляемый пароль только что скопирован из ячейки этого же
+// хранилища; в source_date возвращается дата строки-источника.
+bool Widget::clipboard_source_date(const QString &pasted, QString &source_date) const
+{
+    auto *timer = this->findChild<QTimer *>("clipboard_timer");
+    if (!timer || !timer->isActive()) {
+        return false;
+    }
+
+    const auto source_index = timer->property("pIndex").value<QPersistentModelIndex>();
+    if (!source_index.isValid() || source_index.column() != constants::pswd_column_idx) {
+        return false;
+    }
+
+    // В буфере обмена должно лежать именно скопированное значение...
+    QString clipboard_text = QApplication::clipboard()->text();
+    const bool clipboard_matches = (clipboard_text == pasted);
+    utils::erase_string(clipboard_text);
+    if (!clipboard_matches) {
+        return false;
+    }
+
+    // ...и оно всё ещё должно совпадать с паролем строки-источника:
+    // если его успели изменить, дату оттуда брать нельзя.
+    QTableWidgetItem *source_item
+        = ui->tableWidget->item(source_index.row(), source_index.column());
+    if (!source_item) {
+        return false;
+    }
+
+    QString source_password = source_item->data(Qt::DisplayRole).toString();
+    const bool source_matches = (source_password == pasted);
+    utils::erase_string(source_password);
+    if (!source_matches) {
+        return false;
+    }
+
+    if (auto *source_date_item
+        = ui->tableWidget->item(source_index.row(), constants::date_column_idx)) {
+        source_date = source_date_item->text();
+    } else {
+        source_date.clear();
+    }
+    return true;
+}
+
+void Widget::handle_password_date_change(QTableWidgetItem *pswd_item)
+{
+    const int row = pswd_item->row();
+    auto *date_item = ui->tableWidget->item(row, constants::date_column_idx);
+    if (!date_item) {
+        return;
+    }
+
+    const QString today = QDate::currentDate().toString("yyyy.MM.dd");
+
+    // Программная замена пароля (генератор, «Обновить пароль»): дата ставится
+    // без вопросов.
+    if (mDateManagedByApp) {
+        set_password_date(row, today);
+        return;
+    }
+
+    // Пароль скопирован из строки этого же хранилища — дата едет вместе с ним.
+    // Пустую дату не переносим: в источнике её просто нет.
+    QString pasted = pswd_item->data(Qt::DisplayRole).toString();
+    QString source_date;
+    const bool from_clipboard = clipboard_source_date(pasted, source_date);
+    utils::erase_string(pasted);
+    if (from_clipboard) {
+        if (!source_date.isEmpty()) {
+            set_password_date(row, source_date);
+        }
+        return;
+    }
+
+    const QString old_date = date_item->text();
+    set_password_date(row, today);
+
+    // Прежней даты нет или она сегодняшняя — спрашивать не о чем.
+    if (old_date.isEmpty() || old_date == today) {
+        return;
+    }
+
+    // Диалог показываем после завершения редактирования ячейки: модальное
+    // окно внутри setModelData() ломает фокус таблицы. Дата уже стоит
+    // сегодняшняя, поэтому при закрытии диалога ничего не теряется.
+    const QPersistentModelIndex date_index(
+        ui->tableWidget->model()->index(row, constants::date_column_idx));
+    QTimer::singleShot(0, this, [this, date_index, old_date, today]() {
+        auto *date_item = date_index.isValid()
+                              ? ui->tableWidget->item(date_index.row(), date_index.column())
+                              : nullptr;
+        // Пока диалог ждал, строку могли удалить или дату — изменить.
+        if (!date_item || date_item->text() != today) {
+            return;
+        }
+
+        QMessageBox mb(QMessageBox::Question,
+                       tr("Дата изменения пароля"),
+                       tr("Пароль изменён. Оставить прежнюю дату (%1) или поставить "
+                          "сегодняшнюю (%2)?")
+                           .arg(old_date, today),
+                       QMessageBox::NoButton,
+                       this);
+        auto *keep_button = mb.addButton(tr("Оставить прежнюю"), QMessageBox::AcceptRole);
+        auto *today_button
+            = mb.addButton(tr("Поставить сегодняшнюю"), QMessageBox::DestructiveRole);
+        mb.setDefaultButton(today_button);
+        today_button->setFocus();
+        mb.exec();
+
+        if (mb.clickedButton() == keep_button) {
+            set_password_date(date_index.row(), old_date);
+        }
+    });
+}
+
 void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
 {
     if (!item || g_table_is_loading) {
@@ -1437,23 +1579,7 @@ void Widget::tableWidget_itemChanged(QTableWidgetItem *item)
     }
 
     if (item->column() == constants::pswd_column_idx) {
-        QString date = QDate::currentDate().toString("yyyy.MM.dd");
-        const int row = item->row();
-        auto date_item = ui->tableWidget->item(row, constants::date_column_idx);
-        if (date_item) {
-            // Блокируем сигналы таблицы. Теперь изменение ячейки даты
-            // не будет сбивать фокус клавиатуры у активного поля ввода пароля.
-            ui->tableWidget->blockSignals(true);
-
-            date_item->setText(date);
-            qDebug() << "Set date: " << date;
-
-            const auto& current_date = QDate::currentDate();
-            highlight_pswd(ui->tableWidget, row, current_date);
-
-            // Возвращаем сигналы в исходное состояние
-            ui->tableWidget->blockSignals(false);
-        }
+        handle_password_date_change(item);
     }
     // Взводим флаг изменений
     this->is_modified = true;

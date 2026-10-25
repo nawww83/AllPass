@@ -138,6 +138,10 @@ private:
 
     bool is_modified = false;
 
+    // true, пока дату пароля меняет сама программа (генератор, «Обновить
+    // пароль»): спрашивать пользователя в этот момент не нужно.
+    bool mDateManagedByApp = false;
+
     // Автоконвертация старой базы (v3.00/v3.01) в текущий формат.
     // Хэши исправленного формата считаются в момент ввода мастер-фразы,
     // пока её байты ещё находятся в памяти; сама конвертация выполняется
@@ -156,6 +160,12 @@ private:
 
     void convert_legacy_storage();
     void migrate_storage_name();
+
+    // Дата изменения пароля: перенос из строки-источника при вставке
+    // скопированного пароля либо вопрос пользователю при прочих правках.
+    void handle_password_date_change(QTableWidgetItem *pswd_item);
+    bool clipboard_source_date(const QString &pasted, QString &source_date) const;
+    void set_password_date(int row, const QString &date);
 };
 
 // Однострочное поле мастер-фразы: ввод, курсор, выделение, вставка и IME
