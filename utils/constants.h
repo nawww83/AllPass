@@ -8,6 +8,7 @@ inline constexpr auto G_VERSION_LABEL = "#v3.02";
 
 namespace constants {
     inline const int pin_code_len = 5;         // Длина пин-кода.
+    inline const int key_name_max_len = 64;    // Максимальная длина имени USB-ключа.
     inline const int password_len_step = 5;    // Шаг изменения длины пароля.
     inline const int password_len_per_u32 = 5; // Количество символов, получаемое по 32-битному слову.
     inline const int password_len_per_u64

@@ -1800,25 +1800,30 @@ void Widget::btn_create_usb_key_clicked()
     }
     pin.clear();
 
-    bool ok;
-    QString key_name = QInputDialog::getText(
-        this,
-        tr("Ввод названия"),         // Заголовок окна
-        tr("Введите имя ключа (не более 20 символов):"), // Текст-подсказка внутри окна
-        QLineEdit::Normal,           // Режим отображения (обычный текст)
-        QString::fromUtf8("Дефолтный ключ"),                   // Текст по умолчанию
-        &ok                          // Сюда запишется true, если нажали OK, или false, если Cancel
-        );
-
-    // Отмена ввода имени не должна создавать ключ с текстом по умолчанию.
-    if (!ok)
+    // Имя ключа хранится в токене как есть, без фиксированного поля, поэтому
+    // ограничение — только разумный предел интерфейса. Раньше имя молча
+    // обрезалось до 20 символов, и длинное имя потом «терялось» при чтении.
+    constexpr int max_name_len = constants::key_name_max_len;
+    QInputDialog name_dialog(this);
+    name_dialog.setWindowTitle(tr("Ввод названия"));
+    name_dialog.setLabelText(
+        tr("Введите имя ключа (не более %1 символов):").arg(max_name_len));
+    name_dialog.setInputMode(QInputDialog::TextInput);
+    name_dialog.setTextValue(QString::fromUtf8("Дефолтный ключ"));
+    // Ограничиваем длину на уровне поля: лишние символы не вводятся вовсе,
+    // чтобы имя не обрезалось незаметно для пользователя.
+    if (auto *name_edit = name_dialog.findChild<QLineEdit *>())
+        name_edit->setMaxLength(max_name_len);
+    if (name_dialog.exec() != QDialog::Accepted)
         return;
 
-    if (!key_name.isEmpty()) {
-        // Ограничиваем длину
-        if (key_name.length() > 20) {
-            key_name = key_name.left(20); // обрезаем или выводим ошибку
-        }
+    QString key_name = name_dialog.textValue();
+
+    if (key_name.length() > max_name_len) {
+        critical_message_box(
+            QString::fromUtf8("Ошибка имени ключа"),
+            tr("Имя ключа длиннее %1 символов. Сократите его.").arg(max_name_len));
+        return;
     }
 
     if (key_name.isEmpty()) {
