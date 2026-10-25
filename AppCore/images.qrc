@@ -4,6 +4,15 @@
 <file>images/icons8-key-24.png</file>
 <file>images/icons8-usb-logo-24.png</file>
 <file>images/icons8-clear-24.png</file>
-<file>images/favicon.ico</file>
+<file>images/appicon/allpass_16.png</file>
+<file>images/appicon/allpass_20.png</file>
+<file>images/appicon/allpass_24.png</file>
+<file>images/appicon/allpass_32.png</file>
+<file>images/appicon/allpass_40.png</file>
+<file>images/appicon/allpass_48.png</file>
+<file>images/appicon/allpass_64.png</file>
+<file>images/appicon/allpass_96.png</file>
+<file>images/appicon/allpass_128.png</file>
+<file>images/appicon/allpass_256.png</file>
 </qresource>
 </RCC>

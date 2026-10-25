@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AllPass
+GenericName=Password Manager
+GenericName[ru]=Менеджер паролей
+Comment=Local encrypted vault for passwords and logins
+Comment[ru]=Локальное шифрованное хранилище паролей и логинов
+Exec=AllPass
+TryExec=AllPass
+Icon=allpass
+Terminal=false
+Categories=Utility;Security;Qt;
+Keywords=password;passwords;vault;vaults;manager;safe;пароль;пароли;хранилище;сейф;
+StartupNotify=true
+StartupWMClass=AllPass

@@ -4,7 +4,10 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QGuiApplication>
+#include <QIcon>
 #include <QMessageBox>
+#include <QSize>
 #include <QSplashScreen>
 
 // #ifdef Q_OS_LINUX
@@ -37,6 +40,27 @@ int main(int argc, char *argv[])
     // #endif
 
     QApplication a(argc, argv);
+
+    // Иконка приложения. Под каждый размер подставляется отдельный файл: мелкие
+    // размеры нарисованы с утолщёнными деталями, иначе в заголовке окна и в
+    // Alt+Tab уменьшенная 256-я картинка выглядит мылом.
+    QIcon app_icon;
+    for (int size : {16, 20, 24, 32, 40, 48, 64, 96, 128, 256}) {
+        app_icon.addFile(QStringLiteral(":/images/appicon/allpass_%1.png").arg(size),
+                         QSize(size, size));
+    }
+    QApplication::setWindowIcon(app_icon);
+
+#ifdef Q_OS_LINUX
+    // На Linux иконка окна (X11) уже приходит из setWindowIcon, а вот панель задач,
+    // док и меню приложений берут иконку из .desktop-файла. Чтобы система смогла
+    // сопоставить окно с allpass.desktop (особенно под Wayland), нужно явно
+    // объявить имя desktop-файла и выставить имя приложения как WM_CLASS.
+    QGuiApplication::setDesktopFileName(QStringLiteral("allpass.desktop"));
+    QApplication::setApplicationName(QStringLiteral("AllPass"));
+    QApplication::setApplicationDisplayName(QStringLiteral("AllPass"));
+    QApplication::setOrganizationName(QStringLiteral("AllPass"));
+#endif
 
     QSplashScreen splash;
     QFont splashFont;

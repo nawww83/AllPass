@@ -98,11 +98,18 @@ set(PROJECT_SOURCES
 
 set(app_icon_resource_windows "${CMAKE_CURRENT_SOURCE_DIR}/${APP_DIR}/app.rc")
 
+# .rc — ресурс Windows. На Linux/macOS его подключать не нужно (а на некоторых
+# сборках CMake ещё и не знает, чем его компилировать).
+set(APP_ICON_RC "")
+if(WIN32)
+    set(APP_ICON_RC "${app_icon_resource_windows}")
+endif()
+
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(AllPass
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
-        ${app_icon_resource_windows}
+        ${APP_ICON_RC}
         AppCore/usbstorages.h AppCore/usbstorages.cpp
         utils/collatz_cipher.h
 
@@ -169,6 +176,27 @@ install(TARGETS AllPass
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+# --- Иконка и .desktop для Linux -------------------------------------------
+# На Windows иконка лежит в ресурсе exe, а на Linux панель задач, док и меню
+# приложений берут её из hicolor-темы (плюс .desktop, по которому Wayland
+# сопоставляет окно с приложением).
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    set(APPICON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${APP_DIR}/images/appicon")
+
+    install(FILES packaging/linux/allpass.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
+    install(FILES ${APPICON_DIR}/allpass.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+        RENAME allpass.svg)
+
+    foreach(icon_size 16 24 32 48 64 96 128 256)
+        install(FILES ${APPICON_DIR}/allpass_${icon_size}.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps
+            RENAME allpass.png)
+    endforeach()
+endif()
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(AllPass)
