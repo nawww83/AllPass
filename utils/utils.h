@@ -27,7 +27,7 @@
 namespace utils {
 
 // Базовая функция очистки сырого буфера
-inline void erase_raw_bytes(uint8_t *b, std::size_t len)
+inline void erase_raw_bytes(void *b, std::size_t len)
 {
     if (!b || len == 0)
         return;
@@ -37,12 +37,11 @@ inline void erase_raw_bytes(uint8_t *b, std::size_t len)
 #elif defined(__linux__) || defined(__GLIBC__)
     explicit_bzero(b, len);
 #elif defined(__APPLE__)
-    // В macOS/iOS memset_s доступна по умолчанию
     memset_s(b, len, 0, len);
 #elif defined(__STDC_LIB_EXT1__) && defined(__STDC_WANT_LIB_EXT1__) && (__STDC_WANT_LIB_EXT1__ == 1)
     memset_s(b, len, 0, len);
 #else
-    volatile uint8_t *p = b;
+    volatile uint8_t *p = static_cast<volatile uint8_t *>(b);
     while (len--) {
         *p++ = 0;
     }

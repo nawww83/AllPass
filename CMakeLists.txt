@@ -57,8 +57,15 @@ else()
 endif()
 # --------------------------------------------------------------------------
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(Qt6 COMPONENTS Widgets Network Concurrent QUIET)
+if (NOT Qt6_FOUND)
+    find_package(Qt5 5.15 REQUIRED COMPONENTS Widgets Network Concurrent)
+    set(QT_VERSION_MAJOR 5)
+    set(QT_VERSION ${Qt5_VERSION})
+else()
+    set(QT_VERSION_MAJOR 6)
+    set(QT_VERSION ${Qt6_VERSION})
+endif()
 
 set(APP_DIR AppCore)
 set(UTILS_DIR utils)
@@ -145,9 +152,10 @@ target_link_libraries(AllPass PRIVATE
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
 # explicit, fixed bundle identifier manually though.
-if(${QT_VERSION} VERSION_LESS 6.1.0)
-  set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.AllPass)
+if(Qt${QT_VERSION_MAJOR}_VERSION VERSION_LESS "6.1.0")
+    set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.AllPass)
 endif()
+
 set_target_properties(AllPass PROPERTIES
     ${BUNDLE_ID_OPTION}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}

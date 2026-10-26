@@ -122,11 +122,8 @@ private:
     // Вспомогательный метод для безопасного удаления временных раундовых ключей из RAM
     static void secureClearRoundKeys(std::vector<Block256> &roundKeys)
     {
-        for (auto& block : roundKeys) {
-            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.A), sizeof(Block256::A));
-            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.B), sizeof(Block256::B));
-            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.C), sizeof(Block256::C));
-            utils::erase_raw_bytes(reinterpret_cast<uint8_t*>(&block.D), sizeof(Block256::D));
+        if (!roundKeys.empty()) {
+            utils::erase_raw_bytes(roundKeys.data(), roundKeys.size() * sizeof(Block256));
         }
     }
 
