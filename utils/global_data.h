@@ -5,7 +5,7 @@
 #include <QVector>
 #include "constants.h"
 #include "key.h"
-#include "lfsr_hash.h"
+#include "lfsr_compat.h"
 #include "stream_cipher.h"
 #include "worker.h"
 #include <array>
@@ -58,6 +58,7 @@ struct PinCode
 namespace password {
 inline std::shared_ptr<lfsr_rng::Generators> pass_gen;
 inline lfsr_hash::gens hash_gen;
+inline lfsr_hash_v3::gens hash_gen_v3;
 Q_GLOBAL_STATIC(Worker, worker);
 Q_GLOBAL_STATIC(key::Key, key);
 Q_GLOBAL_STATIC(PasswordBuffer, pswd_buff);

@@ -2,6 +2,7 @@
 #define STORAGEMANAGER_H
 
 #include <QString>
+#include "lfsr_compat.h"
 #include "stream_cipher.h"
 #include <memory> // Необходим для std::shared_ptr
 
@@ -73,9 +74,12 @@ public:
 
     void SetName(const QString& name);
 
-    // Режим хэширования: true — совместимость со старыми базами (v3.00/v3.01).
-    void SetLegacyHash(bool legacy);
-    bool IsLegacyHash() const;
+    // Режим хэширования текущего хранилища: v4.00 (актуальный) либо один из
+    // совместимых v3-режимов (v3.02 fixed, v3.00/v3.01 legacy).
+    void SetHashMode(HashMode mode);
+    HashMode GetHashMode() const;
+    // true — содержимое зашифровано старым (v3) хэшем и подлежит конвертации.
+    bool IsV3Hash() const;
 
     // Метка версии, которая будет записана в файл (без символа '#').
     void SetVersionLabel(const QString& label);
@@ -95,7 +99,7 @@ public:
     // перезаписываются; при сбое частичного переноса выполняется откат.
     bool RenameStorage(const QString& new_name);
 
-    // Однократно переводит открытую старую базу (v3.00/v3.01) в текущий
+    // Однократно переводит открытую старую базу (v3.00/v3.01/v3.02) в текущий
     // формат, перезаписывая её файл на месте: имя файла не меняется, но
     // содержимое шифруется уже исправленными ключами. Перед записью рядом
     // сохраняется копия старого файла "<имя>.<версия>.bak". При сбое записи
@@ -140,7 +144,7 @@ private:
     bool mTryToLoadFromTmp = false;
 
     // Режим хэширования и версия формата текущего хранилища.
-    bool mLegacyHash = false;
+    HashMode mHashMode = HashMode::V4;
     QString mVersionLabel;
 };
 

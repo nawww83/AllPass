@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AllPass VERSION 3.02 LANGUAGES CXX)
+project(AllPass VERSION 4.00 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -97,6 +97,9 @@ set(COMMON_SRC
     ${UTILS_DIR}/global_data.h
     ${LFSR_DIR}/lfsr.h
     ${LFSR_DIR}/lfsr_hash.h
+    ${LFSR_DIR}/lfsr_v3.h
+    ${LFSR_DIR}/lfsr_hash_v3.h
+    ${LFSR_DIR}/lfsr_compat.h
 )
 
 set(PROJECT_SOURCES

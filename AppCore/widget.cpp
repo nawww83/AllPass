@@ -927,7 +927,7 @@ void Widget::finish_master_key()
         if (!storage_name.isEmpty()) {
             QString status = QString::fromUtf8(" Активное хранилище: %1").arg(storage_name);
             // Версия формата файла: видна всегда (у старой базы до конвертации
-            // будет v3.00/v3.01, после — v3.02).
+            // будет v3.00/v3.01/v3.02, после — v4.00).
             const QString version = storage_manager->VersionLabel();
             if (!version.isEmpty()) {
                 status += QString::fromUtf8(" · %1").arg(version);
@@ -980,7 +980,8 @@ void Widget::update_master_phrase()
 {
     QByteArray textBytes;   // Сырые UTF-8 байты мастер-фразы
     QString storage_name;   // Имя хранилища, выведенное из фразы (без USB-ключа)
-    bool legacy_hash = false; // true — совместимость со старыми базами (v3.00/v3.01)
+    // Режим хэширования, с которым будет открыто (или создано) хранилище.
+    HashMode hash_mode = HashMode::V4;
 
     // Каждое открытие начинается с чистого состояния конвертации: хэши от
     // прошлой (возможно, неудачной) попытки не должны переиспользоваться.
@@ -1009,74 +1010,88 @@ void Widget::update_master_phrase()
             return;
         }
 
-        // Имя хранилища выводится из фразы, поэтому существование можно
-        // проверить только после первого ввода. Сначала ищем базу, созданную
-        // исправленной версией (v3.02), затем — старым (legacy) хэшем.
+        // Имя хранилища — детерминированная функция мастер-фразы и режима
+        // хэширования. Проверяем три варианта: актуальный v4.00, исправленный
+        // v3.02 и старый v3.00/v3.01. Первым ищем текущий формат.
+        const auto make_name = [&textBytes](HashMode mode)
         {
-            lfsr_hash::u128 hash_storage
-                = utils_global::gen_hash_for_storage(textBytes, false);
-            storage_name = utils_global::generate_storage_name(hash_storage, false);
-            utils::clear_lfsr_hash(hash_storage);
-        }
+            auto hash = utils_global::gen_hash_for_storage(textBytes, mode);
+            QString name = utils_global::generate_storage_name(hash, mode);
+            utils::clear_lfsr_hash(hash);
+            return name;
+        };
+
+        const QString v4_name = make_name(HashMode::V4);
         // Имя, под которым база должна храниться в текущем формате.
         // Используется для автоматического переименования уже
         // сконвертированной базы.
-        mFixedStorageName = storage_name;
+        mFixedStorageName = v4_name;
 
-        if (!storage_exists(storage_name)) {
-            QString legacy_name;
-            {
-                lfsr_hash::u128 hash_storage_legacy
-                    = utils_global::gen_hash_for_storage(textBytes, true);
-                legacy_name = utils_global::generate_storage_name(hash_storage_legacy, true);
-                utils::clear_lfsr_hash(hash_storage_legacy);
+        QString found_name;
+        HashMode found_mode = HashMode::V4;
+        if (storage_exists(v4_name)) {
+            found_name = v4_name;
+            found_mode = HashMode::V4;
+        } else {
+            const QString fixed_name = make_name(HashMode::V3Fixed);
+            const QString legacy_name = make_name(HashMode::V3Legacy);
+
+            if (storage_exists(fixed_name)) {
+                found_name = fixed_name;
+                found_mode = HashMode::V3Fixed;
+            } else if (storage_exists(legacy_name)) {
+                found_name = legacy_name;
+                found_mode = HashMode::V3Legacy;
+            }
+        }
+
+        if (!found_name.isEmpty()) {
+            // Найдено существующее хранилище: открываем его в том режиме,
+            // в котором оно было записано.
+            storage_name = found_name;
+
+            // Метка версии в файле авторитетнее имени: база могла быть
+            // сконвертирована на месте, сохранив прежнее имя.
+            const QString label = storage_manager->ReadVersionLabel(found_name);
+            hash_mode = utils_global::is_known_version_label(label)
+                            ? utils_global::hash_mode_from_label(label)
+                            : found_mode;
+
+            if (hash_mode != HashMode::V4) {
+                // Пока байты фразы ещё в памяти, готовим ключи v4.00 для
+                // автоконвертации при загрузке.
+                mConversionEnc = utils_global::gen_hash_for_encryption(textBytes, HashMode::V4);
+                mConversionInner
+                    = utils_global::gen_hash_for_inner_encryption(textBytes, HashMode::V4);
+                mConversionPending = true;
+            }
+        } else {
+            // Файла нет — значит создаётся новое хранилище в актуальном
+            // формате. Имя уже вычислено выше (v4_name).
+            storage_name = v4_name;
+
+            // Просим повторить фразу, чтобы исключить опечатку
+            // (иначе опечатка молча создаёт новую пустую базу).
+            QByteArray confirmation = ask_master_phrase(true);
+
+            if (confirmation.isEmpty()) {
+                utils::erase_bytes(textBytes);
+                emit master_phrase_discarded();
+                QTimer::singleShot(0, this, [this]() { close(); });
+                return;
             }
 
-            if (storage_exists(legacy_name)) {
-                // Найдено хранилище старого формата: открываем его в режиме
-                // совместимости, чтобы ключи и имя файла совпали.
-                storage_name = legacy_name;
-
-                // Файл мог быть уже сконвертирован на месте: имя осталось
-                // старым, но содержимое зашифровано исправленными ключами,
-                // а в хвосте стоит метка v3.02. Повторно не конвертируем.
-                if (storage_manager->ReadVersionLabel(legacy_name) == QStringLiteral("v3.02")) {
-                    legacy_hash = false;
-                } else {
-                    legacy_hash = true;
-
-                    // Пока байты фразы ещё в памяти, готовим ключи
-                    // исправленного формата для автоконвертации при загрузке.
-                    mConversionEnc = utils_global::gen_hash_for_encryption(textBytes, false);
-                    mConversionInner
-                        = utils_global::gen_hash_for_inner_encryption(textBytes, false);
-                    mConversionPending = true;
-                }
-            } else {
-                // Файла нет — значит создаётся новое хранилище: просим
-                // повторить фразу, чтобы исключить опечатку
-                // (иначе опечатка молча создаёт новую пустую базу).
-                QByteArray confirmation = ask_master_phrase(true);
-
-                if (confirmation.isEmpty()) {
-                    utils::erase_bytes(textBytes);
-                    emit master_phrase_discarded();
-                    QTimer::singleShot(0, this, [this]() { close(); });
-                    return;
-                }
-
-                if (confirmation != textBytes) {
-                    utils::erase_bytes(confirmation);
-                    utils::erase_bytes(textBytes);
-                    critical_message_box(QString::fromUtf8("Фразы не совпадают"),
-                                         QString::fromUtf8("Мастер-фраза введена по-разному. "
-                                                           "Попробуйте ещё раз."));
-                    QTimer::singleShot(0, this, [this]() { update_master_phrase(); });
-                    return;
-                }
-
+            if (confirmation != textBytes) {
                 utils::erase_bytes(confirmation);
+                utils::erase_bytes(textBytes);
+                critical_message_box(QString::fromUtf8("Фразы не совпадают"),
+                                     QString::fromUtf8("Мастер-фраза введена по-разному. "
+                                                       "Попробуйте ещё раз."));
+                QTimer::singleShot(0, this, [this]() { update_master_phrase(); });
+                return;
             }
+
+            utils::erase_bytes(confirmation);
         }
     }
     // Структура для возврата трех хэшей одновременно
@@ -1177,7 +1192,7 @@ void Widget::update_master_phrase()
         lfsr_hash::u128 hash
             = utils_global::gen_hash_for_pass_gen(textBytes,
                                                   std::random_device{}(),
-                                                  legacy_hash); // каждый раз разный
+                                                  hash_mode); // каждый раз разный
         utils_global::fill_key_by_hash128(hash);
         utils::clear_lfsr_hash(hash);
     }
@@ -1185,25 +1200,10 @@ void Widget::update_master_phrase()
         // Для USB-ключа имя хранилища берётся из хэшей токена, для фразы —
         // уже вычислено выше (и по нему проверялось существование файла).
         if (g_use_usb_token) {
-            const QString fixed_name
-                = utils_global::generate_storage_name(result.storage, false);
-            const QString legacy_name
-                = utils_global::generate_storage_name(result.storage, true);
-
-            if (storage_exists(fixed_name)) {
-                legacy_hash = false;
-                storage_name = fixed_name;
-            } else if (storage_exists(legacy_name)) {
-                // Имя файла осталось старым: это либо база v3.00/v3.01,
-                // либо база, сконвертированная на месте. Режим содержимого
-                // определяется меткой версии в файле.
-                storage_name = legacy_name;
-                legacy_hash = storage_manager->ReadVersionLabel(legacy_name)
-                              != QStringLiteral("v3.02");
-            } else if (storage_manager->ConvertedBackupExists(legacy_name)) {
-                // База сконвертирована и переименована в fixed-имя, поэтому
-                // токен не находит ни старое имя, ни новое. Не создаём
-                // пустое хранилище — предлагаем ввести фразу.
+            // Сообщение о непригодном ключе: токен помнит v3-хэши, а база уже
+            // переведена в v4.00, поэтому расшифровать её этим ключом нельзя.
+            const auto report_stale_key = [this]()
+            {
                 g_use_usb_token = false;
                 for (QByteArray &h : *g_usb_hashes) {
                     utils::erase_raw_bytes(reinterpret_cast<uint8_t *>(h.data()), h.size());
@@ -1215,27 +1215,65 @@ void Widget::update_master_phrase()
                                       "и этот USB-ключ к нему больше не подходит. "
                                       "Введите мастер-фразу, чтобы продолжить, "
                                       "и при необходимости создайте новый ключ."));
+            };
+
+            // Токен хранит хэши, вычисленные в том режиме, в котором создавался
+            // ключ, поэтому имя проверяем во всех поддерживаемых режимах.
+            const QString v4_name
+                = utils_global::generate_storage_name(result.storage, HashMode::V4);
+            const QString fixed_name
+                = utils_global::generate_storage_name(result.storage, HashMode::V3Fixed);
+            const QString legacy_name
+                = utils_global::generate_storage_name(result.storage, HashMode::V3Legacy);
+
+            QString found_name;
+            HashMode found_mode = HashMode::V4;
+            if (storage_exists(v4_name)) {
+                found_name = v4_name;
+                found_mode = HashMode::V4;
+            } else if (storage_exists(fixed_name)) {
+                found_name = fixed_name;
+                found_mode = HashMode::V3Fixed;
+            } else if (storage_exists(legacy_name)) {
+                found_name = legacy_name;
+                found_mode = HashMode::V3Legacy;
+            }
+
+            if (!found_name.isEmpty()) {
+                storage_name = found_name;
+                // Имя могло остаться старым после конвертации на месте —
+                // режим содержимого определяется меткой версии в файле.
+                const QString label = storage_manager->ReadVersionLabel(found_name);
+                hash_mode = utils_global::is_known_version_label(label)
+                                ? utils_global::hash_mode_from_label(label)
+                                : found_mode;
+            } else if (storage_manager->ConvertedBackupExists(v4_name)
+                       || storage_manager->ConvertedBackupExists(fixed_name)
+                       || storage_manager->ConvertedBackupExists(legacy_name)) {
+                // База сконвертирована и переименована, поэтому токен не
+                // находит ни старое имя, ни новое. Не создаём пустое
+                // хранилище — предлагаем ввести фразу.
+                report_stale_key();
                 return;
             } else {
                 // Хранилища на этом компьютере ещё нет — создадим новое
                 // в актуальном формате.
-                legacy_hash = false;
-                storage_name = fixed_name;
+                hash_mode = HashMode::V4;
+                storage_name = v4_name;
             }
         }
 
-        storage_manager->SetLegacyHash(legacy_hash);
+        storage_manager->SetHashMode(hash_mode);
         // Точная версия (v3.00/v3.01) уточнится при чтении файла; здесь нужен
         // корректный режим на случай сохранения до загрузки.
-        storage_manager->SetVersionLabel(legacy_hash ? QStringLiteral("v3.01")
-                                                     : QStringLiteral("v3.02"));
+        storage_manager->SetVersionLabel(utils_global::version_label_for_mode(hash_mode));
         storage_manager->SetName( storage_name );
         storage_manager->SetTmpName( storage_name );
     }
     {
         lfsr_hash::u128 hash_enc = g_use_usb_token ? result.encryption
                                                    : utils_global::gen_hash_for_encryption(
-                                                         textBytes, legacy_hash); // на usb-токен
+                                                         textBytes, hash_mode); // на usb-токен
         lfsr_rng::STATE state = utils::fill_state_by_hash(hash_enc);
         watcher_seed_enc_gen.setFuture(password::worker->seed(state));
         watcher_seed_dec_gen.setFuture(password::worker->seed(state));
@@ -1243,7 +1281,7 @@ void Widget::update_master_phrase()
         lfsr_hash::u128 hash_enc_inner = g_use_usb_token
                                              ? result.inner_encryption
                                              : utils_global::gen_hash_for_inner_encryption(
-                                                   textBytes, legacy_hash); // на usb-токен
+                                                   textBytes, hash_mode); // на usb-токен
         lfsr_rng::STATE state_inner = utils::fill_state_by_hash(hash_enc_inner);
         watcher_seed_enc_inner_gen.setFuture(password::worker->seed(state_inner));
         watcher_seed_dec_inner_gen.setFuture(password::worker->seed(state_inner));
@@ -1750,12 +1788,12 @@ void Widget::convert_legacy_storage()
     mConversionPending = false;
 
     // Конвертация возможна только для базы, открытой по мастер-фразе:
-    // исправленные ключи выводятся из неё, а у USB-токена есть лишь
-    // legacy-хэши. Проверка mLegacyHash отсекает уже сконвертированную базу.
-    if (!storage_manager->IsLegacyHash())
+    // v4-ключи выводятся из неё, а у USB-токена есть лишь сохранённые
+    // v3-хэши. Проверка IsV3Hash отсекает уже сконвертированную базу.
+    if (!storage_manager->IsV3Hash())
         return;
 
-    // Готовим генераторы так же, как при обычном открытии базы v3.02.
+    // Готовим генераторы так же, как при обычном открытии базы v4.00.
     const auto make_gen = [](const lfsr_hash::u128 &hash)
     {
         lfsr_rng::STATE state = utils::fill_state_by_hash(hash);
@@ -1793,7 +1831,7 @@ void Widget::migrate_storage_name()
         return;
 
     // Переименовываем только базу, содержимое которой уже в текущем формате.
-    if (storage_manager->VersionLabel() != QStringLiteral("v3.02"))
+    if (storage_manager->VersionLabel() != QStringLiteral("v4.00"))
         return;
 
     if (storage_manager->Name() == mFixedStorageName)
@@ -1977,35 +2015,46 @@ void Widget::btn_create_usb_key_clicked()
     }
 
     // Режим содержимого: после автоконвертации база зашифрована уже
-    // исправленными ключами, хотя имя файла осталось старым (legacy).
-    const bool content_legacy = storage_manager->IsLegacyHash();
+    // v4-ключами, даже если имя файла осталось старым.
+    const HashMode content_mode = storage_manager->GetHashMode();
 
-    // Storage-хэш должен давать имя активного файла. У обычной базы это
-    // fixed-вариант, у старой и сконвертированной — legacy-вариант.
-    auto hash_storage_fixed = utils_global::gen_hash_for_storage(textBytes, false);
-    auto hash_storage_legacy = utils_global::gen_hash_for_storage(textBytes, true);
+    // Storage-хэш должен давать имя активного файла. Имя зависит от режима,
+    // в котором создавалась база, поэтому проверяем все три варианта.
+    auto hash_storage_v4 = utils_global::gen_hash_for_storage(textBytes, HashMode::V4);
+    auto hash_storage_fixed = utils_global::gen_hash_for_storage(textBytes, HashMode::V3Fixed);
+    auto hash_storage_legacy = utils_global::gen_hash_for_storage(textBytes, HashMode::V3Legacy);
     const QString active_name = storage_manager->Name();
 
-    lfsr_hash::u128 hash_storage = hash_storage_fixed;
-    if (utils_global::generate_storage_name(hash_storage_fixed, false) != active_name) {
-        if (utils_global::generate_storage_name(hash_storage_legacy, true) == active_name) {
-            hash_storage = hash_storage_legacy;
-        } else {
-            // Ключ создаётся только для активного хранилища: иначе на носитель
-            // попали бы хэши от другой (опечатанной) мастер-фразы.
-            utils::clear_lfsr_hash(hash_storage_fixed);
-            utils::clear_lfsr_hash(hash_storage_legacy);
-            utils::erase_bytes(textBytes);
-            critical_message_box(QString::fromUtf8("Ошибка ввода"),
-                                 QString::fromUtf8("Неверная мастер-фраза"));
-            return;
-        }
+    lfsr_hash::u128 hash_storage{0, 0};
+    bool name_found = false;
+    if (utils_global::generate_storage_name(hash_storage_v4, HashMode::V4) == active_name) {
+        hash_storage = hash_storage_v4;
+        name_found = true;
+    } else if (utils_global::generate_storage_name(hash_storage_fixed, HashMode::V3Fixed)
+               == active_name) {
+        hash_storage = hash_storage_fixed;
+        name_found = true;
+    } else if (utils_global::generate_storage_name(hash_storage_legacy, HashMode::V3Legacy)
+               == active_name) {
+        hash_storage = hash_storage_legacy;
+        name_found = true;
     }
+
+    utils::clear_lfsr_hash(hash_storage_v4);
     utils::clear_lfsr_hash(hash_storage_fixed);
     utils::clear_lfsr_hash(hash_storage_legacy);
 
-    auto hash_enc = utils_global::gen_hash_for_encryption(textBytes, content_legacy);
-    auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(textBytes, content_legacy);
+    if (!name_found) {
+        // Ключ создаётся только для активного хранилища: иначе на носитель
+        // попали бы хэши от другой (опечатанной) мастер-фразы.
+        utils::erase_bytes(textBytes);
+        critical_message_box(QString::fromUtf8("Ошибка ввода"),
+                             QString::fromUtf8("Неверная мастер-фраза"));
+        return;
+    }
+
+    auto hash_enc = utils_global::gen_hash_for_encryption(textBytes, content_mode);
+    auto hash_inn_enc = utils_global::gen_hash_for_inner_encryption(textBytes, content_mode);
     utils::erase_bytes(textBytes);
 
     const QString file_name = active_name + QStringLiteral(".enc");
