@@ -12,6 +12,38 @@ namespace utils_global {
 
 using namespace utils;
 
+/// Известна ли метка версии (иначе хвост файла повреждён/не распознан).
+inline bool is_known_version_label(const QString &label)
+{
+    return label == QStringLiteral("v3.00") || label == QStringLiteral("v3.01")
+           || label == QStringLiteral("v3.02") || label == QStringLiteral("v4.00");
+}
+
+/// Режим хэширования по метке версии в хвосте файла.
+/// Неизвестная/пустая метка трактуется как актуальный формат.
+inline HashMode hash_mode_from_label(const QString &label)
+{
+    if (label == QStringLiteral("v3.00") || label == QStringLiteral("v3.01"))
+        return HashMode::V3Legacy;
+    if (label == QStringLiteral("v3.02"))
+        return HashMode::V3Fixed;
+    return HashMode::V4;
+}
+
+/// Метка версии, соответствующая режиму хэширования.
+inline QString version_label_for_mode(HashMode mode)
+{
+    switch (mode) {
+    case HashMode::V3Legacy:
+        return QStringLiteral("v3.01");
+    case HashMode::V3Fixed:
+        return QStringLiteral("v3.02");
+    case HashMode::V4:
+    default:
+        return QStringLiteral("v4.00");
+    }
+}
+
 inline void set_global_pin(const PinCode &pin)
 {
     using namespace password;
@@ -161,10 +193,10 @@ inline void fill_buffer_from_pin(uint8_t (&buffer)[64])
     utils::erase_bytes(decryptedPinBytes);
 }
 
-inline lfsr_hash::salt pin_to_salt(const QByteArray &inputSalt)
+inline lfsr_hash_v3::salt pin_to_salt_v3(const QByteArray &inputSalt)
 {
     // 1. Инициализируем пустую структуру соли по умолчанию
-    lfsr_hash::salt result;
+    lfsr_hash_v3::salt result;
     std::memset(&result, 0, sizeof(result));
 
     // 2. Безопасно расшифровываем оригинальный ПИН-код из сеансового хранилища
@@ -173,13 +205,13 @@ inline lfsr_hash::salt pin_to_salt(const QByteArray &inputSalt)
         return result;
     }
 
-    // 3. Вычисляем хэш от ПИН-кода и переданной входной соли (как это требовалось вашей логике)
+    // 3. Вычисляем хэш от ПИН-кода и переданной входной соли
     QCryptographicHash hasher(QCryptographicHash::Sha256);
     hasher.addData(decryptedPinBytes);
     hasher.addData(inputSalt);
     QByteArray hashRes = hasher.result();
 
-    // 4. Копируем результат хэширования в целевую структуру lfsr_hash::salt
+    // 4. Копируем результат хэширования в целевую структуру salt
     std::size_t bytesToCopy = std::min(static_cast<std::size_t>(hashRes.size()), sizeof(result));
     std::memcpy(&result, hashRes.constData(), bytesToCopy);
 
@@ -190,26 +222,150 @@ inline lfsr_hash::salt pin_to_salt(const QByteArray &inputSalt)
     return result;
 }
 
-inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt)
+inline lfsr_hash::salt pin_to_salt_v4(const QByteArray &inputSalt)
 {
-    using namespace lfsr_hash;
+    // Та же производная, что и в v3, но показатель степени приводится к
+    // инъективному виду: в v4 add_salt не нормализует q.
+    lfsr_hash::salt result;
+    std::memset(&result, 0, sizeof(result));
+
+    QByteArray decryptedPinBytes = get_global_pin_decrypted();
+    if (decryptedPinBytes.isEmpty()) {
+        return lfsr_hash::normalize_salt(result);
+    }
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    hasher.addData(decryptedPinBytes);
+    hasher.addData(inputSalt);
+    QByteArray hashRes = hasher.result();
+
+    std::size_t bytesToCopy = std::min(static_cast<std::size_t>(hashRes.size()), sizeof(result));
+    std::memcpy(&result, hashRes.constData(), bytesToCopy);
+
+    utils::erase_bytes(decryptedPinBytes);
+    utils::erase_bytes(hashRes);
+
+    return lfsr_hash::normalize_salt(result);
+}
+
+/// Связь типа генератора с его солью и режимом подготовки.
+template <typename Gens>
+struct gen_traits;
+
+template <>
+struct gen_traits<lfsr_hash::gens>
+{
+    using salt = lfsr_hash::salt;
+
+    static salt pin_salt(const QByteArray &inputSalt)
+    {
+        return pin_to_salt_v4(inputSalt);
+    }
+
+    static salt normalize(salt s)
+    {
+        return lfsr_hash::normalize_salt(s);
+    }
+
+    static void prepare(lfsr_hash::gens &g, HashMode)
+    {
+        g.reset();
+    }
+};
+
+template <>
+struct gen_traits<lfsr_hash_v3::gens>
+{
+    using salt = lfsr_hash_v3::salt;
+
+    static salt pin_salt(const QByteArray &inputSalt)
+    {
+        return pin_to_salt_v3(inputSalt);
+    }
+
+    static salt normalize(salt s)
+    {
+        // v3 сам поднимает q в fixed-режиме и сохраняет исходный в legacy.
+        return s;
+    }
+
+    static void prepare(lfsr_hash_v3::gens &g, HashMode mode)
+    {
+        g.set_legacy(mode == HashMode::V3Legacy);
+        g.reset();
+    }
+};
+
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> pin_to_hash_impl(const QByteArray &inner_salt, Gens &gen)
+{
+    using Tr = gen_traits<Gens>;
     constexpr size_t blockSize = 64;
     uint8_t b_[blockSize];
     fill_buffer_from_pin(b_);
-    password::hash_gen.add_salt(pin_to_salt(inner_salt));
-    const auto hash = hash128(password::hash_gen, std::as_bytes(std::span(b_)));
+    gen.add_salt(Tr::pin_salt(inner_salt));
+    const auto hash = hash128(gen, std::as_bytes(std::span(b_)));
     utils::erase_raw_bytes(b_, blockSize);
+    return {hash.first, hash.second};
+}
+
+inline lfsr_hash::u128 pin_to_hash(const QByteArray &inner_salt, HashMode mode = HashMode::V4)
+{
+    if (mode == HashMode::V4)
+        return pin_to_hash_impl(inner_salt, password::hash_gen);
+    return pin_to_hash_impl(inner_salt, password::hash_gen_v3);
+}
+
+/**
+ * @brief XOR-свёртка хэшей блоков фиксированного размера.
+ * @details Используется форматом хранилища (блоки по 128 байт) и проверкой
+ * целостности. Режим хэширования выбирается меткой версии файла.
+ */
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> hash_blocks_impl(QByteArray &bytes, Gens &gen,
+                                                      size_t blockSize)
+{
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
+
+    std::pair<uint64_t, uint64_t> hash{0, 0};
+    const auto bytesRead = bytes.size();
+    const Salt original_size_salt
+        = Tr::normalize(utils::get_salt<Salt>(bytesRead, blockSize));
+    const size_t n = bytesRead / blockSize;
+    const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
+                                       bytes.size());
+
+    gen.add_salt(original_size_salt);
+    for (size_t i = 0; i < n; ++i) {
+        auto chunk = bytes_span.subspan(i * blockSize, blockSize);
+        auto inner_hash = hash128(gen, chunk);
+        hash.first ^= inner_hash.first;
+        hash.second ^= inner_hash.second;
+    }
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint seed,
-                                              bool legacy = false)
+inline lfsr_hash::u128 hash_blocks(QByteArray &bytes, size_t blockSize,
+                                   HashMode mode = HashMode::V4)
 {
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return hash_blocks_impl(bytes, password::hash_gen, blockSize);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return hash_blocks_impl(bytes, password::hash_gen_v3, blockSize);
+}
+
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> gen_hash_for_pass_gen_impl(const QByteArray &textBytes,
+                                                               uint seed, Gens &gen)
+{
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
 
     // Передаем сырые байты напрямую вместо text.toUtf8()
-    lfsr_hash::u128 hash = utils_global::pin_to_hash(textBytes);
+    auto hash = pin_to_hash_impl(textBytes, gen);
     constexpr size_t blockSize = 64;
     {
         const int old_size = textBytes.size();
@@ -234,16 +390,16 @@ inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint s
 
         const auto bytesRead = bytes.size();
         {
-            using namespace lfsr_hash;
-            const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+            const Salt original_size_salt
+                = Tr::normalize(utils::get_salt<Salt>(bytesRead, blockSize));
             const size_t n = bytesRead / blockSize;
             const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(
                                                    bytes.constData()),
                                                bytes.size());
-            password::hash_gen.add_salt(original_size_salt);
+            gen.add_salt(original_size_salt);
             for (size_t i = 0; i < n; ++i) {
                 auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-                auto inner_hash = hash128(password::hash_gen, chunk);
+                auto inner_hash = hash128(gen, chunk);
                 hash.first ^= inner_hash.first;
                 hash.second ^= inner_hash.second;
             }
@@ -254,10 +410,23 @@ inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint s
     return hash;
 }
 
-inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes, bool legacy = false)
+inline lfsr_hash::u128 gen_hash_for_pass_gen(const QByteArray &textBytes, uint seed,
+                                              HashMode mode = HashMode::V4)
 {
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return gen_hash_for_pass_gen_impl(textBytes, seed, password::hash_gen);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return gen_hash_for_pass_gen_impl(textBytes, seed, password::hash_gen_v3);
+}
+
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> gen_hash_for_storage_impl(const QByteArray &textBytes,
+                                                              Gens &gen)
+{
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
     constexpr size_t blockSize = 72;
 
     const int old_size = textBytes.size();
@@ -276,22 +445,22 @@ inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes, bool le
 
     // 4. Считаем промежуточный хэш от исходных данных (до паддинга)
     // Чтобы pin_to_hash не вызвал realloc внутри, передаем ему textBytes
-    lfsr_hash::u128 hash_fs = utils_global::pin_to_hash(textBytes);
+    auto hash_fs = pin_to_hash_impl(textBytes, gen);
 
     // 5. Ручной ISO/IEC 9797-1 padd
     bytes[old_size] = static_cast<char>(0x80);
 
     const auto bytesRead = bytes.size();
     {
-        using namespace lfsr_hash;
-        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+        const Salt original_size_salt
+            = Tr::normalize(utils::get_salt<Salt>(bytesRead, blockSize));
         const size_t n = bytesRead / blockSize;
         const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
                                            bytes.size());
-        password::hash_gen.add_salt(original_size_salt);
+        gen.add_salt(original_size_salt);
         for (size_t i = 0; i < n; ++i) {
             auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-            auto inner_hash = hash128(password::hash_gen, chunk);
+            auto inner_hash = hash128(gen, chunk);
             hash_fs.first ^= inner_hash.first;
             hash_fs.second ^= inner_hash.second;
         }
@@ -301,10 +470,23 @@ inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes, bool le
     return hash_fs;
 }
 
-inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes, bool legacy = false)
+inline lfsr_hash::u128 gen_hash_for_storage(const QByteArray &textBytes,
+                                            HashMode mode = HashMode::V4)
 {
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return gen_hash_for_storage_impl(textBytes, password::hash_gen);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return gen_hash_for_storage_impl(textBytes, password::hash_gen_v3);
+}
+
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> gen_hash_for_encryption_impl(const QByteArray &textBytes,
+                                                                 Gens &gen)
+{
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
     constexpr size_t blockSize = 128;
 
     const int old_size = textBytes.size();
@@ -316,23 +498,23 @@ inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes, bool
     bytes.fill('\0', final_size);
     std::memcpy(bytes.data(), textBytes.constData(), old_size);
 
-    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(textBytes);
+    auto hash_enc = pin_to_hash_impl(textBytes, gen);
 
     bytes[old_size] = static_cast<char>(0x80);
 
     const auto bytesRead = bytes.size();
     {
-        using namespace lfsr_hash;
-        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+        const Salt original_size_salt
+            = Tr::normalize(utils::get_salt<Salt>(bytesRead, blockSize));
         const size_t n = bytesRead / blockSize;
         const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
                                            bytes.size());
 
-        password::hash_gen.add_salt(original_size_salt);
+        gen.add_salt(original_size_salt);
 
         for (size_t i = 0; i < n; ++i) {
             auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-            auto inner_hash = hash128(password::hash_gen, chunk);
+            auto inner_hash = hash128(gen, chunk);
             hash_enc.first ^= inner_hash.first;
             hash_enc.second ^= inner_hash.second;
         }
@@ -342,11 +524,23 @@ inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes, bool
     return hash_enc;
 }
 
-inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &textBytes,
-                                                           bool legacy = false)
+inline lfsr_hash::u128 gen_hash_for_encryption(const QByteArray &textBytes,
+                                               HashMode mode = HashMode::V4)
 {
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return gen_hash_for_encryption_impl(textBytes, password::hash_gen);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return gen_hash_for_encryption_impl(textBytes, password::hash_gen_v3);
+}
+
+template <typename Gens>
+inline std::pair<uint64_t, uint64_t> gen_hash_for_inner_encryption_impl(
+    const QByteArray &textBytes, Gens &gen)
+{
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
     constexpr size_t blockSize = 96;
 
     const int old_size = textBytes.size();
@@ -358,29 +552,40 @@ inline static lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &te
     bytes.fill('\0', final_size);
     std::memcpy(bytes.data(), textBytes.constData(), old_size);
 
-    lfsr_hash::u128 hash_enc = utils_global::pin_to_hash(textBytes);
+    auto hash_enc = pin_to_hash_impl(textBytes, gen);
 
     bytes[old_size] = static_cast<char>(0x80);
 
     const auto bytesRead = bytes.size();
     {
-        using namespace lfsr_hash;
-        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
+        const Salt original_size_salt
+            = Tr::normalize(utils::get_salt<Salt>(bytesRead, blockSize));
         const size_t n = bytesRead / blockSize;
         const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
                                            bytes.size());
 
-        password::hash_gen.add_salt(original_size_salt);
+        gen.add_salt(original_size_salt);
 
         for (size_t i = 0; i < n; ++i) {
             auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-            auto inner_hash = hash128(password::hash_gen, chunk);
+            auto inner_hash = hash128(gen, chunk);
             hash_enc.first ^= inner_hash.first;
             hash_enc.second ^= inner_hash.second;
         }
     }
     utils::erase_bytes(bytes);
     return hash_enc;
+}
+
+inline lfsr_hash::u128 gen_hash_for_inner_encryption(const QByteArray &textBytes,
+                                                     HashMode mode = HashMode::V4)
+{
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return gen_hash_for_inner_encryption_impl(textBytes, password::hash_gen);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return gen_hash_for_inner_encryption_impl(textBytes, password::hash_gen_v3);
 }
 
 inline void request_passwords(QFutureWatcher<QVector<lfsr8::u64>> &watcher, int password_len)
@@ -479,11 +684,11 @@ inline QString try_to_get_password(int len, int level)
     return final_password;
 }
 
-inline QString generate_storage_name(const lfsr_hash::u128 &hash, bool legacy = false)
+template <typename Gens>
+inline QString generate_storage_name_impl(const lfsr_hash::u128 &hash, Gens &gen)
 {
-    using namespace lfsr_hash;
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
+    using Tr = gen_traits<Gens>;
+    using Salt = typename Tr::salt;
     static constexpr auto allowed{"0123456789abcdefghijklmnopqrstuvwxyz"};
     const int allowed_len = std::strlen(allowed);
     if (allowed_len < 36) {
@@ -505,8 +710,8 @@ inline QString generate_storage_name(const lfsr_hash::u128 &hash, bool legacy = 
     }
 
     const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(b_), buffer_len);
-    password::hash_gen.add_salt(utils::hash_to_salt(hash));
-    u128 hash2 = hash128(password::hash_gen, bytes_span);
+    gen.add_salt(Tr::normalize(utils::hash_to_salt<Salt>(hash)));
+    auto hash2 = hash128(gen, bytes_span);
     QString name;
     for (int i = 0; i < 8; ++i) {
         name.push_back(allowed[(hash2.first >> 8 * i) % 36]);
@@ -516,9 +721,9 @@ inline QString generate_storage_name(const lfsr_hash::u128 &hash, bool legacy = 
         b_[16 + 2 * i] = hash2.first >> 8 * i;
         b_[16 + 2 * i + 1] = hash2.second >> 8 * i;
     }
-    password::hash_gen.add_salt(utils::hash_to_salt(hash2));
+    gen.add_salt(Tr::normalize(utils::hash_to_salt<Salt>(hash2)));
     utils::clear_lfsr_hash(hash2);
-    u128 hash3 = hash128(password::hash_gen, bytes_span);
+    auto hash3 = hash128(gen, bytes_span);
     for (int i = 0; i < 8; ++i) {
         name.push_back(allowed[(hash3.first >> 8 * i) % 36]);
         name.push_back(allowed[(hash3.second >> 8 * i) % 36]);
@@ -526,6 +731,17 @@ inline QString generate_storage_name(const lfsr_hash::u128 &hash, bool legacy = 
     utils::clear_lfsr_hash(hash3);
     utils::erase_raw_bytes(b_, buffer_len);
     return name;
+}
+
+inline QString generate_storage_name(const lfsr_hash::u128 &hash,
+                                     HashMode mode = HashMode::V4)
+{
+    if (mode == HashMode::V4) {
+        gen_traits<lfsr_hash::gens>::prepare(password::hash_gen, mode);
+        return generate_storage_name_impl(hash, password::hash_gen);
+    }
+    gen_traits<lfsr_hash_v3::gens>::prepare(password::hash_gen_v3, mode);
+    return generate_storage_name_impl(hash, password::hash_gen_v3);
 }
 
 } // namespace utils_global

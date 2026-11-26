@@ -3,6 +3,7 @@
 #include "crypto_table_item.h"
 #include "global_data.h"
 #include "utils.h"
+#include "utils_global.h"
 
 #ifdef __unix__
     #undef OS_Windows
@@ -227,32 +228,14 @@ static void decode_dlog256(const QByteArray& in, QByteArray& out, uint8_t key_by
     }
 }
 
-static void insert_hash128(QByteArray &bytes, bool legacy)
+static void insert_hash128(QByteArray &bytes, HashMode mode)
 {
     if (bytes.size() % 128 != 0) {
         qDebug() << "Insert hash128 error: input size is not a 128*k bytes: " << bytes.size();
         return;
     }
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
-    lfsr_hash::u128 hash = {0, 0};
-    constexpr size_t blockSize = 128;
 
-    {
-        const auto bytesRead = bytes.size();
-        using namespace lfsr_hash;
-        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
-        const size_t n = bytesRead / blockSize;
-        const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
-                                           bytes.size());
-        password::hash_gen.add_salt(original_size_salt);
-        for (size_t i = 0; i < n; ++i) {
-            auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-            auto inner_hash = hash128(password::hash_gen, chunk);
-            hash.first ^= inner_hash.first;
-            hash.second ^= inner_hash.second;
-        }
-    }
+    const auto hash = utils_global::hash_blocks(bytes, 128, mode);
 
     // Пишем хэш через чистый временный буфер, исключая мусор resize
     constexpr size_t hash_size = sizeof(lfsr_hash::u128); // 16 байт
@@ -264,7 +247,7 @@ static void insert_hash128(QByteArray &bytes, bool legacy)
     utils::erase_bytes(hash_buf);
 }
 
-static bool extract_and_check_hash128(QByteArray &bytes, bool legacy)
+static bool extract_and_check_hash128(QByteArray &bytes, HashMode mode)
 {
     // 1. Разрываем неявные связи (CoW), гарантируя монопольное владение буфером
     bytes.detach();
@@ -297,25 +280,7 @@ static bool extract_and_check_hash128(QByteArray &bytes, bool legacy)
     bytes.resize(hash_offset);
 
     // Вычисляем хэш от оставшихся данных для проверки
-    password::hash_gen.set_legacy(legacy);
-    password::hash_gen.reset();
-    lfsr_hash::u128 calculated_hash = {0, 0};
-    constexpr size_t blockSize = 128;
-    {
-        const auto bytesRead = bytes.size();
-        using namespace lfsr_hash;
-        const salt original_size_salt = utils::get_salt(bytesRead, blockSize);
-        const size_t n = bytesRead / blockSize;
-        const auto &bytes_span = std::span(reinterpret_cast<const std::byte *>(bytes.constData()),
-                                           bytes.size());
-        password::hash_gen.add_salt(original_size_salt);
-        for (size_t i = 0; i < n; ++i) {
-            auto chunk = bytes_span.subspan(i * blockSize, blockSize);
-            auto inner_hash = hash128(password::hash_gen, chunk);
-            calculated_hash.first ^= inner_hash.first;
-            calculated_hash.second ^= inner_hash.second;
-        }
-    }
+    auto calculated_hash = utils_global::hash_blocks(bytes, 128, mode);
 
     // 3. CONSTANT-TIME СРАВНЕНИЕ ХЭШЕЙ
     // Полностью исключает утечки по времени (Timing Attacks)
@@ -445,16 +410,17 @@ StorageManager::StorageManager()
     // Версии формата хранилища, которые умеет читать эта сборка.
     // Новые версии формата добавлять сюда, старые — не удалять: иначе
     // ранее созданные базы перестанут открываться.
-    *g_supported_as_version_1 = QSet{QString("v3.00"), QString("v3.01"), QString("v3.02")};
+    *g_supported_as_version_1
+        = QSet{QString("v3.00"), QString("v3.01"), QString("v3.02"), QString("v4.00")};
 
     // Новые хранилища создаются в актуальном формате.
     mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
-    mLegacyHash = false;
+    mHashMode = HashMode::V4;
 }
 
 template<int version>
 QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &enc_inner,
-                     bool legacy)
+                     HashMode mode)
 {
     QByteArray out;
 #define my_encode(ns, K, R) \
@@ -484,7 +450,7 @@ QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &en
     QByteArray permuted; \
     uint8_t dlog_key = static_cast<uint8_t>(seed2 & 0xFF); \
     ns::encode_dlog256(encrypted_inner, permuted, dlog_key); \
-    ns::insert_hash128(permuted, legacy); \
+    ns::insert_hash128(permuted, mode); \
     crc = utils::xor_data_by_seed(crc, seed2); \
     permuted.append(crc); \
     QByteArray seed_b = utils::seed_to_bytes(seed2); \
@@ -513,7 +479,7 @@ QByteArray do_encode(QByteArray &encoded_string, Encryption &enc, Encryption &en
 }
 
 template<int version>
-QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner, bool legacy)
+QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner, HashMode mode)
 {
     QByteArray decoded_data;
 #define my_decode(ns, K, R) \
@@ -559,7 +525,7 @@ QByteArray do_decode(QByteArray &data, Encryption &dec, Encryption &dec_inner, b
     decrypted.resize(decrypted_crc_offset); \
 \
     /* 4. Теперь в самом хвосте decrypted остался чистый 16-байтный хэш. Проверяем его */ \
-    if (!ns::extract_and_check_hash128(decrypted, legacy)) { \
+    if (!ns::extract_and_check_hash128(decrypted, mode)) { \
         qDebug() << "Hash128 check failure."; \
         ns::finalize_encryption(dec); \
         utils::erase_bytes(crc); \
@@ -699,7 +665,7 @@ bool StorageManager::SaveToStorage(const QTableWidget *const ro_table, bool save
     packed_data_bytes.append(end_byte);
 
     QByteArray encoded_data_bytes;
-    encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner, mLegacyHash);
+    encoded_data_bytes = do_encode<1>(packed_data_bytes, mEnc, mEncInner, mHashMode);
 
     utils::erase_bytes(packed_data_bytes);
 
@@ -838,13 +804,13 @@ Loading_Errors StorageManager::LoadFromStorage(QTableWidget *const wr_table, Fil
         // 4. Проверка поддержки формата
         if (g_supported_as_version_1->contains(read_version)) {
             // Версия файла — авторитетный источник режима хэширования:
-            // v3.00/v3.01 используют прежний (legacy) хэш, v3.02 — исправленный.
-            mLegacyHash = (read_version == QStringLiteral("v3.00")
-                           || read_version == QStringLiteral("v3.01"));
+            // v3.00/v3.01 используют прежний (legacy) хэш, v3.02 — исправленный,
+            // v4.00 — новый движок.
+            mHashMode = utils_global::hash_mode_from_label(read_version);
             mVersionLabel = read_version;
 
             // Передаем в do_decode гарантированно чистый массив, кратный 16 байтам (размер будет 284 байта)
-            decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner, mLegacyHash);
+            decoded_data_bytes = do_decode<1>(clean_crypto_data, mDec, mDecInner, mHashMode);
             decoded_data_bytes.detach();
             utils::erase_bytes(clean_crypto_data);
 
@@ -1065,6 +1031,34 @@ bool StorageManager::TmpFileIsExist() const
     return tmp_file.exists();
 }
 
+bool StorageManager::AnyStorageExists() const
+{
+    // Имя хранилища — ровно 32 символа [0-9a-z]. Скрытая резервная копия
+    // отличается только ведущей точкой, поэтому точку отбрасываем.
+    const QDir dir(storage_directory());
+    const QStringList entries = dir.entryList(QDir::Files | QDir::Hidden | QDir::System);
+    for (const QString &entry : entries) {
+        QString name = entry;
+        if (name.startsWith(QLatin1Char('.')))
+            name.remove(0, 1);
+        if (name.size() != 32)
+            continue;
+
+        bool looks_like_storage = true;
+        for (const QChar ch : name) {
+            const bool ok = (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))
+                            || (ch >= QLatin1Char('a') && ch <= QLatin1Char('z'));
+            if (!ok) {
+                looks_like_storage = false;
+                break;
+            }
+        }
+        if (looks_like_storage)
+            return true;
+    }
+    return false;
+}
+
 bool StorageManager::WasUpdated() const
 {
     return mWasUpdated;
@@ -1100,7 +1094,7 @@ void StorageManager::SetName(const QString &name)
         mStorageName.clear();
         mStorageNameBackUp.clear();
         // Сбрасываем режим: следующее хранилище будет создано в актуальном формате.
-        mLegacyHash = false;
+        mHashMode = HashMode::V4;
         mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
         return;
     }
@@ -1110,14 +1104,19 @@ void StorageManager::SetName(const QString &name)
     mStorageNameBackUp = dir + QLatin1Char('/') + QLatin1Char('.') + name;
 }
 
-void StorageManager::SetLegacyHash(bool legacy)
+void StorageManager::SetHashMode(HashMode mode)
 {
-    mLegacyHash = legacy;
+    mHashMode = mode;
 }
 
-bool StorageManager::IsLegacyHash() const
+HashMode StorageManager::GetHashMode() const
 {
-    return mLegacyHash;
+    return mHashMode;
+}
+
+bool StorageManager::IsV3Hash() const
+{
+    return is_v3(mHashMode);
 }
 
 void StorageManager::SetVersionLabel(const QString &label)
@@ -1216,7 +1215,7 @@ bool StorageManager::ConvertToCurrentFormat(const QTableWidget *const table,
                                             std::shared_ptr<lfsr_rng::Generators> enc_inner,
                                             std::shared_ptr<lfsr_rng::Generators> dec_inner)
 {
-    if (!mLegacyHash || mStorageName.isEmpty() || !table)
+    if (!IsV3Hash() || mStorageName.isEmpty() || !table)
         return false;
     if (!enc || !dec || !enc_inner || !dec_inner)
         return false;
@@ -1244,15 +1243,16 @@ bool StorageManager::ConvertToCurrentFormat(const QTableWidget *const table,
         return false;
     }
 
-    const bool old_legacy = mLegacyHash;
+    const HashMode old_mode = mHashMode;
     const QString old_version = mVersionLabel;
     auto old_enc = mEnc.gamma_gen;
     auto old_dec = mDec.gamma_gen;
     auto old_enc_inner = mEncInner.gamma_gen;
     auto old_dec_inner = mDecInner.gamma_gen;
 
-    // Переключаемся на исправленный формат: те же имена файлов, новые ключи.
-    mLegacyHash = false;
+    // Переключаемся на актуальный формат: новые ключи и метка v4.00.
+    // Имя файла сменится отдельно (RenameStorage) после успешной записи.
+    mHashMode = HashMode::V4;
     mVersionLabel = QString(G_VERSION_LABEL).remove(G_VERSION_PREFIX);
     mEnc.gamma_gen = std::move(enc);
     mDec.gamma_gen = std::move(dec);
@@ -1263,7 +1263,7 @@ bool StorageManager::ConvertToCurrentFormat(const QTableWidget *const table,
         return true;
 
     // Откат: возвращаем режим, версию, ключи и прежнее содержимое файлов.
-    mLegacyHash = old_legacy;
+    mHashMode = old_mode;
     mVersionLabel = old_version;
     mEnc.gamma_gen = std::move(old_enc);
     mDec.gamma_gen = std::move(old_dec);

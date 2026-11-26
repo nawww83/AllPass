@@ -21,7 +21,7 @@
 #endif
 
 #include "constants.h"
-#include "lfsr_hash.h"
+#include "lfsr_compat.h"
 #include "stream_cipher.h"
 
 namespace utils {
@@ -411,7 +411,8 @@ inline lfsr_hash::u128 bytes_to_lfsr_hash(const QByteArray &input)
     return hash;
 }
 
-inline lfsr_hash::salt hash_to_salt(const lfsr_hash::u128 &hash)
+template <typename Salt>
+inline Salt hash_to_salt(const lfsr_hash::u128 &hash)
 {
     using namespace lfsr_hash;
 
@@ -432,10 +433,11 @@ inline lfsr_hash::salt hash_to_salt(const lfsr_hash::u128 &hash)
     reader >> raw_q >> s0 >> s1;
 
     int q = 11 + (std::abs(raw_q) % 47);
-    return { q, s0, s1 };
+    return Salt{ q, s0, s1 };
 }
 
-inline lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
+template <typename Salt>
+inline Salt get_salt(size_t bytesRead, size_t blockSize)
 {
     using namespace lfsr_hash;
 
@@ -461,7 +463,7 @@ inline lfsr_hash::salt get_salt(size_t bytesRead, size_t blockSize)
     // Задаем прозрачный диапазон, например, от 32 до 63 тактов (всего 32 варианта)
     int q = 32 + (std::abs(raw_q) % 32);
 
-    return { q, raw_s0, raw_s1 };
+    return Salt{ q, raw_s0, raw_s1 };
 }
 
 }
