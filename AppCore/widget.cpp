@@ -1249,10 +1249,12 @@ void Widget::update_master_phrase()
                                 : found_mode;
             } else if (storage_manager->ConvertedBackupExists(v4_name)
                        || storage_manager->ConvertedBackupExists(fixed_name)
-                       || storage_manager->ConvertedBackupExists(legacy_name)) {
-                // База сконвертирована и переименована, поэтому токен не
-                // находит ни старое имя, ни новое. Не создаём пустое
-                // хранилище — предлагаем ввести фразу.
+                       || storage_manager->ConvertedBackupExists(legacy_name)
+                       || storage_manager->AnyStorageExists()) {
+                // Токен не нашёл ни старое имя, ни новое, но в каталоге есть
+                // хранилище (например, база уже переведена в v4.00, а ключ
+                // помнит хэши v3). Не создаём пустую базу — предлагаем
+                // ввести мастер-фразу.
                 report_stale_key();
                 return;
             } else {

@@ -1031,6 +1031,34 @@ bool StorageManager::TmpFileIsExist() const
     return tmp_file.exists();
 }
 
+bool StorageManager::AnyStorageExists() const
+{
+    // Имя хранилища — ровно 32 символа [0-9a-z]. Скрытая резервная копия
+    // отличается только ведущей точкой, поэтому точку отбрасываем.
+    const QDir dir(storage_directory());
+    const QStringList entries = dir.entryList(QDir::Files | QDir::Hidden | QDir::System);
+    for (const QString &entry : entries) {
+        QString name = entry;
+        if (name.startsWith(QLatin1Char('.')))
+            name.remove(0, 1);
+        if (name.size() != 32)
+            continue;
+
+        bool looks_like_storage = true;
+        for (const QChar ch : name) {
+            const bool ok = (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))
+                            || (ch >= QLatin1Char('a') && ch <= QLatin1Char('z'));
+            if (!ok) {
+                looks_like_storage = false;
+                break;
+            }
+        }
+        if (looks_like_storage)
+            return true;
+    }
+    return false;
+}
+
 bool StorageManager::WasUpdated() const
 {
     return mWasUpdated;
