@@ -174,6 +174,7 @@ private:
 // не утекла в буфер обмена.
 class PhraseLineEdit : public QLineEdit
 {
+    Q_OBJECT
 public:
     explicit PhraseLineEdit(QWidget *parent = nullptr)
         : QLineEdit(parent)
@@ -185,6 +186,13 @@ public:
         setMaxLength(4096);
     }
 
+signals:
+    // Раскладка, определённая по введённому символу. Нужна там, где нельзя
+    // узнать активную группу клавиатуры напрямую (Wayland): композитор её
+    // клиенту не сообщает, но по набранной букве легко отличить кириллицу
+    // от латиницы.
+    void layout_detected(const QString &code);
+
 protected:
     void keyPressEvent(QKeyEvent *event) override
     {
@@ -195,11 +203,40 @@ protected:
             }
         }
         QLineEdit::keyPressEvent(event);
+        const QString code = layout_code_for_text(event->text());
+        if (!code.isEmpty() && code != m_last_detected_layout) {
+            m_last_detected_layout = code;
+            emit layout_detected(code);
+        }
     }
+
+private:
+    // Эвристика для типичной пары раскладок RU/EN. Для языков с другой
+    // письменностью ничего не возвращает, чтобы не показывать неверный код.
+    static QString layout_code_for_text(const QString &text)
+    {
+        for (const QChar &ch : text) {
+            if (!ch.isLetter()) {
+                continue;
+            }
+            switch (ch.script()) {
+            case QChar::Script_Cyrillic:
+                return QStringLiteral("RU");
+            case QChar::Script_Latin:
+                return QStringLiteral("EN");
+            default:
+                return {};
+            }
+        }
+        return {};
+    }
+
+    QString m_last_detected_layout;
 };
 
 // Код текущей раскладки клавиатуры (например, "RU"/"EN") для диалога
-// мастер-фразы. Пустая строка, если определить не удалось (не Windows).
+// мастер-фразы. Пустая строка, если определить не удалось.
+// Поддерживаются Windows и X11 (Linux); на прочих платформах — пустая строка.
 QString current_keyboard_layout_code();
 
 // Диалог ввода мастер-фразы.
@@ -240,6 +277,13 @@ public:
         options->addStretch();
         options->addWidget(m_layout);
         layout->addLayout(options);
+
+        // Платформа не всегда сообщает раскладку (Wayland), поэтому
+        // подстраховываемся определением по введённому символу.
+        connect(m_edit, &PhraseLineEdit::layout_detected, this, [this](const QString &code) {
+            m_detected_layout = code;
+            update_layout_label();
+        });
 
         connect(m_hide, &QCheckBox::toggled, this, [this](bool hidden) {
             m_edit->setEchoMode(hidden ? QLineEdit::Password : QLineEdit::Normal);
@@ -288,13 +332,18 @@ private slots:
 private:
     void update_layout_label()
     {
+        // Прямой запрос к ОС в приоритете: он показывает смену раскладки
+        // сразу, не дожидаясь ввода. Если платформа его не поддерживает,
+        // используем код, определённый по последнему набранному символу.
         const QString code = current_keyboard_layout_code();
-        m_layout->setText(code.isEmpty() ? QString() : tr("Раскладка: %1").arg(code));
+        const QString shown = code.isEmpty() ? m_detected_layout : code;
+        m_layout->setText(shown.isEmpty() ? QString() : tr("Раскладка: %1").arg(shown));
     }
 
     PhraseLineEdit *m_edit = nullptr;
     QCheckBox *m_hide = nullptr;
     QLabel *m_layout = nullptr;
+    QString m_detected_layout;
 };
 
 template<int pin_len>

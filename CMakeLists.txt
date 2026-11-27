@@ -176,6 +176,16 @@ if(WIN32)
     )
 endif()
 
+# Индикатор активной раскладки в диалоге мастер-фразы на X11 (Linux).
+# Без libX11 приложение собирается и работает как раньше, просто без индикатора.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    find_package(X11 QUIET)
+    if(X11_FOUND)
+        target_link_libraries(AllPass PRIVATE X11::X11)
+        target_compile_definitions(AllPass PRIVATE ALLPASS_HAVE_X11)
+    endif()
+endif()
+
 # Исправление сборки в режиме Debug для GCC/Clang/MinGW
 if(NOT MSVC AND NOT ANDROID AND NOT IOS)
     target_compile_options(AllPass PRIVATE "-mssse3" "-msse4.1")

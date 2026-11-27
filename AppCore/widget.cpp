@@ -36,6 +36,8 @@
     #define WIN32_LEAN_AND_MEAN
     #define NOMINMAX
     #include <windows.h>
+#elif defined(Q_OS_LINUX) && defined(ALLPASS_HAVE_X11)
+    #include <X11/XKBlib.h>
 #endif
 
 static int g_current_password_len;
@@ -56,6 +58,99 @@ QString current_keyboard_layout_code()
     if (GetLocaleInfoW(MAKELCID(lang_id, SORT_DEFAULT), LOCALE_SISO639LANGNAME,
                        code, 16) > 0) {
         return QString::fromWCharArray(code).toUpper();
+    }
+#elif defined(Q_OS_LINUX) && defined(ALLPASS_HAVE_X11)
+    // На X11 Qt не сообщает активную раскладку (QInputMethod::locale()
+    // возвращает локаль системы, а не группу клавиатуры), поэтому спрашиваем
+    // напрямую у XKB. Соединение с X-сервером открываем один раз.
+    static Display *display = XOpenDisplay(nullptr);
+    if (!display) {
+        return {};
+    }
+
+    // Набор раскладок меняется редко, поэтому список названий перечитываем
+    // не чаще раза в 2 секунды. Активную группу запрашиваем при каждом
+    // вызове — это дешёвый запрос состояния.
+    static QStringList layout_codes;
+    static QStringList layout_names;
+    static int layout_named_groups = 0;
+    static QElapsedTimer layout_info_age;
+    constexpr qint64 kLayoutInfoTtlMs = 2000;
+
+    if (!layout_info_age.isValid() || layout_info_age.elapsed() > kLayoutInfoTtlMs) {
+        layout_codes.clear();
+        layout_names.clear();
+        layout_named_groups = 0;
+
+        XkbDescRec *desc = XkbAllocKeyboard();
+        if (desc) {
+            desc->dpy = display;
+            if (XkbGetNames(display, XkbSymbolsNameMask | XkbGroupNamesMask,
+                            desc) == Success && desc->names) {
+                if (desc->names->symbols) {
+                    char *symbols = XGetAtomName(display, desc->names->symbols);
+                    if (symbols) {
+                        // Пример: "pc+us+ru:2+inet(evdev)+group(alt_shift_toggle)".
+                        // Раскладки — компоненты без параметров в скобках;
+                        // "pc" и "inet" в группы не входят. Суффикс ":2" —
+                        // номер варианта раскладки, для кода он не нужен.
+                        const QStringList components =
+                            QString::fromLatin1(symbols).split(QLatin1Char('+'),
+                                                               Qt::SkipEmptyParts);
+                        for (const QString &component : components) {
+                            if (component.contains(QLatin1Char('('))
+                                || component == QLatin1String("pc")
+                                || component == QLatin1String("inet")) {
+                                continue;
+                            }
+                            layout_codes << component.section(QLatin1Char(':'), 0, 0).toUpper();
+                        }
+                        XFree(symbols);
+                    }
+                }
+                // Читаемые имена групп — запасной вариант, если разобрать
+                // symbols не удалось (нестандартная конфигурация). Пустые
+                // имена сохраняем, чтобы индекс группы не смещался.
+                for (int group = 0; group < XkbNumKbdGroups; ++group) {
+                    const Atom atom = desc->names->groups[group];
+                    QString name;
+                    if (atom) {
+                        char *raw_name = XGetAtomName(display, atom);
+                        if (raw_name) {
+                            name = QString::fromLocal8Bit(raw_name);
+                            XFree(raw_name);
+                        }
+                    }
+                    if (!name.isEmpty()) {
+                        ++layout_named_groups;
+                    }
+                    layout_names << name;
+                }
+            }
+            XkbFreeKeyboard(desc, XkbAllComponentsMask, True);
+        }
+        layout_info_age.start();
+    }
+
+    XkbStateRec state{};
+    if (XkbGetState(display, XkbUseCoreKbd, &state) != Success) {
+        return {};
+    }
+    const int group = static_cast<int>(state.group);
+    // Порядок групп совпадает с порядком раскладок в symbols. Кодам доверяем,
+    // только если их число совпадает с числом именованных групп.
+    const bool codes_are_consistent =
+        layout_codes.isEmpty() || layout_named_groups == 0
+        || layout_codes.size() == layout_named_groups;
+    if (codes_are_consistent && group < layout_codes.size()
+        && !layout_codes.at(group).isEmpty()) {
+        return layout_codes.at(group);
+    }
+    if (group < layout_names.size() && !layout_names.at(group).isEmpty()) {
+        return layout_names.at(group);
+    }
+    if (group < layout_codes.size()) {
+        return layout_codes.at(group);
     }
 #endif
     return {};
